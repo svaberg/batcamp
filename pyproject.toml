@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "octree"
+version = "0.1.0"
+description = "Octree reconstruction and interpolation utilities"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Dag Evensberget" },
+]
+dependencies = [
+  "numpy",
+  "numba",
+  "scipy",
+]
+
+[project.optional-dependencies]
+tests = [
+  "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["octree*"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not slow'"
+pythonpath = ["tests"]
+markers = [
+  "slow: expensive tests excluded from the default unit-test run",
+  "design_lockin: implementation-locking tests",
+]

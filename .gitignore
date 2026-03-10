@@ -1,0 +1,11 @@
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local copied data for demos/tests (not versioned)
+example_data/
+
+# Local notes
+octree/review_findings.md

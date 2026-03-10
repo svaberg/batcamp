@@ -5,9 +5,9 @@ import math
 import numpy as np
 import pytest
 
-from starwinds_analysis.octree import Octree
-from starwinds_analysis.octree import OctreeInterpolator
-from starwinds_analysis.octree import OctreeRayInterpolator
+from octree import Octree
+from octree import OctreeInterpolator
+from octree import OctreeRayInterpolator
 
 
 class _FakeDataset:

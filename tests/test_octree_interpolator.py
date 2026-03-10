@@ -4,15 +4,15 @@ import numpy as np
 import pytest
 from starwinds_readplt.dataset import Dataset
 
-from starwinds_analysis.data.samples import data_file
-from starwinds_analysis.octree import DEFAULT_AXIS_RHO_TOL
-from starwinds_analysis.octree import DEFAULT_MIN_VALID_CELL_FRACTION
-from starwinds_analysis.octree import Octree
-from starwinds_analysis.octree import OctreeBuilder
-from starwinds_analysis.octree import SphericalOctree
-from starwinds_analysis.octree import format_histogram
-from starwinds_analysis.octree import point_refinement_levels
-from starwinds_analysis.octree import valid_cell_fraction
+from sample_data_helper import data_file
+from octree import DEFAULT_AXIS_RHO_TOL
+from octree import DEFAULT_MIN_VALID_CELL_FRACTION
+from octree import Octree
+from octree import OctreeBuilder
+from octree import SphericalOctree
+from octree import format_histogram
+from octree import point_refinement_levels
+from octree import valid_cell_fraction
 
 
 @pytest.fixture(scope="module")
