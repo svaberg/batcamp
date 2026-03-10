@@ -272,7 +272,7 @@ def test_cartesian_fixture_builds_xyz_tree(cartesian_octree_context) -> None:
 def test_cartesian_lookup_hits_cell_centers(cartesian_octree_context) -> None:
     """Cartesian lookup should resolve each cell center to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
-    centers = np.array(tree.lookup._cell_centers, dtype=float)
+    centers = np.array(tree.cell_centers(), dtype=float)
     for cid in range(centers.shape[0]):
         q = centers[cid]
         hit = tree.lookup_point(q, space="xyz")
@@ -283,18 +283,18 @@ def test_cartesian_lookup_hits_cell_centers(cartesian_octree_context) -> None:
 def test_cartesian_interpolation_matches_linear_xyz_field(cartesian_octree_context) -> None:
     """Cartesian trilinear interpolation should reconstruct the synthetic linear xyz field."""
     _ds, tree, interp = cartesian_octree_context
-    lookup = tree.lookup
     rng = np.random.default_rng(42)
-    n_cells = int(lookup._cell_centers.shape[0])
+    n_cells = int(tree.cell_count())
     choose = rng.choice(n_cells, size=min(20, n_cells), replace=False)
 
     q = np.empty((choose.size, 3), dtype=float)
     expected = np.empty(choose.size, dtype=float)
     for i, cid in enumerate(choose.tolist()):
+        lo, hi = tree.cell_bounds(int(cid), space="xyz")
         u, v, w = rng.uniform(0.1, 0.9, size=3)
-        x = float(lookup._cell_x_min[cid] + u * (lookup._cell_x_max[cid] - lookup._cell_x_min[cid]))
-        y = float(lookup._cell_y_min[cid] + v * (lookup._cell_y_max[cid] - lookup._cell_y_min[cid]))
-        z = float(lookup._cell_z_min[cid] + w * (lookup._cell_z_max[cid] - lookup._cell_z_min[cid]))
+        x = float(lo[0] + u * (hi[0] - lo[0]))
+        y = float(lo[1] + v * (hi[1] - lo[1]))
+        z = float(lo[2] + w * (hi[2] - lo[2]))
         q[i] = (x, y, z)
         expected[i] = 1.2 * x - 0.3 * y + 0.8 * z + 0.5
 

@@ -106,16 +106,18 @@ def synthetic_context() -> tuple[_SyntheticDataset, Octree, np.ndarray, tuple[fl
 
 def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     """Generate one interior xyz and matching rpa point per requested cell id."""
-    lookup = tree.lookup
     xyz_list: list[np.ndarray] = []
     rpa_list: list[np.ndarray] = []
     for cid in cids.tolist():
-        r0 = float(lookup._cell_r_min[cid])
-        r1 = float(lookup._cell_r_max[cid])
-        t0 = float(lookup._cell_theta_min[cid])
-        t1 = float(lookup._cell_theta_max[cid])
-        p0 = float(lookup._cell_phi_start[cid])
-        pw = float(lookup._cell_phi_width[cid])
+        lo, hi = tree.cell_bounds(int(cid), space="rpa")
+        r0 = float(lo[0])
+        r1 = float(hi[0])
+        t0 = float(lo[1])
+        t1 = float(hi[1])
+        p0 = float(lo[2])
+        pw = float((hi[2] - lo[2]) % (2.0 * math.pi))
+        if np.isclose(pw, 0.0, atol=1e-12):
+            pw = 2.0 * math.pi
 
         u = float(rng.uniform(0.15, 0.85))
         v = float(rng.uniform(0.15, 0.85))
@@ -137,23 +139,27 @@ def _interpolation_valid_cells(
     interp: OctreeInterpolator | None = None,
 ) -> np.ndarray:
     """Return cells suitable for stable interpolation checks."""
-    lookup = tree.lookup
-    phi_end = lookup._cell_phi_start + lookup._cell_phi_width
+    n_cells = int(tree.cell_count())
+    lo = np.empty((n_cells, 3), dtype=float)
+    hi = np.empty((n_cells, 3), dtype=float)
+    for cid in range(n_cells):
+        lo[cid], hi[cid] = tree.cell_bounds(cid, space="rpa")
+    phi_end = hi[:, 2]
     ids = np.flatnonzero(
-        (lookup._cell_theta_min > 1e-6)
-        & (lookup._cell_theta_max < (math.pi - 1e-6))
+        (lo[:, 1] > 1e-6)
+        & (hi[:, 1] < (math.pi - 1e-6))
         & (phi_end < (2.0 * math.pi - 1e-8))
     )
     if interp is None:
         return ids
-    good = [int(cid) for cid in ids.tolist() if np.unique(interp._bin_to_corner[int(cid)]).size == 8]
+    good = [int(cid) for cid in ids.tolist() if interp.cell_has_full_trilinear_corner_map(int(cid))]
     return np.array(good, dtype=np.int64)
 
 
 def test_synthetic_lookup_hits_its_own_cell_centers(synthetic_context) -> None:
     """Lookup of each synthetic cell center should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context
-    centers = np.array(tree.lookup._cell_centers)
+    centers = np.array(tree.cell_centers(), dtype=float)
     for cid in range(centers.shape[0]):
         q = centers[cid]
         hit = tree.lookup_point(q, space="xyz")
@@ -239,7 +245,7 @@ def test_synthetic_outside_points_use_fill_value_and_negative_cell_id(synthetic_
     fill = -999.0
     interp = OctreeInterpolator(ds, ["LinField"], tree=tree, fill_value=fill)
 
-    inside = np.array(tree.lookup._cell_centers[0]).reshape(1, 3)
+    inside = np.array(tree.cell_centers()[0]).reshape(1, 3)
     outside = np.array([[100.0, 0.0, 0.0], [-100.0, 0.0, 0.0]])
     q = np.vstack((inside, outside))
 

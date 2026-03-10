@@ -53,7 +53,7 @@ def test_quickstart_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -
     """Interpolator contract: explicit prebuilt tree and auto-tree must match."""
     ds = Dataset.from_file(str(data_file(name)))
     tree = Octree.from_dataset(ds, tree_coord=tree_coord)
-    queries = np.asarray(tree.lookup._cell_centers[:16], dtype=float)
+    queries = np.asarray(tree.cell_centers()[:16], dtype=float)
 
     interp_explicit = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
     interp_auto = OctreeInterpolator(ds, ["Rho [g/cm^3]"])

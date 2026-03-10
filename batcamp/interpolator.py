@@ -894,6 +894,18 @@ class OctreeInterpolator:
             return out, cell_ids.reshape(shape)
         return out
 
+    def trilinear_corner_count(self, cell_id: int) -> int:
+        """Return number of unique mapped corners used for one cell interpolation map."""
+        cid = int(cell_id)
+        n_cells = int(self._bin_to_corner.shape[0])
+        if cid < 0 or cid >= n_cells:
+            raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
+        return int(np.unique(self._bin_to_corner[cid]).size)
+
+    def cell_has_full_trilinear_corner_map(self, cell_id: int) -> bool:
+        """Return whether one cell maps to all 8 logical trilinear corners."""
+        return self.trilinear_corner_count(int(cell_id)) == 8
+
     def __str__(self) -> str:
         """Return a compact human-readable interpolator description."""
         n_points = int(self._ds.points.shape[0]) if hasattr(self._ds, "points") else -1

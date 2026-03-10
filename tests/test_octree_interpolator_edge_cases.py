@@ -151,7 +151,7 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
 
 def _first_resolvable_center(tree: Octree) -> np.ndarray:
     """Return first cell center that successfully resolves via lookup."""
-    for c in np.array(tree.lookup._cell_centers):
+    for c in np.array(tree.cell_centers(), dtype=float):
         hit = tree.lookup_point(np.array(c, dtype=float), space="xyz")
         if hit is not None:
             return np.array(c, dtype=float)
@@ -160,13 +160,14 @@ def _first_resolvable_center(tree: Octree) -> np.ndarray:
 
 def _first_resolvable_rpa(tree: Octree) -> tuple[float, float, float]:
     """Return one interior spherical point that resolves in lookup."""
-    lookup = tree.lookup
-    for cid in range(int(lookup._corners.shape[0])):
-        r = 0.5 * (float(lookup._cell_r_min[cid]) + float(lookup._cell_r_max[cid]))
-        polar = 0.5 * (float(lookup._cell_theta_min[cid]) + float(lookup._cell_theta_max[cid]))
-        azimuth = (float(lookup._cell_phi_start[cid]) + 0.4 * float(lookup._cell_phi_width[cid])) % (
-            2.0 * math.pi
-        )
+    for cid in range(int(tree.cell_count())):
+        lo, hi = tree.cell_bounds(int(cid), space="rpa")
+        r = 0.5 * (float(lo[0]) + float(hi[0]))
+        polar = 0.5 * (float(lo[1]) + float(hi[1]))
+        width = float((hi[2] - lo[2]) % (2.0 * math.pi))
+        if np.isclose(width, 0.0, atol=1e-12):
+            width = 2.0 * math.pi
+        azimuth = (float(lo[2]) + 0.4 * width) % (2.0 * math.pi)
         hit = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), space="rpa")
         if hit is not None:
             return r, polar, azimuth
@@ -213,27 +214,25 @@ def test_interpolator_auto_tree_coord_selects_cartesian_for_axis_aligned_cells()
 
 
 def test_interpolator_reuses_prebuilt_cartesian_lookup_for_same_dataset() -> None:
-    """Interpolator should not rebuild lookup for prebound Cartesian trees."""
+    """Interpolator should reuse the same prebuilt tree/lookup object."""
     ds = _build_fake_cartesian_dataset()
     tree = Octree.from_dataset(ds, tree_coord="xyz")
-    _ = tree.lookup
-    lookup_state_before = tree.lookup._lookup_state
+    lookup_before = tree.lookup
 
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
-    assert tree.lookup._lookup_state is lookup_state_before
-    assert interp.lookup._lookup_state is lookup_state_before
+    assert tree.lookup is lookup_before
+    assert interp.lookup is lookup_before
 
 
 def test_interpolator_reuses_prebuilt_spherical_lookup_for_same_dataset() -> None:
-    """Interpolator should not rebuild lookup for prebound spherical trees."""
+    """Interpolator should reuse the same prebuilt tree/lookup object."""
     ds = _build_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
-    _ = tree.lookup
-    lookup_state_before = tree.lookup._lookup_state
+    lookup_before = tree.lookup
 
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
-    assert tree.lookup._lookup_state is lookup_state_before
-    assert interp.lookup._lookup_state is lookup_state_before
+    assert tree.lookup is lookup_before
+    assert interp.lookup is lookup_before
 
 
 def test_interpolator_call_rejects_invalid_query_coord_override() -> None:
@@ -324,9 +323,7 @@ def test_integrate_field_along_rays_matches_linear_piece_integral() -> None:
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
     ray = OctreeRayInterpolator(interp)
 
-    points_xyz = np.asarray(tree.lookup._points, dtype=float)
-    dmin = points_xyz.min(axis=0)
-    dmax = points_xyz.max(axis=0)
+    dmin, dmax = tree.domain_bounds(space="xyz")
     xmin = float(dmin[0])
     xmax = float(dmax[0])
     yc = 0.5 * float(dmin[1] + dmax[1])
