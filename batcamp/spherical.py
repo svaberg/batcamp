@@ -108,9 +108,6 @@ def lookup_rpa_cell_id_kernel(
     qy = r * sin_polar * math.sin(azimuth)
     qz = r * math.cos(polar)
 
-    fallback_best = -1
-    fallback_best_d2 = np.inf
-
     for radius in range(lookup_state.max_radius + 1):
         for level_index in range(lookup_state.levels_desc.shape[0]):
             level = int(lookup_state.levels_desc[level_index])
@@ -158,10 +155,6 @@ def lookup_rpa_cell_id_kernel(
                         dz = lookup_state.cell_centers[cid, 2] - qz
                         d2 = dx * dx + dy * dy + dz * dz
 
-                        if d2 < fallback_best_d2:
-                            fallback_best_d2 = d2
-                            fallback_best = cid
-
                         if _contains_rpa_cell(
                             cid,
                             r,
@@ -175,13 +168,7 @@ def lookup_rpa_cell_id_kernel(
             if inside_best >= 0:
                 return inside_best
 
-    if fallback_best >= 0:
-        return fallback_best
-
     n_cells = lookup_state.cell_centers.shape[0]
-    pool_found = False
-    pool_best = -1
-    pool_best_d2 = np.inf
     pool_inside_best = -1
     pool_inside_best_d2 = np.inf
     for cid in range(n_cells):
@@ -190,14 +177,10 @@ def lookup_rpa_cell_id_kernel(
             or r > (lookup_state.cell_r_max[cid] + _LOOKUP_CONTAIN_TOL)
         ):
             continue
-        pool_found = True
         dx = lookup_state.cell_centers[cid, 0] - qx
         dy = lookup_state.cell_centers[cid, 1] - qy
         dz = lookup_state.cell_centers[cid, 2] - qz
         d2 = dx * dx + dy * dy + dz * dz
-        if d2 < pool_best_d2:
-            pool_best_d2 = d2
-            pool_best = cid
         if _contains_rpa_cell(
             cid,
             r,
@@ -208,22 +191,9 @@ def lookup_rpa_cell_id_kernel(
             pool_inside_best_d2 = d2
             pool_inside_best = cid
 
-    if pool_found:
-        if pool_inside_best >= 0:
-            return pool_inside_best
-        return pool_best
-
-    all_best = -1
-    all_best_d2 = np.inf
-    for cid in range(n_cells):
-        dx = lookup_state.cell_centers[cid, 0] - qx
-        dy = lookup_state.cell_centers[cid, 1] - qy
-        dz = lookup_state.cell_centers[cid, 2] - qz
-        d2 = dx * dx + dy * dy + dz * dz
-        if d2 < all_best_d2:
-            all_best_d2 = d2
-            all_best = cid
-    return all_best
+    if pool_inside_best >= 0:
+        return pool_inside_best
+    return -1
 
 class _SphericalCellLookup:
     """Leaf-cell lookup accelerator for spherical/Cartesian queries.

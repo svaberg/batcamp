@@ -99,8 +99,6 @@ def lookup_xyz_cell_id_kernel(
     elif bz >= nbin:
         bz = nbin - 1
 
-    fallback_best = -1
-    fallback_best_d2 = np.inf
     for radius in range(int(lookup_state.max_radius) + 1):
         inside_best = -1
         inside_best_d2 = np.inf
@@ -125,21 +123,13 @@ def lookup_xyz_cell_id_kernel(
                         cy = lookup_state.cell_centers[cid, 1]
                         cz = lookup_state.cell_centers[cid, 2]
                         d2 = (cx - x) * (cx - x) + (cy - y) * (cy - y) + (cz - z) * (cz - z)
-                        if d2 < fallback_best_d2:
-                            fallback_best_d2 = d2
-                            fallback_best = cid
                         if _contains_xyz_cell(cid, x, y, z, lookup_state) and d2 < inside_best_d2:
                             inside_best_d2 = d2
                             inside_best = cid
         if inside_best >= 0:
             return int(inside_best)
 
-    if fallback_best >= 0:
-        return int(fallback_best)
-
     n_cells = int(lookup_state.cell_centers.shape[0])
-    all_best = -1
-    all_best_d2 = np.inf
     all_inside_best = -1
     all_inside_best_d2 = np.inf
     for cid in range(n_cells):
@@ -147,15 +137,12 @@ def lookup_xyz_cell_id_kernel(
         cy = lookup_state.cell_centers[cid, 1]
         cz = lookup_state.cell_centers[cid, 2]
         d2 = (cx - x) * (cx - x) + (cy - y) * (cy - y) + (cz - z) * (cz - z)
-        if d2 < all_best_d2:
-            all_best_d2 = d2
-            all_best = cid
         if _contains_xyz_cell(cid, x, y, z, lookup_state) and d2 < all_inside_best_d2:
             all_inside_best_d2 = d2
             all_inside_best = cid
     if all_inside_best >= 0:
         return int(all_inside_best)
-    return int(all_best)
+    return -1
 
 
 class _CartesianCellLookup:

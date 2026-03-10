@@ -157,6 +157,100 @@ def _build_regular_xyz_dataset(
     )
 
 
+def _build_disjoint_xyz_dataset() -> _FakeDataset:
+    """Build two separated Cartesian cells with an empty gap between them."""
+    cube0 = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ],
+        dtype=float,
+    )
+    cube1 = cube0 + np.array([10.0, 0.0, 0.0], dtype=float)
+    points = np.vstack((cube0, cube1))
+    corners = np.array(
+        [
+            [0, 1, 2, 3, 4, 5, 6, 7],
+            [8, 9, 10, 11, 12, 13, 14, 15],
+        ],
+        dtype=np.int64,
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    scalar = x + 2.0 * y + 3.0 * z
+    return _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            "X [R]": x,
+            "Y [R]": y,
+            "Z [R]": z,
+            "Scalar": scalar,
+        },
+    )
+
+
+def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
+    """Build two separated spherical shell layers with a radial gap."""
+    theta_edges = np.array([0.0, 0.5 * math.pi, math.pi], dtype=float)
+    phi_edges = np.array([0.0, math.pi, 2.0 * math.pi], dtype=float)
+    shell_edges = ((1.0, 2.0), (4.0, 5.0))
+
+    points: list[tuple[float, float, float]] = []
+    corners: list[list[int]] = []
+
+    for r0, r1 in shell_edges:
+        node_index = -np.ones((2, theta_edges.size, phi_edges.size), dtype=np.int64)
+        for ir, rr in enumerate((r0, r1)):
+            for it, theta in enumerate(theta_edges):
+                st = math.sin(float(theta))
+                ct = math.cos(float(theta))
+                for ip, phi in enumerate(phi_edges):
+                    x = float(rr) * st * math.cos(float(phi))
+                    y = float(rr) * st * math.sin(float(phi))
+                    z = float(rr) * ct
+                    node_index[ir, it, ip] = len(points)
+                    points.append((x, y, z))
+
+        for it in range(theta_edges.size - 1):
+            for ip in range(phi_edges.size - 1):
+                corners.append(
+                    [
+                        int(node_index[0, it, ip]),
+                        int(node_index[1, it, ip]),
+                        int(node_index[0, it + 1, ip]),
+                        int(node_index[1, it + 1, ip]),
+                        int(node_index[0, it, ip + 1]),
+                        int(node_index[1, it, ip + 1]),
+                        int(node_index[0, it + 1, ip + 1]),
+                        int(node_index[1, it + 1, ip + 1]),
+                    ]
+                )
+
+    points_arr = np.array(points, dtype=float)
+    x = points_arr[:, 0]
+    y = points_arr[:, 1]
+    z = points_arr[:, 2]
+    scalar = x - y + z
+    return _FakeDataset(
+        points=points_arr,
+        corners=np.array(corners, dtype=np.int64),
+        variables={
+            "X [R]": x,
+            "Y [R]": y,
+            "Z [R]": z,
+            "Scalar": scalar,
+        },
+    )
+
+
 @pytest.fixture(scope="module")
 def cartesian_octree_context() -> tuple[_FakeDataset, CartesianOctree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
@@ -361,3 +455,21 @@ def test_lookup_runs_for_xyz_coord_system() -> None:
     hit_xyz = tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), space="xyz")
     assert hit_xyz is not None
     assert not hasattr(tree, "lookup_rpa")
+
+
+def test_lookup_gap_returns_none_for_disjoint_cartesian_cells() -> None:
+    """Cartesian lookup should return miss for points in an uncovered bbox gap."""
+    ds = _build_disjoint_xyz_dataset()
+    tree = OctreeBuilder().build(ds, coord_system="xyz")
+    q_gap = np.array([5.0, 0.5, 0.5], dtype=float)
+    hit = tree.lookup_point(q_gap, space="xyz")
+    assert hit is None
+
+
+def test_lookup_gap_returns_none_for_disjoint_spherical_shells() -> None:
+    """Spherical lookup should return miss for points in a radial gap."""
+    ds = _build_disjoint_spherical_shell_dataset()
+    tree = OctreeBuilder().build(ds, coord_system="rpa")
+    q_gap = np.array([3.0, 0.5 * math.pi, 0.5 * math.pi], dtype=float)
+    hit = tree.lookup_point(q_gap, space="rpa")
+    assert hit is None
