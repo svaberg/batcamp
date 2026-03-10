@@ -8,20 +8,30 @@ from sample_data_helper import data_file
 
 
 _CASES = [
-    ("3d__var_4_n00000000.plt", "rpa"),
-    ("3d__var_4_n00044000.plt", "rpa"),
-    ("3d__var_4_n00005000.plt", "xyz"),
+    pytest.param("3d__var_4_n00000000.plt", "rpa", id="example_file"),
+    pytest.param(
+        "3d__var_4_n00044000.plt",
+        "rpa",
+        id="pooch_sc",
+        marks=pytest.mark.pooch,
+    ),
+    pytest.param(
+        "3d__var_4_n00005000.plt",
+        "xyz",
+        id="pooch_ih",
+        marks=pytest.mark.pooch,
+    ),
 ]
 
 
-@pytest.mark.parametrize("name,tree_coord", _CASES, ids=["example_file", "pooch_sc", "pooch_ih"])
+@pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_quickstart_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
     """Inference contract: geometry-based coord inference matches expected."""
     ds = Dataset.from_file(str(data_file(name)))
     assert str(_infer_tree_coord_from_geometry(ds)) == tree_coord
 
 
-@pytest.mark.parametrize("name,tree_coord", _CASES, ids=["example_file", "pooch_sc", "pooch_ih"])
+@pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_quickstart_tree_build_uses_correct_tree_coord(name: str, tree_coord: str) -> None:
     """Tree contract: correct tree_coord builds; wrong tree_coord fails."""
     ds = Dataset.from_file(str(data_file(name)))
@@ -31,14 +41,14 @@ def test_quickstart_tree_build_uses_correct_tree_coord(name: str, tree_coord: st
         Octree.from_dataset(ds, tree_coord=wrong_tree_coord)
 
 
-@pytest.mark.parametrize("name,tree_coord", _CASES, ids=["example_file", "pooch_sc", "pooch_ih"])
+@pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_quickstart_tree_build_default_matches_expected(name: str, tree_coord: str) -> None:
     """Tree contract: default `Octree.from_dataset(ds)` resolves correct tree type."""
     ds = Dataset.from_file(str(data_file(name)))
     assert str(Octree.from_dataset(ds).tree_coord) == tree_coord
 
 
-@pytest.mark.parametrize("name,tree_coord", _CASES, ids=["example_file", "pooch_sc", "pooch_ih"])
+@pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_quickstart_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     """Interpolator contract: explicit prebuilt tree and auto-tree must match."""
     ds = Dataset.from_file(str(data_file(name)))
