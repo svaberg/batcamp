@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
 
-class InterpKernelState(NamedTuple):
+class SphericalInterpKernelState(NamedTuple):
     """Numba interpolation-kernel arrays with explicit field names."""
 
     point_values_2d: np.ndarray
@@ -45,6 +45,10 @@ class InterpKernelState(NamedTuple):
     cell_pden: np.ndarray
     cell_phi_full: np.ndarray
     cell_phi_tiny: np.ndarray
+
+
+# Keep old symbol available for numba cache entries compiled before rename.
+InterpKernelState = SphericalInterpKernelState
 
 
 class CartesianInterpKernelState(NamedTuple):
@@ -68,7 +72,7 @@ def _trilinear_from_cell(
     r: float,
     polar: float,
     azimuth: float,
-    interp_state: InterpKernelState,
+    interp_state: SphericalInterpKernelState,
 ) -> None:
     """Write one trilinear interpolation result row for one resolved cell.
 
@@ -208,7 +212,7 @@ def _trilinear_from_cell_xyz(
 def _interp_batch_xyz(
     queries_xyz: np.ndarray,
     fill_values: np.ndarray,
-    interp_state: InterpKernelState,
+    interp_state: SphericalInterpKernelState,
     lookup_state: LookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a batch of Cartesian queries with local previous-cell hinting.
@@ -276,7 +280,7 @@ def _interp_batch_xyz(
 def _interp_batch_rpa(
     queries_rpa: np.ndarray,
     fill_values: np.ndarray,
-    interp_state: InterpKernelState,
+    interp_state: SphericalInterpKernelState,
     lookup_state: LookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a batch of spherical queries with local previous-cell hinting.
@@ -655,7 +659,7 @@ class OctreeInterpolator:
 
     def _prepare_kernel_cache_rpa(self) -> None:
         """Build kernel-cache state for spherical tree backend."""
-        self._interp_state = InterpKernelState(
+        self._interp_state_rpa = SphericalInterpKernelState(
             point_values_2d=self._point_values_2d,
             corners=self._corners,
             bin_to_corner=self._bin_to_corner_index,
@@ -669,7 +673,7 @@ class OctreeInterpolator:
             cell_phi_full=self._cell_phi_full,
             cell_phi_tiny=self._cell_phi_tiny,
         )
-        self._lookup_state = self.lookup._lookup_state
+        self._lookup_state_rpa = self.lookup._lookup_state
 
     def _prepare_kernel_cache_xyz(self) -> None:
         """Build kernel-cache state for Cartesian tree backend."""
@@ -731,14 +735,14 @@ class OctreeInterpolator:
         _interp_batch_xyz(
             q_xyz,
             fill,
-            self._interp_state,
-            self._lookup_state,
+            self._interp_state_rpa,
+            self._lookup_state_rpa,
         )
         _interp_batch_rpa(
             q_rpa,
             fill,
-            self._interp_state,
-            self._lookup_state,
+            self._interp_state_rpa,
+            self._lookup_state_rpa,
         )
 
     def _validate_query_coord(self, qs: str) -> None:
@@ -780,8 +784,8 @@ class OctreeInterpolator:
         return batch_kernel(
             q_array,
             fill,
-            self._interp_state,
-            self._lookup_state,
+            self._interp_state_rpa,
+            self._lookup_state_rpa,
         )
 
     @staticmethod

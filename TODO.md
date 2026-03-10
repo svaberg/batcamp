@@ -8,6 +8,7 @@
 - [x] Reduce test lock-in on private internals (`_cell_*`, `_lookup_state`, `_bin_to_corner`) unless there is no public API alternative.
 - [x] Rename `batcamp/base.py` to `batcamp/octree.py` and update imports.
 - [x] Consolidate duplicated XYZ<->RPA conversion helpers shared across `interpolator.py`, `spherical.py`, and `ray.py`.
+- [x] Keep interpolation backend type/cache naming parallel (`SphericalInterpKernelState` vs `CartesianInterpKernelState`, with matching `_interp_state_*` and `_lookup_state_*` attributes).
 - [x] Unify tree auto-build fallback logic so there is one source of truth instead of split behavior paths.
 - [x] Reassess and eventually remove stale-module numba cache cleanup paths once legacy cache compatibility is no longer needed.
 - [x] Reduce complexity in oversized modules (`interpolator.py`, `ray.py`) in-place (no new modules for now).
