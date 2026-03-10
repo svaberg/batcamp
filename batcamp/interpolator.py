@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import math
-from pathlib import Path
 from time import perf_counter
 from typing import Callable
 from typing import Literal
@@ -30,27 +29,6 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
-
-
-def _clear_stale_numba_cache() -> None:
-    """Remove local stale numba cache files after module-path refactors.
-
-    Numba cache indices can reference old module paths and raise
-    `ModuleNotFoundError` while unpickling. This helper clears local cache
-    entries for octree kernels so warmup can recompile fresh artifacts.
-    """
-    cache_dir = Path(__file__).resolve().with_name("__pycache__")
-    if not cache_dir.is_dir():
-        return
-    for ext in ("*.nbi", "*.nbc"):
-        for path in cache_dir.glob(ext):
-            name = path.name
-            if not (name.startswith("interpolator.") or name.startswith("spherical.")):
-                continue
-            try:
-                path.unlink()
-            except OSError:
-                logger.debug("Could not remove stale numba cache file %s", str(path))
 
 class InterpKernelState(NamedTuple):
     """Numba interpolation-kernel arrays with explicit field names."""
@@ -750,38 +728,18 @@ class OctreeInterpolator:
         """Warm up spherical lookup/interpolation kernels."""
         r, polar, azimuth = SphericalOctree.xyz_to_rpa(q_xyz[0])
         q_rpa = np.array([[r, polar, azimuth]], dtype=np.float64, order="C")
-        try:
-            _interp_batch_xyz(
-                q_xyz,
-                fill,
-                self._interp_state,
-                self._lookup_state,
-            )
-            _interp_batch_rpa(
-                q_rpa,
-                fill,
-                self._interp_state,
-                self._lookup_state,
-            )
-        except ModuleNotFoundError as exc:
-            text = str(exc)
-            stale_refs = ("starwinds_analysis.octree.lookup", "starwinds_analysis.octree.core", "octree.lookup", "octree.core")
-            if not any(ref in text for ref in stale_refs):
-                raise
-            logger.warning("Detected stale numba cache references; clearing local cache and retrying warmup.")
-            _clear_stale_numba_cache()
-            _interp_batch_xyz(
-                q_xyz,
-                fill,
-                self._interp_state,
-                self._lookup_state,
-            )
-            _interp_batch_rpa(
-                q_rpa,
-                fill,
-                self._interp_state,
-                self._lookup_state,
-            )
+        _interp_batch_xyz(
+            q_xyz,
+            fill,
+            self._interp_state,
+            self._lookup_state,
+        )
+        _interp_batch_rpa(
+            q_rpa,
+            fill,
+            self._interp_state,
+            self._lookup_state,
+        )
 
     def _validate_query_coord(self, qs: str) -> None:
         """Validate query coordinate mode against this interpolator backend."""
