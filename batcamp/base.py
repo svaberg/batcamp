@@ -8,6 +8,7 @@ from dataclasses import field
 import logging
 from pathlib import Path
 from typing import ClassVar
+from typing import cast
 from typing import Literal
 from typing import TypeAlias
 
@@ -17,10 +18,10 @@ from starwinds_readplt.dataset import Dataset
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 DEFAULT_AXIS_RHO_TOL = 1e-12
 OCTREE_FILE_VERSION = 1
-SUPPORTED_COORD_SYSTEMS = ("rpa", "xyz")
-DEFAULT_COORD_SYSTEM = "xyz"
+SUPPORTED_TREE_COORDS = ("rpa", "xyz")
+DEFAULT_TREE_COORD = "xyz"
 
-CoordSystem: TypeAlias = Literal["rpa", "xyz"]
+TreeCoord: TypeAlias = Literal["rpa", "xyz"]
 """Coordinate-system tag used by octree builder/lookup dispatch."""
 
 GridShape: TypeAlias = tuple[int, int, int]
@@ -49,7 +50,7 @@ class Octree:
     `(level, leaf_count, fine_equivalent_count)`.
     """
 
-    COORD_SYSTEM: ClassVar[str | None] = None
+    TREE_COORD: ClassVar[str | None] = None
 
     leaf_shape: GridShape
     root_shape: GridShape
@@ -57,7 +58,7 @@ class Octree:
     level_counts: LevelCountTable
     min_level: int
     max_level: int
-    coord_system: CoordSystem = DEFAULT_COORD_SYSTEM
+    tree_coord: TreeCoord = DEFAULT_TREE_COORD
     cell_levels: np.ndarray | None = None
     ds: Dataset | None = field(default=None, repr=False)
     axis_rho_tol: float = field(default=DEFAULT_AXIS_RHO_TOL, repr=False)
@@ -68,7 +69,7 @@ class Octree:
         cls,
         ds: Dataset,
         *,
-        coord_system: CoordSystem = DEFAULT_COORD_SYSTEM,
+        tree_coord: TreeCoord | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
         level_rtol: float = 1e-4,
         level_atol: float = 1e-9,
@@ -81,17 +82,34 @@ class Octree:
         Returns:
         - Built and bound octree instance.
         """
-        if cls is not Octree and cls.COORD_SYSTEM is not None:
-            if coord_system == DEFAULT_COORD_SYSTEM and cls.COORD_SYSTEM != DEFAULT_COORD_SYSTEM:
-                coord_system = cls.COORD_SYSTEM
-            if coord_system != cls.COORD_SYSTEM:
+        resolved_tree_coord: TreeCoord
+        if cls is not Octree and cls.TREE_COORD is not None:
+            if tree_coord is None:
+                resolved_tree_coord = cls.TREE_COORD
+            else:
+                resolved_tree_coord = cast(TreeCoord, str(tree_coord))
+            if resolved_tree_coord != cls.TREE_COORD:
                 raise ValueError(
-                    f"{cls.__name__} requires coord_system='{cls.COORD_SYSTEM}', got '{coord_system}'."
+                    f"{cls.__name__} requires tree_coord='{cls.TREE_COORD}', got '{resolved_tree_coord}'."
                 )
+        else:
+            resolved_tree_coord = DEFAULT_TREE_COORD if tree_coord is None else cast(TreeCoord, str(tree_coord))
         from .builder import OctreeBuilder
 
         builder = OctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
-        return builder.build(ds, coord_system=coord_system, axis_rho_tol=axis_rho_tol)
+        allow_default_fallback = bool(cls is Octree and tree_coord is None)
+        try:
+            return builder.build(ds, tree_coord=resolved_tree_coord, axis_rho_tol=axis_rho_tol)
+        except ValueError:
+            if not allow_default_fallback:
+                raise
+            alt_tree_coord: TreeCoord = "rpa" if resolved_tree_coord == "xyz" else "xyz"
+            logger.info(
+                "Falling back to tree_coord='%s' after default tree_coord='%s' failed in Octree.from_dataset.",
+                alt_tree_coord,
+                resolved_tree_coord,
+            )
+            return builder.build(ds, tree_coord=alt_tree_coord, axis_rho_tol=axis_rho_tol)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -184,11 +202,11 @@ class Octree:
 
         in_path = Path(path)
         state, array_state = OctreePersistenceState.load_npz(in_path)
-        coord_system = str(state.coord_system)
-        tree_cls = octree_class_for_coord(coord_system)
-        if cls is not Octree and cls.COORD_SYSTEM is not None and cls.COORD_SYSTEM != coord_system:
+        tree_coord = str(state.tree_coord)
+        tree_cls = octree_class_for_coord(tree_coord)
+        if cls is not Octree and cls.TREE_COORD is not None and cls.TREE_COORD != tree_coord:
             raise ValueError(
-                f"{cls.__name__} cannot load coord_system='{coord_system}'."
+                f"{cls.__name__} cannot load tree_coord='{tree_coord}'."
             )
         if cls is not Octree:
             tree_cls = cls
@@ -208,6 +226,10 @@ class Octree:
         - Single summary string.
         """
         return format_octree_summary(self)
+
+    def __str__(self) -> str:
+        """Return human-readable summary text."""
+        return self.summary()
 
     def build_lookup(
         self,
@@ -265,7 +287,7 @@ class Octree:
         self,
         point: np.ndarray,
         *,
-        space: CoordSystem,
+        space: TreeCoord,
     ) -> "LookupHit | None":
         """Lookup one query point in the requested coordinate space.
 
@@ -277,9 +299,9 @@ class Octree:
         """
         q = np.array(point, dtype=float).reshape(3)
         resolved_space = str(space)
-        if resolved_space not in SUPPORTED_COORD_SYSTEMS:
+        if resolved_space not in SUPPORTED_TREE_COORDS:
             raise ValueError(
-                f"Unsupported lookup space '{resolved_space}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+                f"Unsupported lookup space '{resolved_space}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
         self._require_lookup()
         chosen = self.lookup_cell_id(q, space=resolved_space)
@@ -290,7 +312,7 @@ class Octree:
         cell_id: int,
         point: np.ndarray,
         *,
-        space: CoordSystem,
+        space: TreeCoord,
         tol: float = 1e-10,
     ) -> bool:
         """Containment test of one query point against one leaf cell.
@@ -341,23 +363,23 @@ class Octree:
                 return self.hit_from_cell_id(near)
         return self.lookup_point(np.array([x, y, z], dtype=float), space="xyz")
 
-def octree_class_for_coord(coord_system: str) -> type[Octree]:
+def octree_class_for_coord(tree_coord: str) -> type[Octree]:
     """Resolve coordinate-system tag to the concrete octree class.
 
     Consumes:
-    - `coord_system` tag (`"rpa"` or `"xyz"`).
+    - `tree_coord` tag (`"rpa"` or `"xyz"`).
     Returns:
     - Matching `Octree` subclass type.
     """
     from .cartesian import CartesianOctree
     from .spherical import SphericalOctree
 
-    if coord_system == "rpa":
+    if tree_coord == "rpa":
         return SphericalOctree
-    if coord_system == "xyz":
+    if tree_coord == "xyz":
         return CartesianOctree
     raise ValueError(
-        f"Unsupported coord_system '{coord_system}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+        f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
     )
 
 
@@ -407,7 +429,7 @@ def format_octree_summary(tree: Octree) -> str:
     shape_kind = "uniform" if tree.is_uniform else "adaptive"
     out = (
         f"Octree ({shape_kind}): "
-        f"coord_system={tree.coord_system}, "
+        f"tree_coord={tree.tree_coord}, "
         f"finest_leaf_grid={tree.leaf_shape}, root_grid={tree.root_shape}, "
         f"depth={tree.depth}, full={tree.is_full}, "
         f"levels={tree.min_level}..{tree.max_level}; leaf_levels[{leaf_levels}]"

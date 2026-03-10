@@ -17,7 +17,7 @@ def regression_context() -> tuple[Dataset, Octree]:
     input_file = data_file("difflevels-3d__var_1_n00000000.dat")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
-    tree = Octree.from_dataset(ds, coord_system="rpa")
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
     return ds, tree
 
 
@@ -36,13 +36,29 @@ def test_regression_xyz_to_rpa_is_stable_and_finite() -> None:
 def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
     """No-tree interpolator should recover from invalid xyz reconstruction on spherical data."""
     ds, _tree = regression_context
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], query_coord="xyz", tree=None)
-    assert interp.tree.coord_system == "rpa"
+    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=None)
+    assert interp.tree.tree_coord == "rpa"
 
     q = np.array([1.0, 0.0, 0.0], dtype=float)
     vals, cids = interp(q, return_cell_ids=True)
     assert int(np.asarray(cids).reshape(-1)[0]) >= 0
     assert np.isfinite(float(np.asarray(vals).reshape(-1)[0]))
+
+
+def test_regression_quickstart_explicit_tree_equals_auto_tree() -> None:
+    """Quickstart contract: explicit prebuilt tree and auto-tree must agree."""
+    ds = Dataset.from_file(str(data_file("3d__var_4_n00000000.plt")))
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    queries = np.asarray(tree.lookup._cell_centers[:16], dtype=float)
+
+    interp_explicit = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
+    interp_auto = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+
+    vals_explicit, cids_explicit = interp_explicit(queries, return_cell_ids=True)
+    vals_auto, cids_auto = interp_auto(queries, return_cell_ids=True)
+
+    np.testing.assert_array_equal(np.asarray(cids_explicit), np.asarray(cids_auto))
+    np.testing.assert_allclose(np.asarray(vals_explicit), np.asarray(vals_auto), rtol=0.0, atol=1e-12)
 
 
 @pytest.mark.slow

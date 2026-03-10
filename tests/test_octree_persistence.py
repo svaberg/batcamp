@@ -16,7 +16,7 @@ def tree_dataset_pair() -> tuple[Octree, Dataset]:
     input_file = data_file("difflevels-3d__var_1_n00000000.dat")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
-    tree = Octree.from_dataset(ds, coord_system="rpa")
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
     return tree, ds
 
 
@@ -32,7 +32,7 @@ def test_octree_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp
     assert loaded.root_shape == tree.root_shape
     assert loaded.level_counts == tree.level_counts
     assert loaded.depth == tree.depth
-    assert loaded.coord_system == tree.coord_system
+    assert loaded.tree_coord == tree.tree_coord
 
     assert loaded.cell_levels is not None and tree.cell_levels is not None
     assert np.array_equal(loaded.cell_levels, tree.cell_levels)
@@ -83,7 +83,7 @@ def test_octree_load_rejects_unsupported_file_version(tree_dataset_pair, tmp_pat
         Octree.load(bad_path, ds=tree_dataset_pair[1])
 
 
-def test_octree_load_rejects_unsupported_coord_system(tree_dataset_pair, tmp_path) -> None:
+def test_octree_load_rejects_unsupported_tree_coord(tree_dataset_pair, tmp_path) -> None:
     """Loader should reject serialized metadata with unknown coordinate-system tags."""
     tree, _ds = tree_dataset_pair
     good_path = tmp_path / "tree_good_coords.npz"
@@ -94,8 +94,8 @@ def test_octree_load_rejects_unsupported_coord_system(tree_dataset_pair, tmp_pat
     with np.load(good_path, allow_pickle=False) as data:
         for key in data.files:
             payload[key] = np.array(data[key], copy=True)
-    payload["coord_system"] = np.array("bad_coords")
+    payload["tree_coord"] = np.array("bad_coords")
     np.savez_compressed(bad_path, **payload)
 
-    with pytest.raises(ValueError, match="Unsupported coord_system"):
+    with pytest.raises(ValueError, match="Unsupported tree_coord"):
         Octree.load(bad_path, ds=tree_dataset_pair[1])

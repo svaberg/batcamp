@@ -30,7 +30,7 @@ from batcamp import Octree, OctreeInterpolator
 ds = Dataset.from_file("MY_FILE")
 
 # Create the octree and interpolator
-tree = Octree.from_dataset(ds, coord_system="rpa")
+tree = Octree.from_dataset(ds, tree_coord="rpa")
 interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
 
 # Create a grid of points and interpolate the density

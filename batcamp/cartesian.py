@@ -374,7 +374,7 @@ class _CartesianCellLookup:
 class CartesianOctree(_CartesianCellLookup, Octree):
     """Octree specialization placeholder for Cartesian `(x, y, z)` datasets."""
 
-    COORD_SYSTEM: ClassVar[str | None] = "xyz"
+    TREE_COORD: ClassVar[str | None] = "xyz"
 
     def build_lookup(
         self,

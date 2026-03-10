@@ -255,9 +255,9 @@ def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
 def cartesian_octree_context() -> tuple[_FakeDataset, CartesianOctree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds, coord_system="xyz")
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
     assert isinstance(tree, CartesianOctree)
-    interp = OctreeInterpolator(ds, ["Scalar"], query_coord="xyz", tree=tree)
+    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
     return ds, tree, interp
 
 
@@ -265,7 +265,7 @@ def test_cartesian_fixture_builds_xyz_tree(cartesian_octree_context) -> None:
     """Fixture should provide a bound Cartesian tree and xyz interpolator."""
     _ds, tree, interp = cartesian_octree_context
     assert isinstance(tree, CartesianOctree)
-    assert tree.coord_system == "xyz"
+    assert tree.tree_coord == "xyz"
     assert interp.tree is tree
 
 
@@ -315,19 +315,19 @@ def test_builder_build_rejects_missing_corners() -> None:
         OctreeBuilder().build(ds)
 
 
-def test_builder_build_rejects_unknown_coord_system() -> None:
+def test_builder_build_rejects_unknown_tree_coord() -> None:
     """Builder should reject unsupported coordinate-system identifiers."""
     ds = _build_regular_dataset()
-    with pytest.raises(ValueError, match="Unsupported coord_system"):
-        OctreeBuilder().build(ds, coord_system="foo")
+    with pytest.raises(ValueError, match="Unsupported tree_coord"):
+        OctreeBuilder().build(ds, tree_coord="foo")
 
 
 def test_builder_build_xyz_returns_cartesian_octree() -> None:
-    """Builder should construct Cartesian octree when coord_system='xyz'."""
+    """Builder should construct Cartesian octree when tree_coord='xyz'."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds, coord_system="xyz")
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
     assert isinstance(tree, CartesianOctree)
-    assert tree.coord_system == "xyz"
+    assert tree.tree_coord == "xyz"
 
 
 def test_builder_build_default_returns_cartesian_octree_subclass() -> None:
@@ -389,27 +389,27 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
     delta_phi, _center_phi, _cell_levels, _expected, _coarse = builder.compute_phi_levels(ds)
     all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        builder.build_tree(ds, ds.corners, coord_system="rpa", cell_levels=all_invalid)
+        builder.build_tree(ds, ds.corners, tree_coord="rpa", cell_levels=all_invalid)
 
 
 def test_builder_handles_incompatible_blocks_aux_without_block_tree() -> None:
     """Incompatible BLOCKS aux metadata should be ignored by the octree builder."""
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "7 3x5x9"
-    tree = OctreeBuilder().build(ds, coord_system="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     assert tree.level_counts
     assert tree.leaf_shape[0] > 0
 
 
 def test_octree_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
-    tree = OctreeBuilder().build(_build_regular_dataset(), coord_system="rpa")
+    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
     assert not hasattr(tree, "depth_for_level")
 
 
 def test_octree_trace_ray_returns_empty_for_non_increasing_interval() -> None:
     """Ray trace should return empty when `t_end <= t_start`."""
-    tree = OctreeBuilder().build(_build_regular_dataset(), coord_system="rpa")
+    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
     origin = np.array([0.0, 0.0, 0.0])
     direction = np.array([1.0, 0.0, 0.0])
     assert OctreeRayTracer(tree).trace(origin, direction, 1.0, 1.0) == []
@@ -424,7 +424,7 @@ def test_build_octree_helper_returns_unbound_tree_until_bind() -> None:
     tree = build_octree(
         ds,
         ds.corners,
-        coord_system="rpa",
+        tree_coord="rpa",
         cell_levels=cell_levels,
     )
     with pytest.raises(ValueError, match="not bound to a dataset"):
@@ -433,7 +433,7 @@ def test_build_octree_helper_returns_unbound_tree_until_bind() -> None:
     assert tree.ds is ds
 
 
-def test_build_octree_helper_stores_coord_system_metadata() -> None:
+def test_build_octree_helper_stores_tree_coord_metadata() -> None:
     """Helper should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_dataset()
     builder = OctreeBuilder()
@@ -441,11 +441,11 @@ def test_build_octree_helper_stores_coord_system_metadata() -> None:
     tree = build_octree(
         ds,
         ds.corners,
-        coord_system="xyz",
+        tree_coord="xyz",
         cell_levels=cell_levels,
     )
     assert isinstance(tree, CartesianOctree)
-    assert tree.coord_system == "xyz"
+    assert tree.tree_coord == "xyz"
 
 
 def test_build_octree_uses_explicit_corners_for_spherical_inference() -> None:
@@ -457,17 +457,17 @@ def test_build_octree_uses_explicit_corners_for_spherical_inference() -> None:
     tree = build_octree(
         ds,
         corners_full,
-        coord_system="rpa",
+        tree_coord="rpa",
         cell_levels=None,
     )
     assert tree.cell_levels is not None
     assert tree.cell_levels.shape[0] == corners_full.shape[0]
 
 
-def test_lookup_runs_for_xyz_coord_system() -> None:
+def test_lookup_runs_for_xyz_tree_coord() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds, coord_system="xyz")
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
     hit_xyz = tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), space="xyz")
     assert hit_xyz is not None
     assert not hasattr(tree, "lookup_rpa")
@@ -476,7 +476,7 @@ def test_lookup_runs_for_xyz_coord_system() -> None:
 def test_lookup_gap_returns_none_for_disjoint_cartesian_cells() -> None:
     """Cartesian lookup should return miss for points in an uncovered bbox gap."""
     ds = _build_disjoint_xyz_dataset()
-    tree = OctreeBuilder().build(ds, coord_system="xyz")
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
     q_gap = np.array([5.0, 0.5, 0.5], dtype=float)
     hit = tree.lookup_point(q_gap, space="xyz")
     assert hit is None
@@ -485,7 +485,7 @@ def test_lookup_gap_returns_none_for_disjoint_cartesian_cells() -> None:
 def test_lookup_gap_returns_none_for_disjoint_spherical_shells() -> None:
     """Spherical lookup should return miss for points in a radial gap."""
     ds = _build_disjoint_spherical_shell_dataset()
-    tree = OctreeBuilder().build(ds, coord_system="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     q_gap = np.array([3.0, 0.5 * math.pi, 0.5 * math.pi], dtype=float)
     hit = tree.lookup_point(q_gap, space="rpa")
     assert hit is None

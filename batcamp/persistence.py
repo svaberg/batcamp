@@ -8,12 +8,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .base import CoordSystem
+from .base import TreeCoord
 from .base import GridShape
 from .base import LevelCountTable
 from .base import OCTREE_FILE_VERSION
 from .base import Octree
-from .base import SUPPORTED_COORD_SYSTEMS
+from .base import SUPPORTED_TREE_COORDS
 
 
 @dataclass(frozen=True)
@@ -42,16 +42,16 @@ class OctreePersistenceState:
     level_counts: LevelCountTable
     min_level: int
     max_level: int
-    coord_system: CoordSystem
+    tree_coord: TreeCoord
     axis_rho_tol: float
 
     @classmethod
     def from_octree(cls, tree: Octree) -> "OctreePersistenceState":
         """Capture persistence-safe core metadata from one octree object."""
-        coord_system = str(tree.coord_system)
-        if coord_system not in SUPPORTED_COORD_SYSTEMS:
+        tree_coord = str(tree.tree_coord)
+        if tree_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
-                f"Unsupported coord_system '{coord_system}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+                f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
         return cls(
             leaf_shape=tuple(int(v) for v in tree.leaf_shape),
@@ -60,7 +60,7 @@ class OctreePersistenceState:
             level_counts=tuple(tuple(int(v) for v in row) for row in tree.level_counts),
             min_level=int(tree.min_level),
             max_level=int(tree.max_level),
-            coord_system=coord_system,
+            tree_coord=tree_coord,
             axis_rho_tol=float(tree.axis_rho_tol),
         )
 
@@ -70,7 +70,7 @@ class OctreePersistenceState:
         np.savez_compressed(
             path,
             version=int(OCTREE_FILE_VERSION),
-            coord_system=str(self.coord_system),
+            tree_coord=str(self.tree_coord),
             leaf_shape=np.asarray(self.leaf_shape, dtype=np.int64),
             root_shape=np.asarray(self.root_shape, dtype=np.int64),
             is_full=bool(self.is_full),
@@ -86,7 +86,7 @@ class OctreePersistenceState:
         """Load one persisted octree snapshot and array payload."""
         required = (
             "version",
-            "coord_system",
+            "tree_coord",
             "leaf_shape",
             "root_shape",
             "is_full",
@@ -107,11 +107,11 @@ class OctreePersistenceState:
                     f"Unsupported octree file version {version}; expected {OCTREE_FILE_VERSION}."
                 )
 
-            coord_system = str(data["coord_system"])
-            if coord_system not in SUPPORTED_COORD_SYSTEMS:
+            tree_coord = str(data["tree_coord"])
+            if tree_coord not in SUPPORTED_TREE_COORDS:
                 raise ValueError(
-                    f"Unsupported coord_system '{coord_system}' in octree file; "
-                    f"expected one of {SUPPORTED_COORD_SYSTEMS}."
+                    f"Unsupported tree_coord '{tree_coord}' in octree file; "
+                    f"expected one of {SUPPORTED_TREE_COORDS}."
                 )
 
             state = cls(
@@ -124,7 +124,7 @@ class OctreePersistenceState:
                 ),
                 min_level=int(data["min_level"]),
                 max_level=int(data["max_level"]),
-                coord_system=coord_system,
+                tree_coord=tree_coord,
                 axis_rho_tol=float(data["axis_rho_tol"]),
             )
             arrays = OctreeArrayState(cell_levels=np.asarray(data["cell_levels"], dtype=np.int64))
@@ -144,7 +144,7 @@ class OctreePersistenceState:
             level_counts=self.level_counts,
             min_level=self.min_level,
             max_level=self.max_level,
-            coord_system=self.coord_system,
+            tree_coord=self.tree_coord,
             cell_levels=arrays.cell_levels,
             axis_rho_tol=self.axis_rho_tol,
         )

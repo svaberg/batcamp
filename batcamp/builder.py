@@ -9,13 +9,13 @@ from typing import TypeAlias
 import numpy as np
 from starwinds_readplt.dataset import Dataset
 
-from .base import CoordSystem
+from .base import TreeCoord
 from .base import DEFAULT_AXIS_RHO_TOL
-from .base import DEFAULT_COORD_SYSTEM
+from .base import DEFAULT_TREE_COORD
 from .base import GridShape
 from .base import LevelCountTable
 from .base import Octree
-from .base import SUPPORTED_COORD_SYSTEMS
+from .base import SUPPORTED_TREE_COORDS
 from .base import octree_class_for_coord
 from .builder_cartesian import CartesianOctreeBuilder
 from .builder_spherical import SphericalOctreeBuilder
@@ -145,20 +145,20 @@ class OctreeBuilder:
         ds: Dataset,
         corners: np.ndarray,
         *,
-        coord_system: CoordSystem = DEFAULT_COORD_SYSTEM,
+        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
         cell_levels: np.ndarray | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> Octree:
         """Build an `Octree` from dataset geometry and optional level hints."""
-        tree_cls = octree_class_for_coord(coord_system)
-        if coord_system == "rpa":
+        tree_cls = octree_class_for_coord(tree_coord)
+        if tree_coord == "rpa":
             level_shapes, levels, min_level, max_level = self._rpa_builder.infer_level_shapes(
                 ds,
                 corners,
                 cell_levels=cell_levels,
                 axis_rho_tol=axis_rho_tol,
             )
-        elif coord_system == "xyz":
+        elif tree_coord == "xyz":
             level_shapes, levels, min_level, max_level = self._xyz_builder.infer_level_shapes(
                 ds,
                 corners,
@@ -166,7 +166,7 @@ class OctreeBuilder:
             )
         else:
             raise ValueError(
-                f"Unsupported coord_system '{coord_system}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+                f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
         leaf_shape, weighted_cells, _max_level = self._infer_leaf_shape_from_levels(level_shapes)
@@ -192,7 +192,7 @@ class OctreeBuilder:
             level_counts=level_counts,
             min_level=min_level,
             max_level=max_level,
-            coord_system=coord_system,
+            tree_coord=tree_coord,
             cell_levels=levels,
         )
 
@@ -200,14 +200,14 @@ class OctreeBuilder:
         self,
         ds: Dataset,
         *,
-        coord_system: CoordSystem = DEFAULT_COORD_SYSTEM,
+        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> Octree:
         """Build and bind an `Octree` directly from dataset geometry."""
-        if coord_system not in SUPPORTED_COORD_SYSTEMS:
+        if tree_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
-                f"Unsupported coord_system '{coord_system}'; "
-                f"expected one of {SUPPORTED_COORD_SYSTEMS}."
+                f"Unsupported tree_coord '{tree_coord}'; "
+                f"expected one of {SUPPORTED_TREE_COORDS}."
             )
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot build octree.")
@@ -215,7 +215,7 @@ class OctreeBuilder:
         tree = self.build_tree(
             ds,
             corners,
-            coord_system=coord_system,
+            tree_coord=tree_coord,
             cell_levels=None,
             axis_rho_tol=axis_rho_tol,
         )
@@ -227,18 +227,18 @@ def build_octree(
     ds: Dataset,
     corners: np.ndarray,
     *,
-    coord_system: CoordSystem = DEFAULT_COORD_SYSTEM,
+    tree_coord: TreeCoord = DEFAULT_TREE_COORD,
     cell_levels: np.ndarray | None = None,
 ) -> Octree:
     """Build an octree from precomputed metadata without binding."""
-    if coord_system not in SUPPORTED_COORD_SYSTEMS:
+    if tree_coord not in SUPPORTED_TREE_COORDS:
         raise ValueError(
-            f"Unsupported coord_system '{coord_system}'; "
-            f"expected one of {SUPPORTED_COORD_SYSTEMS}."
+            f"Unsupported tree_coord '{tree_coord}'; "
+            f"expected one of {SUPPORTED_TREE_COORDS}."
         )
     return OctreeBuilder().build_tree(
         ds,
         corners,
-        coord_system=coord_system,
+        tree_coord=tree_coord,
         cell_levels=cell_levels,
     )

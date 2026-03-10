@@ -699,7 +699,7 @@ class _SphericalCellLookup:
 class SphericalOctree(_SphericalCellLookup, Octree):
     """Octree specialization for spherical `(r, polar, azimuth)` datasets."""
 
-    COORD_SYSTEM: ClassVar[str | None] = "rpa"
+    TREE_COORD: ClassVar[str | None] = "rpa"
 
     @staticmethod
     def xyz_to_rpa(q: np.ndarray) -> tuple[float, float, float]:

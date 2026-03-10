@@ -7,6 +7,7 @@ import logging
 import math
 from pathlib import Path
 from time import perf_counter
+from typing import Callable
 from typing import Literal
 from typing import NamedTuple
 
@@ -16,9 +17,8 @@ import numpy as np
 from starwinds_readplt.dataset import Dataset
 
 from .base import DEFAULT_AXIS_RHO_TOL
-from .base import DEFAULT_COORD_SYSTEM
 from .base import Octree
-from .base import SUPPORTED_COORD_SYSTEMS
+from .base import SUPPORTED_TREE_COORDS
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
 from .spherical import LookupKernelState
@@ -30,7 +30,7 @@ _DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
 
 
-def _infer_coord_system_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> Literal["xyz", "rpa"]:
+def _infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> Literal["xyz", "rpa"]:
     """Infer tree coord-system from cell geometry (axis-aligned vs curvilinear)."""
     corners = getattr(ds, "corners", None)
     if corners is None:
@@ -438,7 +438,6 @@ class OctreeInterpolator:
         values: list[str] | None,
         *,
         fill_value: float | np.ndarray = np.nan,
-        query_coord: Literal["xyz", "rpa"] = "xyz",
         tree_coord: Literal["xyz", "rpa"] | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
         level_rtol: float = 1e-4,
@@ -451,7 +450,7 @@ class OctreeInterpolator:
         Consumes:
         - `ds`: point/corner dataset.
         - `values`: `None` for all dataset fields, or `list[str]` field names.
-        - Optional tree/build controls (`tree`, tolerances, `query_coord`, `tree_coord`).
+        - Optional tree/build controls (`tree`, tolerances, `tree_coord`).
         Returns:
         - `None`; constructs caches and compiles kernels for this interpolator.
         """
@@ -462,31 +461,25 @@ class OctreeInterpolator:
         self._corners = np.array(ds.corners, dtype=np.int64)
         self.fill_value = fill_value
 
-        self.query_coord = str(query_coord)
-        if self.query_coord not in {"xyz", "rpa"}:
-            logger.error("Invalid query_coord=%s", self.query_coord)
-            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
-
         logger.debug(
-            "Initializing OctreeInterpolator: query_coord=%s, points=%d, cells=%d",
-            self.query_coord,
+            "Initializing OctreeInterpolator: points=%d, cells=%d",
             int(ds.points.shape[0]),
             int(self._corners.shape[0]),
         )
         resolved_tree = tree
         if resolved_tree is None:
             if tree_coord is None:
-                build_coord = _infer_coord_system_from_geometry(ds)
+                build_coord = _infer_tree_coord_from_geometry(ds)
             else:
                 build_coord = str(tree_coord)
-                if build_coord not in SUPPORTED_COORD_SYSTEMS:
+                if build_coord not in SUPPORTED_TREE_COORDS:
                     raise ValueError(
-                        f"Unsupported tree_coord '{build_coord}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+                        f"Unsupported tree_coord '{build_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
                     )
             try:
                 resolved_tree = Octree.from_dataset(
                     ds,
-                    coord_system=build_coord,
+                    tree_coord=build_coord,
                     axis_rho_tol=axis_rho_tol,
                     level_rtol=level_rtol,
                     level_atol=level_atol,
@@ -502,7 +495,7 @@ class OctreeInterpolator:
                 )
                 resolved_tree = Octree.from_dataset(
                     ds,
-                    coord_system=alt_coord,
+                    tree_coord=alt_coord,
                     axis_rho_tol=axis_rho_tol,
                     level_rtol=level_rtol,
                     level_atol=level_atol,
@@ -512,19 +505,11 @@ class OctreeInterpolator:
         self.lookup = self.tree.lookup
         self.value_names: tuple[str, ...] = ()
         self._point_values = self._coerce_point_values(values)
-        self._coord_system = str(self.tree.coord_system)
-        if self._coord_system == "xyz" and self.query_coord != "xyz":
-            logger.error("query_coord='rpa' is only supported for spherical (coord_system='rpa') trees.")
-            raise ValueError("query_coord='rpa' is only supported for coord_system='rpa'.")
-        if self._coord_system == "rpa":
-            self._prepare_spherical_points()
-            self._prepare_trilinear_cache()
-        elif self._coord_system == "xyz":
-            self._prepare_trilinear_cache_xyz()
-        else:
-            raise NotImplementedError(
-                f"Unsupported tree coord_system '{self._coord_system}' for interpolation."
-            )
+        self._tree_coord = str(self.tree.tree_coord)
+        self._prepare_kernel_cache_impl: Callable[[], None]
+        self._warmup_impl: Callable[[np.ndarray, np.ndarray], None]
+        self._evaluate_impl: Callable[[np.ndarray, str, np.ndarray, bool], tuple[np.ndarray, np.ndarray]]
+        self._configure_backend()
         self.prepare_kernel_cache()
         self.warmup_kernels()
         logger.info(
@@ -533,6 +518,23 @@ class OctreeInterpolator:
             int(self.tree.depth),
             tuple(self.tree.leaf_shape),
         )
+
+    def _configure_backend(self) -> None:
+        """Bind backend-specific hooks and precompute geometry caches once."""
+        if self._tree_coord == "rpa":
+            self._prepare_spherical_points()
+            self._prepare_trilinear_cache()
+            self._prepare_kernel_cache_impl = self._prepare_kernel_cache_rpa
+            self._warmup_impl = self._warmup_rpa
+            self._evaluate_impl = self._evaluate_rpa
+            return
+        if self._tree_coord == "xyz":
+            self._prepare_trilinear_cache_xyz()
+            self._prepare_kernel_cache_impl = self._prepare_kernel_cache_xyz
+            self._warmup_impl = self._warmup_xyz
+            self._evaluate_impl = self._evaluate_xyz
+            return
+        raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
 
     def _coerce_point_values(self, values: list[str] | None) -> np.ndarray:
         """Resolve interpolation values into a point-centered array.
@@ -718,40 +720,40 @@ class OctreeInterpolator:
         self._point_values_2d = np.array(flat, dtype=np.float64, order="C")
         self._n_value_components = int(self._point_values_2d.shape[1])
         self._bin_to_corner_index = np.array(self._bin_to_corner, dtype=np.int64, order="C")
-        if self._coord_system == "rpa":
-            self._interp_state = InterpKernelState(
-                point_values_2d=self._point_values_2d,
-                corners=self._corners,
-                bin_to_corner=self._bin_to_corner_index,
-                cell_r0=self._cell_r0,
-                cell_rden=self._cell_rden,
-                cell_t0=self._cell_t0,
-                cell_tden=self._cell_tden,
-                cell_p_start=self._cell_p_start,
-                cell_p_width=self._cell_p_width,
-                cell_pden=self._cell_pden,
-                cell_phi_full=self._cell_phi_full,
-                cell_phi_tiny=self._cell_phi_tiny,
-            )
-            self._lookup_state = self.lookup._lookup_state
-            return
-        if self._coord_system == "xyz":
-            self._interp_state_xyz = CartesianInterpKernelState(
-                point_values_2d=self._point_values_2d,
-                corners=self._corners,
-                bin_to_corner=self._bin_to_corner_index,
-                cell_x0=self._cell_x0,
-                cell_xden=self._cell_xden,
-                cell_y0=self._cell_y0,
-                cell_yden=self._cell_yden,
-                cell_z0=self._cell_z0,
-                cell_zden=self._cell_zden,
-            )
-            self._lookup_state_xyz = self.lookup._lookup_state
-            return
-        raise NotImplementedError(
-            f"Unsupported tree coord_system '{self._coord_system}' for kernel cache preparation."
+        self._prepare_kernel_cache_impl()
+
+    def _prepare_kernel_cache_rpa(self) -> None:
+        """Build kernel-cache state for spherical tree backend."""
+        self._interp_state = InterpKernelState(
+            point_values_2d=self._point_values_2d,
+            corners=self._corners,
+            bin_to_corner=self._bin_to_corner_index,
+            cell_r0=self._cell_r0,
+            cell_rden=self._cell_rden,
+            cell_t0=self._cell_t0,
+            cell_tden=self._cell_tden,
+            cell_p_start=self._cell_p_start,
+            cell_p_width=self._cell_p_width,
+            cell_pden=self._cell_pden,
+            cell_phi_full=self._cell_phi_full,
+            cell_phi_tiny=self._cell_phi_tiny,
         )
+        self._lookup_state = self.lookup._lookup_state
+
+    def _prepare_kernel_cache_xyz(self) -> None:
+        """Build kernel-cache state for Cartesian tree backend."""
+        self._interp_state_xyz = CartesianInterpKernelState(
+            point_values_2d=self._point_values_2d,
+            corners=self._corners,
+            bin_to_corner=self._bin_to_corner_index,
+            cell_x0=self._cell_x0,
+            cell_xden=self._cell_xden,
+            cell_y0=self._cell_y0,
+            cell_yden=self._cell_yden,
+            cell_z0=self._cell_z0,
+            cell_zden=self._cell_zden,
+        )
+        self._lookup_state_xyz = self.lookup._lookup_state
 
     def _fill_value_vector(self) -> np.ndarray:
         """Normalize `fill_value` into one vector matching component count.
@@ -780,52 +782,96 @@ class OctreeInterpolator:
         if q_xyz.shape[0] == 0:
             q_xyz = np.zeros((1, 3), dtype=np.float64)
         fill = self._fill_value_vector()
-        if self._coord_system == "xyz":
-            _interp_batch_xyz_cartesian(
+        self._warmup_impl(q_xyz, fill)
+
+    def _warmup_xyz(self, q_xyz: np.ndarray, fill: np.ndarray) -> None:
+        """Warm up Cartesian lookup/interpolation kernels."""
+        _interp_batch_xyz_cartesian(
+            q_xyz,
+            fill,
+            self._interp_state_xyz,
+            self._lookup_state_xyz,
+        )
+
+    def _warmup_rpa(self, q_xyz: np.ndarray, fill: np.ndarray) -> None:
+        """Warm up spherical lookup/interpolation kernels."""
+        r, polar, azimuth = self.xyz_to_rpa(q_xyz[0])
+        q_rpa = np.array([[r, polar, azimuth]], dtype=np.float64, order="C")
+        try:
+            _interp_batch_xyz(
                 q_xyz,
                 fill,
-                self._interp_state_xyz,
-                self._lookup_state_xyz,
+                self._interp_state,
+                self._lookup_state,
             )
-            return
-        if self._coord_system == "rpa":
-            r, polar, azimuth = self.xyz_to_rpa(q_xyz[0])
-            q_rpa = np.array([[r, polar, azimuth]], dtype=np.float64, order="C")
-            try:
-                _interp_batch_xyz(
-                    q_xyz,
-                    fill,
-                    self._interp_state,
-                    self._lookup_state,
-                )
-                _interp_batch_rpa(
-                    q_rpa,
-                    fill,
-                    self._interp_state,
-                    self._lookup_state,
-                )
-            except ModuleNotFoundError as exc:
-                text = str(exc)
-                stale_refs = ("starwinds_analysis.octree.lookup", "starwinds_analysis.octree.core", "octree.lookup", "octree.core")
-                if not any(ref in text for ref in stale_refs):
-                    raise
-                logger.warning("Detected stale numba cache references; clearing local cache and retrying warmup.")
-                _clear_stale_numba_cache()
-                _interp_batch_xyz(
-                    q_xyz,
-                    fill,
-                    self._interp_state,
-                    self._lookup_state,
-                )
-                _interp_batch_rpa(
-                    q_rpa,
-                    fill,
-                    self._interp_state,
-                    self._lookup_state,
-                )
-            return
-        raise NotImplementedError(
-            f"Unsupported tree coord_system '{self._coord_system}' for kernel warmup."
+            _interp_batch_rpa(
+                q_rpa,
+                fill,
+                self._interp_state,
+                self._lookup_state,
+            )
+        except ModuleNotFoundError as exc:
+            text = str(exc)
+            stale_refs = ("starwinds_analysis.octree.lookup", "starwinds_analysis.octree.core", "octree.lookup", "octree.core")
+            if not any(ref in text for ref in stale_refs):
+                raise
+            logger.warning("Detected stale numba cache references; clearing local cache and retrying warmup.")
+            _clear_stale_numba_cache()
+            _interp_batch_xyz(
+                q_xyz,
+                fill,
+                self._interp_state,
+                self._lookup_state,
+            )
+            _interp_batch_rpa(
+                q_rpa,
+                fill,
+                self._interp_state,
+                self._lookup_state,
+            )
+
+    def _validate_query_coord(self, qs: str) -> None:
+        """Validate query coordinate mode against this interpolator backend."""
+        if qs not in {"xyz", "rpa"}:
+            logger.error("Invalid query_coord=%s in call", qs)
+            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
+        if self._tree_coord == "xyz" and qs == "rpa":
+            logger.error("query_coord='rpa' is not supported for Cartesian trees.")
+            raise ValueError("query_coord='rpa' is only supported for tree_coord='rpa'.")
+
+    def _evaluate_xyz(
+        self,
+        q_array: np.ndarray,
+        _qs: str,
+        fill: np.ndarray,
+        debug_timing: bool,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate interpolation on Cartesian backend."""
+        if debug_timing:
+            logger.debug("Interpolation kernel mode: compiled-xyz")
+        return _interp_batch_xyz_cartesian(
+            q_array,
+            fill,
+            self._interp_state_xyz,
+            self._lookup_state_xyz,
+        )
+
+    def _evaluate_rpa(
+        self,
+        q_array: np.ndarray,
+        qs: str,
+        fill: np.ndarray,
+        debug_timing: bool,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate interpolation on spherical backend."""
+        batch_kernel = _interp_batch_xyz if qs == "xyz" else _interp_batch_rpa
+        if debug_timing:
+            logger.debug("Interpolation kernel mode: compiled-rpa")
+        return batch_kernel(
+            q_array,
+            fill,
+            self._interp_state,
+            self._lookup_state,
         )
 
     @staticmethod
@@ -907,7 +953,7 @@ class OctreeInterpolator:
     def __call__(
         self,
         *args,
-        query_coord: Literal["xyz", "rpa"] | None = None,
+        query_coord: Literal["xyz", "rpa"] = "xyz",
         return_cell_ids: bool = False,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Evaluate interpolation at query points (optionally returning `cell_id`).
@@ -923,13 +969,8 @@ class OctreeInterpolator:
         - Interpolated values reshaped to broadcasted query shape.
         - When `return_cell_ids=True`, returns `(values, cell_ids)`.
         """
-        qs = self.query_coord if query_coord is None else str(query_coord)
-        if qs not in {"xyz", "rpa"}:
-            logger.error("Invalid query_coord=%s in call", qs)
-            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
-        if self._coord_system == "xyz" and qs == "rpa":
-            logger.error("query_coord='rpa' is not supported for Cartesian trees.")
-            raise ValueError("query_coord='rpa' is only supported for coord_system='rpa'.")
+        qs = str(query_coord)
+        self._validate_query_coord(qs)
 
         debug_timing = logger.isEnabledFor(logging.DEBUG)
         t0_total = perf_counter() if debug_timing else 0.0
@@ -944,29 +985,7 @@ class OctreeInterpolator:
         fill = self._fill_value_vector()
         t_after_fill = perf_counter() if debug_timing else 0.0
 
-        if self._coord_system == "rpa":
-            if qs == "xyz":
-                batch_kernel = _interp_batch_xyz
-            else:
-                batch_kernel = _interp_batch_rpa
-            if debug_timing:
-                logger.debug("Interpolation kernel mode: compiled-rpa")
-            out2d, cell_ids = batch_kernel(
-                q_array,
-                fill,
-                self._interp_state,
-                self._lookup_state,
-            )
-        else:
-            q_xyz = q_array
-            if debug_timing:
-                logger.debug("Interpolation kernel mode: compiled-xyz")
-            out2d, cell_ids = _interp_batch_xyz_cartesian(
-                q_xyz,
-                fill,
-                self._interp_state_xyz,
-                self._lookup_state_xyz,
-            )
+        out2d, cell_ids = self._evaluate_impl(q_array, qs, fill, debug_timing)
         t_after_kernel = perf_counter() if debug_timing else 0.0
 
         misses = int(np.count_nonzero(cell_ids < 0))
@@ -996,5 +1015,26 @@ class OctreeInterpolator:
         if return_cell_ids:
             return out, cell_ids.reshape(shape)
         return out
+
+    def __str__(self) -> str:
+        """Return a compact human-readable interpolator description."""
+        n_points = int(self._ds.points.shape[0]) if hasattr(self._ds, "points") else -1
+        n_cells = int(self._corners.shape[0])
+        n_fields = int(len(self.value_names))
+        if n_fields == 0:
+            field_text = "<none>"
+        elif n_fields <= 3:
+            field_text = ", ".join(self.value_names)
+        else:
+            field_text = f"{', '.join(self.value_names[:3])}, ..."
+        return (
+            "OctreeInterpolator("
+            f"tree_coord={self._tree_coord}, "
+            f"fields={n_fields}[{field_text}], "
+            f"n_points={n_points}, "
+            f"n_cells={n_cells}, "
+            f"n_components={int(self._n_value_components)}"
+            ")"
+        )
 
 logger.addHandler(logging.NullHandler())

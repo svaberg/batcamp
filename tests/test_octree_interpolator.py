@@ -27,7 +27,7 @@ def octree_context() -> dict[str, object]:
     corners = np.asarray(ds.corners, dtype=np.int64)
     tree = Octree.from_dataset(
         ds,
-        coord_system="rpa",
+        tree_coord="rpa",
         axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
         level_rtol=1e-4,
         level_atol=1e-9,

@@ -1009,8 +1009,8 @@ class OctreeRayTracer:
             return []
 
         lookup = self.tree.lookup
-        coord_system = str(self.tree.coord_system)
-        if coord_system == "xyz":
+        tree_coord = str(self.tree.tree_coord)
+        if tree_coord == "xyz":
             try:
                 n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
                     o,
@@ -1032,7 +1032,7 @@ class OctreeRayTracer:
                 ]
             except Exception:
                 logger.debug("Falling back to Python ray tracer path for xyz tree.", exc_info=True)
-        elif coord_system == "rpa":
+        elif tree_coord == "rpa":
             try:
                 n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
                     o,
@@ -1315,7 +1315,7 @@ class OctreeRayInterpolator:
         )
         if (
             is_axis_aligned
-            and str(self.tree.coord_system) == "xyz"
+            and str(self.tree.tree_coord) == "xyz"
             and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
             and hasattr(self.interpolator, "_interp_state_xyz")
             and hasattr(self.tree.lookup, "_lookup_state")
@@ -1334,7 +1334,7 @@ class OctreeRayInterpolator:
             )
 
         if (
-            str(self.tree.coord_system) == "xyz"
+            str(self.tree.tree_coord) == "xyz"
             and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
             and hasattr(self.interpolator, "_interp_state_xyz")
             and hasattr(self.tree.lookup, "_lookup_state")
@@ -1351,7 +1351,7 @@ class OctreeRayInterpolator:
                 self.interpolator._interp_state_xyz,
             )
 
-        use_xyz_kernel = bool(str(self.tree.coord_system) == "xyz" and hasattr(self.tree.lookup, "_lookup_state"))
+        use_xyz_kernel = bool(str(self.tree.tree_coord) == "xyz" and hasattr(self.tree.lookup, "_lookup_state"))
         trace_max_steps = 16384
         trace_boundary_tol = 1e-9
         out_2d: np.ndarray | None = None
@@ -1513,7 +1513,7 @@ class OctreeRayInterpolator:
         midpoints_list: list[tuple[float, float, float]] = []
         weights_list: list[float] = []
         global_count = 0
-        use_xyz_kernel = bool(str(self.tree.coord_system) == "xyz" and hasattr(self.tree.lookup, "_lookup_state"))
+        use_xyz_kernel = bool(str(self.tree.tree_coord) == "xyz" and hasattr(self.tree.lookup, "_lookup_state"))
         trace_max_steps = 16384
         trace_boundary_tol = 1e-9
 
@@ -1673,7 +1673,7 @@ class OctreeRayInterpolator:
         )
         if (
             is_axis_aligned
-            and str(self.tree.coord_system) == "xyz"
+            and str(self.tree.tree_coord) == "xyz"
             and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
             and hasattr(self.interpolator, "_interp_state_xyz")
             and hasattr(self.tree.lookup, "_lookup_state")
@@ -1692,7 +1692,7 @@ class OctreeRayInterpolator:
             )
 
         if (
-            str(self.tree.coord_system) == "xyz"
+            str(self.tree.tree_coord) == "xyz"
             and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
             and hasattr(self.interpolator, "_interp_state_xyz")
             and hasattr(self.tree.lookup, "_lookup_state")
@@ -1730,7 +1730,7 @@ class OctreeRayInterpolator:
         is linear within each cell segment, so endpoint values define exact
         `f(t)=m*t+b` pieces without tet subdivision.
         """
-        if str(self.tree.coord_system) != "xyz":
+        if str(self.tree.tree_coord) != "xyz":
             return None
         if not segments:
             return []

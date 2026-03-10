@@ -1,12 +1,64 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tarfile
+
+import pooch
+
+
+_G2211_URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
+_G2211_SHA256 = "c31a32aab08cc20d5b643bba734fd7220e6b369e691f55f88a3a08cc5b2a2136"
+
+
+def _unique_match(paths: list[Path], *, name: str) -> Path:
+    """Return the only match for `name` or raise for none/ambiguous results."""
+    if not paths:
+        raise FileNotFoundError(name)
+    if len(paths) > 1:
+        raise FileNotFoundError(f"Expected unique match for {name}, found {len(paths)} entries: {paths}")
+    return paths[0]
+
+
+def _find_in_example_data(root: Path, name: str) -> Path:
+    """Find one file by basename under repo `example_data` recursively."""
+    return _unique_match(sorted(root.rglob(name)), name=name)
+
+
+def _fetch_from_g2211_archive(name: str) -> Path:
+    """Fetch one uniquely named file from the Zenodo G2211 archive via pooch."""
+    archive_path = Path(
+        pooch.retrieve(
+            url=_G2211_URL,
+            known_hash=_G2211_SHA256,
+            progressbar=False,
+        )
+    )
+    with tarfile.open(archive_path, "r:gz") as tar:
+        member_names = sorted(
+            m.name for m in tar.getmembers() if m.isfile() and Path(m.name).name == name
+        )
+    member = _unique_match([Path(m) for m in member_names], name=name).as_posix()
+    extracted = pooch.retrieve(
+        url=_G2211_URL,
+        known_hash=_G2211_SHA256,
+        progressbar=False,
+        processor=pooch.Untar(members=[member]),
+    )
+    if isinstance(extracted, (list, tuple)):
+        extracted = extracted[0]
+    return Path(extracted)
 
 
 def data_file(name: str) -> Path:
-    """Return absolute path to a file in this repo's example_data folder."""
+    """Resolve one sample file by basename.
+
+    Resolution order:
+    1. Find uniquely in this repo's `example_data` tree.
+    2. Fallback to Zenodo G2211 archive via `pooch`, then extract that one member.
+    """
     root = Path(__file__).resolve().parents[1]
-    path = root / "example_data" / name
-    if not path.exists():
-        raise FileNotFoundError(f"Missing example data file: {path}")
-    return path
+    example_data_root = root / "example_data"
+    try:
+        return _find_in_example_data(example_data_root, name)
+    except FileNotFoundError:
+        return _fetch_from_g2211_archive(name)

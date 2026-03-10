@@ -17,7 +17,7 @@ def advanced_context() -> tuple[Dataset, Octree]:
     input_file = data_file("difflevels-3d__var_1_n00000000.dat")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
-    tree = Octree.from_dataset(ds, coord_system="rpa")
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
     return ds, tree
 
 
@@ -111,8 +111,8 @@ def test_interpolator_matches_when_using_loaded_tree(advanced_context, tmp_path)
     tree.save(path)
     loaded = Octree.load(path, ds=ds)
 
-    interp_a = OctreeInterpolator(ds, ["Rho [g/cm^3]"], query_coord="xyz", tree=tree)
-    interp_b = OctreeInterpolator(ds, ["Rho [g/cm^3]"], query_coord="xyz", tree=loaded)
+    interp_a = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
+    interp_b = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=loaded)
 
     queries = _select_center_queries(tree, n_query=64, seed=7)
     vals_a, cids_a = interp_a(queries, return_cell_ids=True)
