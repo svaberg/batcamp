@@ -1,6 +1,5 @@
 # TODO
 
-- [ ] Do not create additional modules for now; reduce complexity in existing modules first.
 - [x] Remove or justify `OctreeInterpolator.rpa_to_xyz`, which is currently unused in the repo.
 - [x] Remove or use dead argument `bisect_iters` in `_trace_segments_xyz_kernel` (currently ignored).
 - [x] Align backend evaluator signatures to remove dead placeholder args (for example `_evaluate_xyz(..., _qs, ...)`).
