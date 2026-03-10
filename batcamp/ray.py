@@ -111,7 +111,6 @@ def _trace_segments_xyz_kernel(
     t_start: float,
     t_end: float,
     max_steps: int,
-    bisect_iters: int,
     boundary_tol: float,
     lookup_state: CartesianLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
@@ -1018,7 +1017,6 @@ class OctreeRayTracer:
                     t0,
                     t1,
                     int(max_steps),
-                    int(bisect_iters),
                     float(boundary_tol),
                     lookup._lookup_state,
                 )
@@ -1375,7 +1373,6 @@ class OctreeRayInterpolator:
                         t0,
                         t1,
                         int(trace_max_steps),
-                        0,
                         float(trace_boundary_tol),
                         lookup_state,
                     )
@@ -1531,7 +1528,6 @@ class OctreeRayInterpolator:
                         t0,
                         t1,
                         int(trace_max_steps),
-                        0,
                         float(trace_boundary_tol),
                         lookup_state,
                     )

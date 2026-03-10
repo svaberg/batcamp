@@ -508,7 +508,6 @@ class OctreeInterpolator:
         self._tree_coord = str(self.tree.tree_coord)
         self._prepare_kernel_cache_impl: Callable[[], None]
         self._warmup_impl: Callable[[np.ndarray, np.ndarray], None]
-        self._evaluate_impl: Callable[[np.ndarray, str, np.ndarray, bool], tuple[np.ndarray, np.ndarray]]
         self._configure_backend()
         self.prepare_kernel_cache()
         self.warmup_kernels()
@@ -526,13 +525,11 @@ class OctreeInterpolator:
             self._prepare_trilinear_cache()
             self._prepare_kernel_cache_impl = self._prepare_kernel_cache_rpa
             self._warmup_impl = self._warmup_rpa
-            self._evaluate_impl = self._evaluate_rpa
             return
         if self._tree_coord == "xyz":
             self._prepare_trilinear_cache_xyz()
             self._prepare_kernel_cache_impl = self._prepare_kernel_cache_xyz
             self._warmup_impl = self._warmup_xyz
-            self._evaluate_impl = self._evaluate_xyz
             return
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
 
@@ -842,7 +839,6 @@ class OctreeInterpolator:
     def _evaluate_xyz(
         self,
         q_array: np.ndarray,
-        _qs: str,
         fill: np.ndarray,
         debug_timing: bool,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -873,21 +869,6 @@ class OctreeInterpolator:
             self._interp_state,
             self._lookup_state,
         )
-
-    @staticmethod
-    def rpa_to_xyz(r: float, polar: float, azimuth: float) -> tuple[float, float, float]:
-        """Convert one spherical point to Cartesian `(x, y, z)`.
-
-        Consumes:
-        - Spherical query scalars `r`, `polar`, `azimuth`.
-        Returns:
-        - Cartesian coordinate tuple `(x, y, z)`.
-        """
-        rr = float(r)
-        pp = float(polar)
-        aa = float(azimuth)
-        sin_p = math.sin(pp)
-        return rr * sin_p * math.cos(aa), rr * sin_p * math.sin(aa), rr * math.cos(pp)
 
     @staticmethod
     def prepare_queries(*args) -> tuple[np.ndarray, tuple[int, ...]]:
@@ -985,7 +966,10 @@ class OctreeInterpolator:
         fill = self._fill_value_vector()
         t_after_fill = perf_counter() if debug_timing else 0.0
 
-        out2d, cell_ids = self._evaluate_impl(q_array, qs, fill, debug_timing)
+        if self._tree_coord == "rpa":
+            out2d, cell_ids = self._evaluate_rpa(q_array, qs, fill, debug_timing)
+        else:
+            out2d, cell_ids = self._evaluate_xyz(q_array, fill, debug_timing)
         t_after_kernel = perf_counter() if debug_timing else 0.0
 
         misses = int(np.count_nonzero(cell_ids < 0))
