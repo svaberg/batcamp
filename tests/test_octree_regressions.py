@@ -36,7 +36,7 @@ def test_regression_xyz_to_rpa_is_stable_and_finite() -> None:
 def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
     """No-tree interpolator should recover from invalid xyz reconstruction on spherical data."""
     ds, _tree = regression_context
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], query_space="xyz", tree=None)
+    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], query_coord="xyz", tree=None)
     assert interp.tree.coord_system == "rpa"
 
     q = np.array([1.0, 0.0, 0.0], dtype=float)

@@ -438,8 +438,8 @@ class OctreeInterpolator:
         values: list[str] | None,
         *,
         fill_value: float | np.ndarray = np.nan,
-        query_space: Literal["xyz", "rpa"] = "xyz",
-        coord_system: Literal["xyz", "rpa"] | None = None,
+        query_coord: Literal["xyz", "rpa"] = "xyz",
+        tree_coord: Literal["xyz", "rpa"] | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
         level_rtol: float = 1e-4,
         level_atol: float = 1e-9,
@@ -451,7 +451,7 @@ class OctreeInterpolator:
         Consumes:
         - `ds`: point/corner dataset.
         - `values`: `None` for all dataset fields, or `list[str]` field names.
-        - Optional tree/build controls (`tree`, tolerances, `query_space`).
+        - Optional tree/build controls (`tree`, tolerances, `query_coord`, `tree_coord`).
         Returns:
         - `None`; constructs caches and compiles kernels for this interpolator.
         """
@@ -461,26 +461,27 @@ class OctreeInterpolator:
             raise ValueError("Dataset has no cell connectivity (corners).")
         self._corners = np.array(ds.corners, dtype=np.int64)
         self.fill_value = fill_value
-        self.query_space = str(query_space)
-        if self.query_space not in {"xyz", "rpa"}:
-            logger.error("Invalid query_space=%s", self.query_space)
-            raise ValueError("query_space must be 'xyz' or 'rpa'.")
+
+        self.query_coord = str(query_coord)
+        if self.query_coord not in {"xyz", "rpa"}:
+            logger.error("Invalid query_coord=%s", self.query_coord)
+            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
 
         logger.debug(
-            "Initializing OctreeInterpolator: query_space=%s, points=%d, cells=%d",
-            self.query_space,
+            "Initializing OctreeInterpolator: query_coord=%s, points=%d, cells=%d",
+            self.query_coord,
             int(ds.points.shape[0]),
             int(self._corners.shape[0]),
         )
         resolved_tree = tree
         if resolved_tree is None:
-            if coord_system is None:
+            if tree_coord is None:
                 build_coord = _infer_coord_system_from_geometry(ds)
             else:
-                build_coord = str(coord_system)
+                build_coord = str(tree_coord)
                 if build_coord not in SUPPORTED_COORD_SYSTEMS:
                     raise ValueError(
-                        f"Unsupported coord_system '{build_coord}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+                        f"Unsupported tree_coord '{build_coord}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
                     )
             try:
                 resolved_tree = Octree.from_dataset(
@@ -491,11 +492,11 @@ class OctreeInterpolator:
                     level_atol=level_atol,
                 )
             except ValueError:
-                if coord_system is not None:
+                if tree_coord is not None:
                     raise
                 alt_coord = "rpa" if build_coord == "xyz" else "xyz"
                 logger.info(
-                    "Falling back to coord_system='%s' after '%s' tree reconstruction failed.",
+                    "Falling back to tree_coord='%s' after '%s' tree reconstruction failed.",
                     alt_coord,
                     build_coord,
                 )
@@ -512,9 +513,9 @@ class OctreeInterpolator:
         self.value_names: tuple[str, ...] = ()
         self._point_values = self._coerce_point_values(values)
         self._coord_system = str(self.tree.coord_system)
-        if self._coord_system == "xyz" and self.query_space != "xyz":
-            logger.error("query_space='rpa' is only supported for spherical (coord_system='rpa') trees.")
-            raise ValueError("query_space='rpa' is only supported for coord_system='rpa'.")
+        if self._coord_system == "xyz" and self.query_coord != "xyz":
+            logger.error("query_coord='rpa' is only supported for spherical (coord_system='rpa') trees.")
+            raise ValueError("query_coord='rpa' is only supported for coord_system='rpa'.")
         if self._coord_system == "rpa":
             self._prepare_spherical_points()
             self._prepare_trilinear_cache()
@@ -906,7 +907,7 @@ class OctreeInterpolator:
     def __call__(
         self,
         *args,
-        query_space: Literal["xyz", "rpa"] | None = None,
+        query_coord: Literal["xyz", "rpa"] | None = None,
         return_cell_ids: bool = False,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Evaluate interpolation at query points (optionally returning `cell_id`).
@@ -917,18 +918,18 @@ class OctreeInterpolator:
         - evaluate cached trilinear interpolation.
         Consumes:
         - Query arguments in supported scalar/array forms.
-        - Optional `query_space` override and `return_cell_ids` flag.
+        - Optional `query_coord` override and `return_cell_ids` flag.
         Returns:
         - Interpolated values reshaped to broadcasted query shape.
         - When `return_cell_ids=True`, returns `(values, cell_ids)`.
         """
-        qs = self.query_space if query_space is None else str(query_space)
+        qs = self.query_coord if query_coord is None else str(query_coord)
         if qs not in {"xyz", "rpa"}:
-            logger.error("Invalid query_space=%s in call", qs)
-            raise ValueError("query_space must be 'xyz' or 'rpa'.")
+            logger.error("Invalid query_coord=%s in call", qs)
+            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
         if self._coord_system == "xyz" and qs == "rpa":
-            logger.error("query_space='rpa' is not supported for Cartesian trees.")
-            raise ValueError("query_space='rpa' is only supported for coord_system='rpa'.")
+            logger.error("query_coord='rpa' is not supported for Cartesian trees.")
+            raise ValueError("query_coord='rpa' is only supported for coord_system='rpa'.")
 
         debug_timing = logger.isEnabledFor(logging.DEBUG)
         t0_total = perf_counter() if debug_timing else 0.0

@@ -1250,7 +1250,7 @@ class OctreeRayInterpolator:
         """Sample interpolated values at uniform `t` points on one ray.
 
         This method is coord-system agnostic: it evaluates values through the
-        interpolator's generic callable interface with `query_space="xyz"`.
+        interpolator's generic callable interface with `query_coord="xyz"`.
         """
         if int(n_samples) <= 0:
             raise ValueError("n_samples must be positive.")
@@ -1263,7 +1263,7 @@ class OctreeRayInterpolator:
         query_xyz = o[None, :] + t_values[:, None] * d[None, :]
         values, cell_ids = self.interpolator(
             query_xyz,
-            query_space="xyz",
+            query_coord="xyz",
             return_cell_ids=True,
         )
         return t_values, values, np.array(cell_ids, dtype=np.int64), segments
@@ -1436,7 +1436,7 @@ class OctreeRayInterpolator:
 
             values, cell_ids = self.interpolator(
                 query_xyz,
-                query_space="xyz",
+                query_coord="xyz",
                 return_cell_ids=True,
             )
             value_arr = np.asarray(values, dtype=float)
@@ -1611,7 +1611,7 @@ class OctreeRayInterpolator:
 
         values, cell_ids = self.interpolator(
             mids,
-            query_space="xyz",
+            query_coord="xyz",
             return_cell_ids=True,
         )
         value_arr = np.asarray(values, dtype=float)
@@ -1752,7 +1752,7 @@ class OctreeRayInterpolator:
 
         values, cell_ids = self.interpolator(
             query_xyz,
-            query_space="xyz",
+            query_coord="xyz",
             return_cell_ids=True,
         )
         cid_arr = np.asarray(cell_ids, dtype=np.int64).reshape(-1)

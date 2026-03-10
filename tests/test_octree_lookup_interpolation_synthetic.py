@@ -181,7 +181,7 @@ def test_synthetic_interpolation_matches_linear_field_in_xyz(synthetic_context) 
     """xyz interpolation should reconstruct an exactly linear spherical field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(ds, ["LinField"], query_space="xyz", tree=tree)
+    interp = OctreeInterpolator(ds, ["LinField"], query_coord="xyz", tree=tree)
     rng = np.random.default_rng(22)
     valid = _interpolation_valid_cells(tree, interp=interp)
     assert valid.size > 0
@@ -198,7 +198,7 @@ def test_synthetic_interpolation_matches_linear_field_in_rpa_with_wrap(synthetic
     """rpa interpolation should normalize wrapped azimuth and match linear field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(ds, ["LinField"], query_space="rpa", tree=tree)
+    interp = OctreeInterpolator(ds, ["LinField"], query_coord="rpa", tree=tree)
     rng = np.random.default_rng(33)
     valid = _interpolation_valid_cells(tree, interp=interp)
     assert valid.size > 0
@@ -217,7 +217,7 @@ def test_synthetic_vector_interpolation_returns_expected_shape_and_values(synthe
     """Vector-valued interpolation should preserve trailing dims and nodal exactness."""
     ds, tree, _linear_field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(ds, ["LinField", "LinField2", "LinFieldConst"], query_space="xyz", tree=tree)
+    interp = OctreeInterpolator(ds, ["LinField", "LinField2", "LinFieldConst"], query_coord="xyz", tree=tree)
 
     rng = np.random.default_rng(44)
     valid = _interpolation_valid_cells(tree, interp=interp)
@@ -237,7 +237,7 @@ def test_synthetic_outside_points_use_fill_value_and_negative_cell_id(synthetic_
     """Outside-domain synthetic points should return fill value and cell_id=-1."""
     ds, tree, _field, _coeffs = synthetic_context
     fill = -999.0
-    interp = OctreeInterpolator(ds, ["LinField"], query_space="xyz", tree=tree, fill_value=fill)
+    interp = OctreeInterpolator(ds, ["LinField"], query_coord="xyz", tree=tree, fill_value=fill)
 
     inside = np.array(tree.lookup._cell_centers[0]).reshape(1, 3)
     outside = np.array([[100.0, 0.0, 0.0], [-100.0, 0.0, 0.0]])
