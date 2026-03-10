@@ -12,7 +12,7 @@ from numba import njit
 from numba import prange
 import numpy as np
 
-from .base import Octree
+from .octree import Octree
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
 from .spherical import LookupKernelState

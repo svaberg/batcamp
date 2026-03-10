@@ -10,10 +10,10 @@ from typing import NamedTuple
 from numba import njit
 import numpy as np
 
-from .base import GridIndex
-from .base import GridPath
-from .base import LookupHit
-from .base import Octree
+from .octree import GridIndex
+from .octree import GridPath
+from .octree import LookupHit
+from .octree import Octree
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10

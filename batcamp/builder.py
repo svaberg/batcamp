@@ -9,14 +9,14 @@ from typing import TypeAlias
 import numpy as np
 from starwinds_readplt.dataset import Dataset
 
-from .base import TreeCoord
-from .base import DEFAULT_AXIS_RHO_TOL
-from .base import DEFAULT_TREE_COORD
-from .base import GridShape
-from .base import LevelCountTable
-from .base import Octree
-from .base import SUPPORTED_TREE_COORDS
-from .base import octree_class_for_coord
+from .octree import TreeCoord
+from .octree import DEFAULT_AXIS_RHO_TOL
+from .octree import DEFAULT_TREE_COORD
+from .octree import GridShape
+from .octree import LevelCountTable
+from .octree import Octree
+from .octree import SUPPORTED_TREE_COORDS
+from .octree import octree_class_for_coord
 from .builder_cartesian import CartesianOctreeBuilder
 from .builder_spherical import SphericalOctreeBuilder
 

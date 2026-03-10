@@ -16,9 +16,9 @@ from numba import prange
 import numpy as np
 from starwinds_readplt.dataset import Dataset
 
-from .base import DEFAULT_AXIS_RHO_TOL
-from .base import Octree
-from .base import SUPPORTED_TREE_COORDS
+from .octree import DEFAULT_AXIS_RHO_TOL
+from .octree import Octree
+from .octree import SUPPORTED_TREE_COORDS
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
 from .spherical import LookupKernelState

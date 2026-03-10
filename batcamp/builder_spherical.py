@@ -9,7 +9,7 @@ from typing import TypeAlias
 import numpy as np
 from starwinds_readplt.dataset import Dataset
 
-from .base import DEFAULT_AXIS_RHO_TOL
+from .octree import DEFAULT_AXIS_RHO_TOL
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""

@@ -8,12 +8,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .base import TreeCoord
-from .base import GridShape
-from .base import LevelCountTable
-from .base import OCTREE_FILE_VERSION
-from .base import Octree
-from .base import SUPPORTED_TREE_COORDS
+from .octree import TreeCoord
+from .octree import GridShape
+from .octree import LevelCountTable
+from .octree import OCTREE_FILE_VERSION
+from .octree import Octree
+from .octree import SUPPORTED_TREE_COORDS
 
 
 @dataclass(frozen=True)
