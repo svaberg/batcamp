@@ -12,3 +12,4 @@
 - [x] Unify tree auto-build fallback logic so there is one source of truth instead of split behavior paths.
 - [x] Reassess and eventually remove stale-module numba cache cleanup paths once legacy cache compatibility is no longer needed.
 - [x] Reduce complexity in oversized modules (`interpolator.py`, `ray.py`) in-place (no new modules for now).
+- [ ] Apply default-`xyz` naming consistently in interpolation internals: default path keeps base name, non-default path gets explicit suffix; rename `_trilinear_from_cell` / `_trilinear_from_cell_xyz` accordingly.
