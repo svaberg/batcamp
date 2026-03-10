@@ -30,6 +30,18 @@ def _select_center_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarr
     return centers[idx]
 
 
+def _select_resolvable_center_near_radius(tree: Octree, *, target_r: float) -> np.ndarray:
+    """Pick a resolvable center with radius closest to `target_r`."""
+    centers = np.asarray(tree.lookup._cell_centers, dtype=float)
+    center_r = np.linalg.norm(centers, axis=1)
+    order = np.argsort(np.abs(center_r - float(target_r)))
+    for idx in order.tolist():
+        q = np.asarray(centers[int(idx)], dtype=float)
+        if tree.lookup_point(q, space="xyz") is not None:
+            return q
+    raise AssertionError("No resolvable center found near requested radius.")
+
+
 @pytest.mark.slow
 def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
     """Many interior points should map to the same cell in xyz and rpa lookup spaces."""
@@ -48,10 +60,7 @@ def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
 def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> None:
     """Ray traversal segments must be monotone and contain their midpoint sample."""
     _ds, tree = advanced_context
-    centers = np.asarray(tree.lookup._cell_centers, dtype=float)
-    center_r = np.linalg.norm(centers, axis=1)
-    start_id = int(np.argmin(np.abs(center_r - 1.0)))
-    origin = np.asarray(centers[start_id], dtype=float)
+    origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
     direction = np.array([1.0, 0.32, 0.11], dtype=float)
     t_start = 0.0
     t_end = 6.5
@@ -80,10 +89,7 @@ def test_loaded_tree_matches_original_ray_walk(advanced_context, tmp_path) -> No
     tree.save(path)
     loaded = Octree.load(path, ds=tree.ds)
 
-    centers = np.asarray(tree.lookup._cell_centers, dtype=float)
-    center_r = np.linalg.norm(centers, axis=1)
-    start_id = int(np.argmin(np.abs(center_r - 1.0)))
-    origin = np.asarray(centers[start_id], dtype=float)
+    origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
     direction = np.array([1.0, 0.32, 0.11], dtype=float)
     t_start = 0.0
     t_end = 6.5
