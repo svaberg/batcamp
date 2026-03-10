@@ -18,6 +18,7 @@ from starwinds_readplt.dataset import Dataset
 from .base import DEFAULT_AXIS_RHO_TOL
 from .base import DEFAULT_COORD_SYSTEM
 from .base import Octree
+from .base import SUPPORTED_COORD_SYSTEMS
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
 from .spherical import LookupKernelState
@@ -408,6 +409,7 @@ class OctreeInterpolator:
         *,
         fill_value: float | np.ndarray = np.nan,
         query_space: Literal["xyz", "rpa"] = "xyz",
+        coord_system: Literal["xyz", "rpa"] | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
         level_rtol: float = 1e-4,
         level_atol: float = 1e-9,
@@ -442,14 +444,35 @@ class OctreeInterpolator:
         )
         resolved_tree = tree
         if resolved_tree is None:
-            build_coord = "rpa" if self.query_space == "rpa" else DEFAULT_COORD_SYSTEM
-            resolved_tree = Octree.from_dataset(
-                ds,
-                coord_system=build_coord,
-                axis_rho_tol=axis_rho_tol,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
+            if coord_system is None:
+                build_coord = "rpa" if self.query_space == "rpa" else DEFAULT_COORD_SYSTEM
+            else:
+                build_coord = str(coord_system)
+                if build_coord not in SUPPORTED_COORD_SYSTEMS:
+                    raise ValueError(
+                        f"Unsupported coord_system '{build_coord}'; expected one of {SUPPORTED_COORD_SYSTEMS}."
+                    )
+            try:
+                resolved_tree = Octree.from_dataset(
+                    ds,
+                    coord_system=build_coord,
+                    axis_rho_tol=axis_rho_tol,
+                    level_rtol=level_rtol,
+                    level_atol=level_atol,
+                )
+            except ValueError:
+                if coord_system is not None or build_coord != "xyz" or self.query_space != "xyz":
+                    raise
+                logger.info(
+                    "Falling back to coord_system='rpa' after xyz tree reconstruction failed."
+                )
+                resolved_tree = Octree.from_dataset(
+                    ds,
+                    coord_system="rpa",
+                    axis_rho_tol=axis_rho_tol,
+                    level_rtol=level_rtol,
+                    level_atol=level_atol,
+                )
         resolved_tree.bind(ds, axis_rho_tol=axis_rho_tol)
         self.tree = resolved_tree
         self.lookup = self.tree.lookup

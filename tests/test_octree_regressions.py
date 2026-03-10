@@ -6,6 +6,7 @@ from starwinds_readplt.dataset import Dataset
 
 from sample_data_helper import data_file
 from batcamp import Octree
+from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import SphericalOctree
 
@@ -30,6 +31,18 @@ def test_regression_xyz_to_rpa_is_stable_and_finite() -> None:
     assert np.isclose(r, 1.0, rtol=0.0, atol=1e-15)
     assert np.isclose(polar, np.pi / 2.0, rtol=0.0, atol=1e-15)
     assert np.isclose(azimuth, 0.0, rtol=0.0, atol=1e-15)
+
+
+def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
+    """No-tree interpolator should recover from invalid xyz reconstruction on spherical data."""
+    ds, _tree = regression_context
+    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], query_space="xyz", tree=None)
+    assert interp.tree.coord_system == "rpa"
+
+    q = np.array([1.0, 0.0, 0.0], dtype=float)
+    vals, cids = interp(q, return_cell_ids=True)
+    assert int(np.asarray(cids).reshape(-1)[0]) >= 0
+    assert np.isfinite(float(np.asarray(vals).reshape(-1)[0]))
 
 
 @pytest.mark.slow
