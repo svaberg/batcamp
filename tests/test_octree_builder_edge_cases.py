@@ -5,12 +5,12 @@ import math
 import numpy as np
 import pytest
 
-from octree import Octree
-from octree import CartesianOctree
-from octree import OctreeInterpolator
-from octree import OctreeRayTracer
-from octree import OctreeBuilder
-from octree import build_octree
+from batcamp import Octree
+from batcamp import CartesianOctree
+from batcamp import OctreeInterpolator
+from batcamp import OctreeRayTracer
+from batcamp import OctreeBuilder
+from batcamp import build_octree
 
 
 class _FakeDataset:

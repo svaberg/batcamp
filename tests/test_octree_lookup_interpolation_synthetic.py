@@ -5,8 +5,8 @@ import math
 import numpy as np
 import pytest
 
-from octree import Octree
-from octree import OctreeInterpolator
+from batcamp import Octree
+from batcamp import OctreeInterpolator
 
 
 class _SyntheticDataset:

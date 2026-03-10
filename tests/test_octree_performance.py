@@ -8,7 +8,7 @@ import pytest
 from starwinds_readplt.dataset import Dataset
 
 from sample_data_helper import data_file
-from octree import OctreeInterpolator
+from batcamp import OctreeInterpolator
 
 pytestmark = [
     pytest.mark.design_lockin,

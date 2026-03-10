@@ -5,14 +5,14 @@ import pytest
 from starwinds_readplt.dataset import Dataset
 
 from sample_data_helper import data_file
-from octree import DEFAULT_AXIS_RHO_TOL
-from octree import DEFAULT_MIN_VALID_CELL_FRACTION
-from octree import Octree
-from octree import OctreeBuilder
-from octree import SphericalOctree
-from octree import format_histogram
-from octree import point_refinement_levels
-from octree import valid_cell_fraction
+from batcamp import DEFAULT_AXIS_RHO_TOL
+from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
+from batcamp import Octree
+from batcamp import OctreeBuilder
+from batcamp import SphericalOctree
+from batcamp import format_histogram
+from batcamp import point_refinement_levels
+from batcamp import valid_cell_fraction
 
 
 @pytest.fixture(scope="module")

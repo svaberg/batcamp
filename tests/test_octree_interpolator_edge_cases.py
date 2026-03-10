@@ -5,9 +5,9 @@ import math
 import numpy as np
 import pytest
 
-from octree import Octree
-from octree import OctreeInterpolator
-from octree import OctreeRayInterpolator
+from batcamp import Octree
+from batcamp import OctreeInterpolator
+from batcamp import OctreeRayInterpolator
 
 
 class _FakeDataset:

@@ -749,7 +749,7 @@ class OctreeInterpolator:
                 )
             except ModuleNotFoundError as exc:
                 text = str(exc)
-                stale_refs = ("starwinds_analysis.octree.lookup", "starwinds_analysis.octree.core")
+                stale_refs = ("starwinds_analysis.octree.lookup", "starwinds_analysis.octree.core", "octree.lookup", "octree.core")
                 if not any(ref in text for ref in stale_refs):
                     raise
                 logger.warning("Detected stale numba cache references; clearing local cache and retrying warmup.")

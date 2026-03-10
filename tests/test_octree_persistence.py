@@ -5,9 +5,9 @@ import pytest
 from starwinds_readplt.dataset import Dataset
 
 from sample_data_helper import data_file
-from octree import OCTREE_FILE_VERSION
-from octree import Octree
-from octree import SphericalOctree
+from batcamp import OCTREE_FILE_VERSION
+from batcamp import Octree
+from batcamp import SphericalOctree
 
 
 @pytest.fixture(scope="module")
