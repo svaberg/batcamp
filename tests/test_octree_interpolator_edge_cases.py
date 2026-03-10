@@ -198,6 +198,20 @@ def test_interpolator_constructor_rejects_non_list_values() -> None:
         OctreeInterpolator(ds, "Scalar", query_space="xyz")
 
 
+def test_interpolator_auto_coord_system_selects_spherical_for_curvilinear_cells() -> None:
+    """Auto coord-system should select spherical lookup for non-axis-aligned cells."""
+    ds = _build_fake_dataset()
+    interp = OctreeInterpolator(ds, ["Scalar"], tree=None)
+    assert interp.tree.coord_system == "rpa"
+
+
+def test_interpolator_auto_coord_system_selects_cartesian_for_axis_aligned_cells() -> None:
+    """Auto coord-system should select Cartesian lookup for axis-aligned cells."""
+    ds = _build_fake_cartesian_dataset()
+    interp = OctreeInterpolator(ds, ["Scalar"], tree=None)
+    assert interp.tree.coord_system == "xyz"
+
+
 def test_interpolator_reuses_prebuilt_cartesian_lookup_for_same_dataset() -> None:
     """Interpolator should not rebuild lookup for prebound Cartesian trees."""
     ds = _build_fake_cartesian_dataset()

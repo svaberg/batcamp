@@ -30,6 +30,36 @@ _DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
 
 
+def _infer_coord_system_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> Literal["xyz", "rpa"]:
+    """Infer tree coord-system from cell geometry (axis-aligned vs curvilinear)."""
+    corners = getattr(ds, "corners", None)
+    if corners is None:
+        raise ValueError("Dataset has no cell connectivity (corners).")
+    corners_arr = np.asarray(corners, dtype=np.int64)
+    if corners_arr.ndim != 2 or corners_arr.shape[0] == 0:
+        return "rpa"
+
+    if corners_arr.shape[0] > int(sample_size):
+        idx = np.linspace(0, corners_arr.shape[0] - 1, int(sample_size), dtype=np.int64)
+        sample = corners_arr[idx]
+    else:
+        sample = corners_arr
+
+    x = np.asarray(ds.variable("X [R]"), dtype=float)
+    y = np.asarray(ds.variable("Y [R]"), dtype=float)
+    z = np.asarray(ds.variable("Z [R]"), dtype=float)
+    xr = np.round(x[sample], 12)
+    yr = np.round(y[sample], 12)
+    zr = np.round(z[sample], 12)
+
+    ux = np.array([np.unique(row).size for row in xr], dtype=np.int64)
+    uy = np.array([np.unique(row).size for row in yr], dtype=np.int64)
+    uz = np.array([np.unique(row).size for row in zr], dtype=np.int64)
+    axis_like = (ux <= 2) & (uy <= 2) & (uz <= 2)
+    frac_axis_like = float(np.mean(axis_like)) if axis_like.size > 0 else 0.0
+    return "xyz" if frac_axis_like >= 0.98 else "rpa"
+
+
 def _clear_stale_numba_cache() -> None:
     """Remove local stale numba cache files after module-path refactors.
 
@@ -445,7 +475,7 @@ class OctreeInterpolator:
         resolved_tree = tree
         if resolved_tree is None:
             if coord_system is None:
-                build_coord = "rpa" if self.query_space == "rpa" else DEFAULT_COORD_SYSTEM
+                build_coord = _infer_coord_system_from_geometry(ds)
             else:
                 build_coord = str(coord_system)
                 if build_coord not in SUPPORTED_COORD_SYSTEMS:
@@ -461,14 +491,17 @@ class OctreeInterpolator:
                     level_atol=level_atol,
                 )
             except ValueError:
-                if coord_system is not None or build_coord != "xyz" or self.query_space != "xyz":
+                if coord_system is not None:
                     raise
+                alt_coord = "rpa" if build_coord == "xyz" else "xyz"
                 logger.info(
-                    "Falling back to coord_system='rpa' after xyz tree reconstruction failed."
+                    "Falling back to coord_system='%s' after '%s' tree reconstruction failed.",
+                    alt_coord,
+                    build_coord,
                 )
                 resolved_tree = Octree.from_dataset(
                     ds,
-                    coord_system="rpa",
+                    coord_system=alt_coord,
                     axis_rho_tol=axis_rho_tol,
                     level_rtol=level_rtol,
                     level_atol=level_atol,
