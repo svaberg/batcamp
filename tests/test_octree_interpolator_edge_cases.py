@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 
@@ -436,3 +437,30 @@ def test_interpolator_rpa_wrap_equivalence_on_resolvable_point() -> None:
     v1, c1 = interp(q1, return_cell_ids=True)
     assert np.array_equal(c0, c1)
     assert np.allclose(v0, v1, atol=1e-12, rtol=0.0)
+
+
+def test_invalid_level_cells_are_consistently_treated_as_misses() -> None:
+    """Lookup and interpolation should both treat level<0 cells as invalid."""
+    ds = _build_fake_cartesian_dataset()
+    corners = np.asarray(ds.corners, dtype=np.int64)
+    levels = np.array([-1, 0], dtype=np.int64)
+    tree = OctreeBuilder().build_tree(
+        ds,
+        corners,
+        coord_system="xyz",
+        cell_levels=levels,
+    )
+    tree.bind(ds)
+
+    q_invalid = np.array([0.5, 0.0, 0.25], dtype=float)
+    q_valid = np.array([1.5, 0.0, 0.25], dtype=float)
+
+    assert tree.lookup_point(q_invalid, space="xyz") is None
+    assert tree.lookup_point(q_valid, space="xyz") is not None
+
+    interp = OctreeInterpolator(ds, ["Scalar"], query_space="xyz", tree=tree, fill_value=-123.0)
+    vals, cids = interp(np.vstack((q_invalid, q_valid)), return_cell_ids=True)
+
+    assert int(cids[0]) == -1
+    assert int(cids[1]) >= 0
+    assert np.isclose(float(vals[0]), -123.0, atol=0.0, rtol=0.0)

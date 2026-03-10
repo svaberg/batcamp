@@ -36,6 +36,7 @@ class LookupKernelState(NamedTuple):
     cell_theta_max: np.ndarray
     cell_phi_start: np.ndarray
     cell_phi_width: np.ndarray
+    cell_valid: np.ndarray
     cell_centers: np.ndarray
     r_min: float
     r_max: float
@@ -57,6 +58,8 @@ def _contains_rpa_cell(
     Returns:
     - `True` when the query is inside the cell bounds (with tolerance), else `False`.
     """
+    if not lookup_state.cell_valid[cid]:
+        return False
     tol = _LOOKUP_CONTAIN_TOL
     if r < (lookup_state.cell_r_min[cid] - tol) or r > (lookup_state.cell_r_max[cid] + tol):
         return False
@@ -408,6 +411,7 @@ class _SphericalCellLookup:
             cell_theta_max=self._cell_theta_max,
             cell_phi_start=self._cell_phi_start,
             cell_phi_width=self._cell_phi_width,
+            cell_valid=(self._cell_level_rel >= 0),
             cell_centers=self._cell_centers,
             r_min=float(self._r_min),
             r_max=float(self._r_max),

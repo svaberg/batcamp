@@ -26,6 +26,7 @@ class CartesianLookupKernelState(NamedTuple):
     cell_y_max: np.ndarray
     cell_z_min: np.ndarray
     cell_z_max: np.ndarray
+    cell_valid: np.ndarray
     xyz_min: np.ndarray
     xyz_max: np.ndarray
     xyz_span: np.ndarray
@@ -45,6 +46,8 @@ def _contains_xyz_cell(
     tol: float = 1e-10,
 ) -> bool:
     """Check one Cartesian query against one cell AABB bounds."""
+    if not lookup_state.cell_valid[cid]:
+        return False
     if x < (lookup_state.cell_x_min[cid] - tol) or x > (lookup_state.cell_x_max[cid] + tol):
         return False
     if y < (lookup_state.cell_y_min[cid] - tol) or y > (lookup_state.cell_y_max[cid] + tol):
@@ -201,6 +204,7 @@ class _CartesianCellLookup:
             self._cell_level_rel = np.array(tree.cell_levels, dtype=np.int64)
         else:
             self._cell_level_rel = np.full(n_cells, int(tree.max_level), dtype=np.int64)
+        self._cell_valid = self._cell_level_rel >= 0
 
         # Approximate leaf-grid indices from normalized center coordinates.
         lx, ly, lz = int(tree.leaf_shape[0]), int(tree.leaf_shape[1]), int(tree.leaf_shape[2])
@@ -255,6 +259,7 @@ class _CartesianCellLookup:
             cell_y_max=self._cell_y_max,
             cell_z_min=self._cell_z_min,
             cell_z_max=self._cell_z_max,
+            cell_valid=self._cell_valid,
             xyz_min=self._xyz_min,
             xyz_max=self._xyz_max,
             xyz_span=self._xyz_span,
