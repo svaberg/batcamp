@@ -157,20 +157,24 @@ class SphericalOctreeBuilder:
     def compute_delta_phi_and_levels(
         ds: Dataset,
         *,
+        corners: np.ndarray | None = None,
         rtol: float = 1e-4,
         atol: float = 1e-9,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
         """Compute per-cell `delta_phi` and inferred dyadic refinement levels."""
-        corners = np.asarray(ds.corners, dtype=np.int64)
-        if corners.ndim != 2:
-            raise ValueError(f"Expected 2D corner array, got shape {corners.shape}.")
-        if corners.shape[1] < 3:
+        source_corners = ds.corners if corners is None else corners
+        if source_corners is None:
+            raise ValueError("Dataset has no corners; cannot compute delta_phi levels.")
+        corners_arr = np.asarray(source_corners, dtype=np.int64)
+        if corners_arr.ndim != 2:
+            raise ValueError(f"Expected 2D corner array, got shape {corners_arr.shape}.")
+        if corners_arr.shape[1] < 3:
             raise ValueError("Need at least 3 corners per cell to estimate delta_phi.")
 
         phi = SphericalOctreeBuilder._extract_phi(ds)
-        cell_phi = phi[corners]
-        axis_mask = SphericalOctreeBuilder._axis_corner_mask(ds, corners, axis_rho_tol=axis_rho_tol)
+        cell_phi = phi[corners_arr]
+        axis_mask = SphericalOctreeBuilder._axis_corner_mask(ds, corners_arr, axis_rho_tol=axis_rho_tol)
         delta_phi, center_phi = SphericalOctreeBuilder._circular_span_and_mean(cell_phi, ignore_mask=axis_mask)
         levels, expected, coarse = SphericalOctreeBuilder.infer_level_expectation(
             delta_phi,
@@ -240,11 +244,13 @@ class SphericalOctreeBuilder:
         self,
         ds: Dataset,
         *,
+        corners: np.ndarray | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
         """Compute per-cell azimuth spans and dyadic levels from dataset geometry."""
         return self.compute_delta_phi_and_levels(
             ds,
+            corners=corners,
             rtol=self.level_rtol,
             atol=self.level_atol,
             axis_rho_tol=axis_rho_tol,
@@ -261,10 +267,16 @@ class SphericalOctreeBuilder:
         """Infer spherical level-shape map and validated levels."""
         delta_phi, _center_phi, auto_levels, _expected, _coarse = self.compute_phi_levels(
             ds,
+            corners=corners,
             axis_rho_tol=axis_rho_tol,
         )
         levels = auto_levels if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
         levels = np.asarray(levels, dtype=np.int64)
+        if levels.shape != auto_levels.shape:
+            raise ValueError(
+                "cell_levels shape does not match inferred corner-cell shape: "
+                f"levels={levels.shape}, inferred={auto_levels.shape}."
+            )
         valid_levels = levels[levels >= 0]
         if valid_levels.size == 0:
             raise ValueError("No valid (>=0) levels available to infer octree.")

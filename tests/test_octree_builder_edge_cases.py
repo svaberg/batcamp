@@ -448,6 +448,22 @@ def test_build_octree_helper_stores_coord_system_metadata() -> None:
     assert tree.coord_system == "xyz"
 
 
+def test_build_octree_uses_explicit_corners_for_spherical_inference() -> None:
+    """Spherical build should infer levels from explicit `corners`, not `ds.corners`."""
+    ds = _build_regular_dataset(nr=1, ntheta=2, nphi=2)
+    corners_full = np.array(ds.corners, copy=True)
+    ds.corners = np.array(corners_full[:2], copy=True)
+
+    tree = build_octree(
+        ds,
+        corners_full,
+        coord_system="rpa",
+        cell_levels=None,
+    )
+    assert tree.cell_levels is not None
+    assert tree.cell_levels.shape[0] == corners_full.shape[0]
+
+
 def test_lookup_runs_for_xyz_coord_system() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
