@@ -1,4 +1,14 @@
+from functools import lru_cache
+
+import numpy as np
 import pytest
+from starwinds_readplt.dataset import Dataset
+
+from batcamp import DEFAULT_AXIS_RHO_TOL
+from batcamp import Octree
+from batcamp import OctreeBuilder
+from batcamp import point_refinement_levels
+from sample_data_helper import data_file
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -24,3 +34,49 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "pooch" in item.keywords:
             item.add_marker(skip_pooch)
+
+
+@lru_cache(maxsize=1)
+def _build_difflevels_rpa_context() -> dict[str, object]:
+    input_file = data_file("difflevels-3d__var_1_n00000000.dat")
+    assert input_file.exists(), f"Missing sample file: {input_file}"
+    ds = Dataset.from_file(str(input_file))
+    assert ds.corners is not None
+
+    corners = np.asarray(ds.corners, dtype=np.int64)
+    tree = Octree.from_dataset(
+        ds,
+        tree_coord="rpa",
+        axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
+        level_rtol=1e-4,
+        level_atol=1e-9,
+    )
+    delta_phi, center_phi, _levels, expected, coarse = OctreeBuilder(
+        level_rtol=1e-4,
+        level_atol=1e-9,
+    ).compute_phi_levels(ds, axis_rho_tol=DEFAULT_AXIS_RHO_TOL)
+    assert tree.cell_levels is not None
+    cell_levels = tree.cell_levels
+    point_levels = point_refinement_levels(
+        n_points=ds.points.shape[0],
+        corners=corners,
+        cell_levels=cell_levels,
+    )
+
+    return {
+        "ds": ds,
+        "corners": corners,
+        "delta_phi": delta_phi,
+        "center_phi": center_phi,
+        "cell_levels": cell_levels,
+        "expected": expected,
+        "coarse": coarse,
+        "point_levels": point_levels,
+        "tree": tree,
+        "lookup": tree.lookup,
+    }
+
+
+@pytest.fixture(scope="session")
+def difflevels_rpa_context() -> dict[str, object]:
+    return _build_difflevels_rpa_context()

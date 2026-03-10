@@ -2,62 +2,18 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
 
-from sample_data_helper import data_file
-from batcamp import DEFAULT_AXIS_RHO_TOL
-from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
 from batcamp import Octree
-from batcamp import OctreeBuilder
+from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
 from batcamp import SphericalOctree
 from batcamp import format_histogram
-from batcamp import point_refinement_levels
 from batcamp import valid_cell_fraction
 
 
 @pytest.fixture(scope="module")
-def octree_context() -> dict[str, object]:
-    """Build reusable octree refinement context for the mixed-level 3D sample file."""
-    input_file = data_file("difflevels-3d__var_1_n00000000.dat")
-    assert input_file.exists(), f"Missing sample file: {input_file}"
-
-    ds = Dataset.from_file(str(input_file))
-    assert ds.corners is not None
-
-    corners = np.asarray(ds.corners, dtype=np.int64)
-    tree = Octree.from_dataset(
-        ds,
-        tree_coord="rpa",
-        axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
-        level_rtol=1e-4,
-        level_atol=1e-9,
-    )
-    delta_phi, center_phi, _levels, expected, coarse = OctreeBuilder(
-        level_rtol=1e-4,
-        level_atol=1e-9,
-    ).compute_phi_levels(ds, axis_rho_tol=DEFAULT_AXIS_RHO_TOL)
-    assert tree.cell_levels is not None
-    cell_levels = tree.cell_levels
-
-    point_levels = point_refinement_levels(
-        n_points=ds.points.shape[0],
-        corners=corners,
-        cell_levels=cell_levels,
-    )
-    lookup = tree.lookup
-
-    return {
-        "ds": ds,
-        "corners": corners,
-        "delta_phi": delta_phi,
-        "center_phi": center_phi,
-        "cell_levels": cell_levels,
-        "expected": expected,
-        "coarse": coarse,
-        "point_levels": point_levels,
-        "tree": tree,
-        "lookup": lookup,
-    }
+def octree_context(difflevels_rpa_context: dict[str, object]) -> dict[str, object]:
+    """Expose shared session-scoped difflevels context in this test module."""
+    return difflevels_rpa_context
 
 
 def test_compute_phi_levels_shapes(octree_context: dict[str, object]) -> None:
@@ -119,6 +75,7 @@ def test_lookup_xyz_and_rpa_agree(octree_context: dict[str, object]) -> None:
     assert hit_xyz.cell_id == hit_rpa.cell_id
 
 
+@pytest.mark.slow
 def test_octree_save_load_roundtrip(octree_context: dict[str, object], tmp_path) -> None:
     """Saved octree can be loaded and produce matching lookup hits when rebound."""
     tree = octree_context["tree"]

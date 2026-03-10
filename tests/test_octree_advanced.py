@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
 
-from sample_data_helper import data_file
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
@@ -12,13 +10,9 @@ from batcamp import SphericalOctree
 
 
 @pytest.fixture(scope="module")
-def advanced_context() -> tuple[Dataset, Octree]:
-    """Build reusable dataset/tree pair for advanced octree behavior checks."""
-    input_file = data_file("difflevels-3d__var_1_n00000000.dat")
-    assert input_file.exists(), f"Missing sample file: {input_file}"
-    ds = Dataset.from_file(str(input_file))
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
-    return ds, tree
+def advanced_context(difflevels_rpa_context: dict[str, object]) -> tuple[object, Octree]:
+    """Reuse session-cached difflevels dataset/tree pair."""
+    return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
 
 
 def _select_center_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarray:
@@ -57,6 +51,7 @@ def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
         assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
 
 
+@pytest.mark.slow
 def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> None:
     """Ray traversal segments must be monotone and contain their midpoint sample."""
     _ds, tree = advanced_context

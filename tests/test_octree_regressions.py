@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from starwinds_readplt.dataset import Dataset
 
-from sample_data_helper import data_file
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
@@ -12,13 +11,9 @@ from batcamp import SphericalOctree
 
 
 @pytest.fixture(scope="module")
-def regression_context() -> tuple[Dataset, Octree]:
-    """Build one dataset/tree pair used for regression checks."""
-    input_file = data_file("difflevels-3d__var_1_n00000000.dat")
-    assert input_file.exists(), f"Missing sample file: {input_file}"
-    ds = Dataset.from_file(str(input_file))
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
-    return ds, tree
+def regression_context(difflevels_rpa_context: dict[str, object]) -> tuple[Dataset, Octree]:
+    """Reuse session-cached difflevels dataset/tree pair."""
+    return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
 
 
 def test_regression_xyz_to_rpa_is_stable_and_finite() -> None:
@@ -33,6 +28,7 @@ def test_regression_xyz_to_rpa_is_stable_and_finite() -> None:
     assert np.isclose(azimuth, 0.0, rtol=0.0, atol=1e-15)
 
 
+@pytest.mark.slow
 def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
     """No-tree interpolator should recover from invalid xyz reconstruction on spherical data."""
     ds, _tree = regression_context
@@ -47,6 +43,8 @@ def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_conte
 
 def test_regression_quickstart_explicit_tree_equals_auto_tree() -> None:
     """Quickstart contract: explicit prebuilt tree and auto-tree must agree."""
+    from sample_data_helper import data_file
+
     ds = Dataset.from_file(str(data_file("3d__var_4_n00000000.plt")))
     tree = Octree.from_dataset(ds, tree_coord="rpa")
     queries = np.asarray(tree.lookup._cell_centers[:16], dtype=float)
@@ -71,6 +69,7 @@ def test_regression_lookup_outside_domain_returns_none(regression_context) -> No
     assert hit is None
 
 
+@pytest.mark.slow
 def test_regression_trace_ray_from_outside_returns_empty(regression_context) -> None:
     """Regression: ray trace started outside the domain should return no segments."""
     _ds, tree = regression_context
