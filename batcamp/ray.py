@@ -1467,7 +1467,10 @@ class OctreeRayInterpolator:
 
         if out_2d is None:
             # All rays missed the domain. Preserve scalar/vector behavior.
-            return np.full((n_rays,), np.nan, dtype=float)
+            ncomp = int(getattr(self.interpolator, "_n_value_components", 1))
+            if ncomp == 1:
+                return np.full((n_rays,), np.nan, dtype=float)
+            return np.full((n_rays, ncomp), np.nan, dtype=float)
         if out_2d.shape[1] == 1:
             return out_2d[:, 0]
         return out_2d
@@ -1601,7 +1604,10 @@ class OctreeRayInterpolator:
 
         n_rays = int(offsets.size - 1)
         if mids.shape[0] == 0:
-            return np.full((n_rays,), np.nan, dtype=float)
+            ncomp = int(getattr(self.interpolator, "_n_value_components", 1))
+            if ncomp == 1:
+                return np.full((n_rays,), np.nan, dtype=float)
+            return np.full((n_rays, ncomp), np.nan, dtype=float)
 
         values, cell_ids = self.interpolator(
             mids,

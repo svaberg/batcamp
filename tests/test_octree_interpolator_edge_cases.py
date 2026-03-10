@@ -372,6 +372,31 @@ def test_midpoint_integrator_matches_exact_for_linear_field() -> None:
     assert np.allclose(midpoint, exact, atol=1e-8, rtol=1e-9)
 
 
+def test_vector_ray_integrals_preserve_shape_when_all_rays_miss() -> None:
+    """Vector ray integration should keep `(n_rays, n_components)` shape on all misses."""
+    ds = _build_fake_cartesian_dataset()
+    tree = Octree.from_dataset(ds, coord_system="xyz")
+    interp = OctreeInterpolator(ds, ["Scalar", "Scalar2"], query_space="xyz", tree=tree)
+    ray = OctreeRayInterpolator(interp)
+
+    origins = np.array(
+        [
+            [10.0, 10.0, 10.0],
+            [20.0, 20.0, 20.0],
+        ],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    exact = np.asarray(ray.integrate_field_along_rays(origins, direction, 0.0, 1.0), dtype=float)
+    midpoint = np.asarray(ray.integrate_field_along_rays_midpoint(origins, direction, 0.0, 1.0), dtype=float)
+
+    assert exact.shape == (origins.shape[0], 2)
+    assert midpoint.shape == (origins.shape[0], 2)
+    assert np.all(np.isnan(exact))
+    assert np.all(np.isnan(midpoint))
+
+
 def test_interpolator_outside_queries_use_fill_value_and_minus_one_cell_id() -> None:
     """Outside-domain queries should return fill values and `cell_id=-1`."""
     ds = _build_fake_dataset()
