@@ -198,6 +198,30 @@ def test_interpolator_constructor_rejects_non_list_values() -> None:
         OctreeInterpolator(ds, "Scalar", query_space="xyz")
 
 
+def test_interpolator_reuses_prebuilt_cartesian_lookup_for_same_dataset() -> None:
+    """Interpolator should not rebuild lookup for prebound Cartesian trees."""
+    ds = _build_fake_cartesian_dataset()
+    tree = Octree.from_dataset(ds, coord_system="xyz")
+    _ = tree.lookup
+    lookup_state_before = tree.lookup._lookup_state
+
+    interp = OctreeInterpolator(ds, ["Scalar"], query_space="xyz", tree=tree)
+    assert tree.lookup._lookup_state is lookup_state_before
+    assert interp.lookup._lookup_state is lookup_state_before
+
+
+def test_interpolator_reuses_prebuilt_spherical_lookup_for_same_dataset() -> None:
+    """Interpolator should not rebuild lookup for prebound spherical trees."""
+    ds = _build_fake_dataset()
+    tree = Octree.from_dataset(ds, coord_system="rpa")
+    _ = tree.lookup
+    lookup_state_before = tree.lookup._lookup_state
+
+    interp = OctreeInterpolator(ds, ["Scalar"], query_space="xyz", tree=tree)
+    assert tree.lookup._lookup_state is lookup_state_before
+    assert interp.lookup._lookup_state is lookup_state_before
+
+
 def test_interpolator_call_rejects_invalid_query_space_override() -> None:
     """Runtime call should reject invalid query_space override."""
     ds = _build_fake_dataset()

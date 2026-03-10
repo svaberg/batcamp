@@ -136,10 +136,14 @@ class Octree:
         """
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")
+        next_axis_rho_tol = float(self.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
+        ds_changed = self.ds is not ds
+        tol_changed = not np.isclose(float(self.axis_rho_tol), next_axis_rho_tol, rtol=0.0, atol=0.0)
+
         self.ds = ds
-        if axis_rho_tol is not None:
-            self.axis_rho_tol = float(axis_rho_tol)
-        self._lookup_ready = False
+        self.axis_rho_tol = next_axis_rho_tol
+        if ds_changed or tol_changed:
+            self._lookup_ready = False
 
     def save(self, path: str | Path) -> None:
         """Save octree metadata to a compressed `.npz` file.
