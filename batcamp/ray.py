@@ -17,6 +17,7 @@ from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
 from .spherical import LookupKernelState
 from .spherical import lookup_rpa_cell_id_kernel
+from .spherical import xyz_to_rpa_components as _xyz_to_rpa_components
 
 if TYPE_CHECKING:
     from .interpolator import OctreeInterpolator
@@ -64,23 +65,6 @@ def _contains_xyz_from_state(
     if z < (lookup_state.cell_z_min[cid] - tol) or z > (lookup_state.cell_z_max[cid] + tol):
         return False
     return True
-
-
-@njit(cache=True)
-def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
-    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
-    r = math.sqrt(x * x + y * y + z * z)
-    if r == 0.0:
-        polar = 0.0
-    else:
-        zr = z / r
-        if zr < -1.0:
-            zr = -1.0
-        elif zr > 1.0:
-            zr = 1.0
-        polar = math.acos(zr)
-    azimuth = math.atan2(y, x) % (2.0 * math.pi)
-    return r, polar, azimuth
 
 
 @njit(cache=True)

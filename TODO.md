@@ -8,7 +8,7 @@
 - [x] De-duplicate expensive test setup by sharing one cached dataset/tree fixture across modules that use `difflevels-3d__var_1_n00000000.dat`.
 - [ ] Reduce test lock-in on private internals (`_cell_*`, `_lookup_state`, `_bin_to_corner`) unless there is no public API alternative.
 - [x] Rename `batcamp/base.py` to `batcamp/octree.py` and update imports.
-- [ ] Consolidate duplicated XYZ<->RPA conversion helpers shared across `interpolator.py`, `spherical.py`, and `ray.py`.
-- [ ] Unify tree auto-build fallback logic so there is one source of truth instead of split behavior paths.
+- [x] Consolidate duplicated XYZ<->RPA conversion helpers shared across `interpolator.py`, `spherical.py`, and `ray.py`.
+- [x] Unify tree auto-build fallback logic so there is one source of truth instead of split behavior paths.
 - [ ] Reassess and eventually remove stale-module numba cache cleanup paths once legacy cache compatibility is no longer needed.
 - [ ] Reduce complexity in oversized modules (`interpolator.py`, `ray.py`) in-place (no new modules for now).

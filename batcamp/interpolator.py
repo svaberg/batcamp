@@ -19,45 +19,17 @@ from starwinds_readplt.dataset import Dataset
 from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
+from .octree import infer_tree_coord_from_geometry as _infer_tree_coord_from_geometry
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
 from .spherical import LookupKernelState
+from .spherical import SphericalOctree
 from .spherical import lookup_rpa_cell_id_kernel
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
-
-
-def _infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> Literal["xyz", "rpa"]:
-    """Infer tree coord-system from cell geometry (axis-aligned vs curvilinear)."""
-    corners = getattr(ds, "corners", None)
-    if corners is None:
-        raise ValueError("Dataset has no cell connectivity (corners).")
-    corners_arr = np.asarray(corners, dtype=np.int64)
-    if corners_arr.ndim != 2 or corners_arr.shape[0] == 0:
-        return "rpa"
-
-    if corners_arr.shape[0] > int(sample_size):
-        idx = np.linspace(0, corners_arr.shape[0] - 1, int(sample_size), dtype=np.int64)
-        sample = corners_arr[idx]
-    else:
-        sample = corners_arr
-
-    x = np.asarray(ds.variable("X [R]"), dtype=float)
-    y = np.asarray(ds.variable("Y [R]"), dtype=float)
-    z = np.asarray(ds.variable("Z [R]"), dtype=float)
-    xr = np.round(x[sample], 12)
-    yr = np.round(y[sample], 12)
-    zr = np.round(z[sample], 12)
-
-    ux = np.array([np.unique(row).size for row in xr], dtype=np.int64)
-    uy = np.array([np.unique(row).size for row in yr], dtype=np.int64)
-    uz = np.array([np.unique(row).size for row in zr], dtype=np.int64)
-    axis_like = (ux <= 2) & (uy <= 2) & (uz <= 2)
-    frac_axis_like = float(np.mean(axis_like)) if axis_like.size > 0 else 0.0
-    return "xyz" if frac_axis_like >= 0.98 else "rpa"
 
 
 def _clear_stale_numba_cache() -> None:
@@ -468,38 +440,22 @@ class OctreeInterpolator:
         )
         resolved_tree = tree
         if resolved_tree is None:
+            build_coord: str | None
             if tree_coord is None:
-                build_coord = _infer_tree_coord_from_geometry(ds)
+                build_coord = None
             else:
                 build_coord = str(tree_coord)
                 if build_coord not in SUPPORTED_TREE_COORDS:
                     raise ValueError(
                         f"Unsupported tree_coord '{build_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
                     )
-            try:
-                resolved_tree = Octree.from_dataset(
-                    ds,
-                    tree_coord=build_coord,
-                    axis_rho_tol=axis_rho_tol,
-                    level_rtol=level_rtol,
-                    level_atol=level_atol,
-                )
-            except ValueError:
-                if tree_coord is not None:
-                    raise
-                alt_coord = "rpa" if build_coord == "xyz" else "xyz"
-                logger.info(
-                    "Falling back to tree_coord='%s' after '%s' tree reconstruction failed.",
-                    alt_coord,
-                    build_coord,
-                )
-                resolved_tree = Octree.from_dataset(
-                    ds,
-                    tree_coord=alt_coord,
-                    axis_rho_tol=axis_rho_tol,
-                    level_rtol=level_rtol,
-                    level_atol=level_atol,
-                )
+            resolved_tree = Octree.from_dataset(
+                ds,
+                tree_coord=build_coord,
+                axis_rho_tol=axis_rho_tol,
+                level_rtol=level_rtol,
+                level_atol=level_atol,
+            )
         resolved_tree.bind(ds, axis_rho_tol=axis_rho_tol)
         self.tree = resolved_tree
         self.lookup = self.tree.lookup
@@ -792,7 +748,7 @@ class OctreeInterpolator:
 
     def _warmup_rpa(self, q_xyz: np.ndarray, fill: np.ndarray) -> None:
         """Warm up spherical lookup/interpolation kernels."""
-        r, polar, azimuth = self.xyz_to_rpa(q_xyz[0])
+        r, polar, azimuth = SphericalOctree.xyz_to_rpa(q_xyz[0])
         q_rpa = np.array([[r, polar, azimuth]], dtype=np.float64, order="C")
         try:
             _interp_batch_xyz(
@@ -910,26 +866,6 @@ class OctreeInterpolator:
             return q, shape
 
         raise ValueError("Call with xi or with x1, x2, x3.")
-
-    @staticmethod
-    def xyz_to_rpa(q: np.ndarray) -> tuple[float, float, float]:
-        """Convert one Cartesian point to spherical `(r, polar, azimuth)`.
-
-        Consumes:
-        - `q`: one Cartesian point with 3 coordinates.
-        Returns:
-        - `(r, polar, azimuth)` as floats.
-        """
-        x = float(q[0])
-        y = float(q[1])
-        z = float(q[2])
-        r = float(math.sqrt(x * x + y * y + z * z))
-        if r == 0.0:
-            polar = 0.0
-        else:
-            polar = float(math.acos(max(-1.0, min(1.0, z / r))))
-        azimuth = float(math.atan2(y, x) % _TWO_PI)
-        return r, polar, azimuth
 
     def __call__(
         self,

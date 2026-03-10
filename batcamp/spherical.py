@@ -20,6 +20,23 @@ _LOOKUP_CONTAIN_TOL = 1e-10
 _DEFAULT_LOOKUP_MAX_RADIUS = 2
 
 
+@njit(cache=True)
+def xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
+    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
+    r = math.sqrt(x * x + y * y + z * z)
+    if r == 0.0:
+        polar = 0.0
+    else:
+        zr = z / r
+        if zr < -1.0:
+            zr = -1.0
+        elif zr > 1.0:
+            zr = 1.0
+        polar = math.acos(zr)
+    azimuth = math.atan2(y, x) % _TWO_PI
+    return r, polar, azimuth
+
+
 class LookupKernelState(NamedTuple):
     """Numba lookup-kernel arrays/scalars with explicit field names."""
 
@@ -710,16 +727,7 @@ class SphericalOctree(_SphericalCellLookup, Octree):
         Returns:
         - `(r, polar, azimuth)` as floats.
         """
-        x = float(q[0])
-        y = float(q[1])
-        z = float(q[2])
-        r = float(math.sqrt(x * x + y * y + z * z))
-        if r == 0.0:
-            polar = 0.0
-        else:
-            polar = float(math.acos(max(-1.0, min(1.0, z / r))))
-        azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return r, polar, azimuth
+        return xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
 
     def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> "LookupHit | None":
         """Lookup in xyz using local spherical-bin neighborhoods around a near cell.

@@ -42,6 +42,36 @@ LevelCountTable: TypeAlias = tuple[LevelCountRow, ...]
 logger = logging.getLogger(__name__)
 
 
+def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
+    """Infer tree type from geometry (axis-aligned vs curvilinear cells)."""
+    corners = getattr(ds, "corners", None)
+    if corners is None:
+        raise ValueError("Dataset has no cell connectivity (corners).")
+    corners_arr = np.asarray(corners, dtype=np.int64)
+    if corners_arr.ndim != 2 or corners_arr.shape[0] == 0:
+        return "rpa"
+
+    if corners_arr.shape[0] > int(sample_size):
+        idx = np.linspace(0, corners_arr.shape[0] - 1, int(sample_size), dtype=np.int64)
+        sample = corners_arr[idx]
+    else:
+        sample = corners_arr
+
+    x = np.asarray(ds.variable("X [R]"), dtype=float)
+    y = np.asarray(ds.variable("Y [R]"), dtype=float)
+    z = np.asarray(ds.variable("Z [R]"), dtype=float)
+    xr = np.round(x[sample], 12)
+    yr = np.round(y[sample], 12)
+    zr = np.round(z[sample], 12)
+
+    ux = np.array([np.unique(row).size for row in xr], dtype=np.int64)
+    uy = np.array([np.unique(row).size for row in yr], dtype=np.int64)
+    uz = np.array([np.unique(row).size for row in zr], dtype=np.int64)
+    axis_like = (ux <= 2) & (uy <= 2) & (uz <= 2)
+    frac_axis_like = float(np.mean(axis_like)) if axis_like.size > 0 else 0.0
+    return "xyz" if frac_axis_like >= 0.98 else "rpa"
+
+
 @dataclass
 class Octree:
     """Adaptive octree summary plus bound lookup/ray-query entrypoints.
@@ -93,7 +123,10 @@ class Octree:
                     f"{cls.__name__} requires tree_coord='{cls.TREE_COORD}', got '{resolved_tree_coord}'."
                 )
         else:
-            resolved_tree_coord = DEFAULT_TREE_COORD if tree_coord is None else cast(TreeCoord, str(tree_coord))
+            if tree_coord is None:
+                resolved_tree_coord = infer_tree_coord_from_geometry(ds)
+            else:
+                resolved_tree_coord = cast(TreeCoord, str(tree_coord))
         from .builder import OctreeBuilder
 
         builder = OctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
@@ -105,7 +138,7 @@ class Octree:
                 raise
             alt_tree_coord: TreeCoord = "rpa" if resolved_tree_coord == "xyz" else "xyz"
             logger.info(
-                "Falling back to tree_coord='%s' after default tree_coord='%s' failed in Octree.from_dataset.",
+                "Falling back to tree_coord='%s' after primary tree_coord='%s' failed in Octree.from_dataset.",
                 alt_tree_coord,
                 resolved_tree_coord,
             )
