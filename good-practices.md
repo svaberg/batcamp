@@ -8,7 +8,7 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Avoid boilerplate wrappers that hide 1-3 lines of real work.
 - Avoid thin pass-through methods; if the method body is trivial and the docstring is longer than the logic, treat it as a design smell.
 - Treat wrapper layering as a design bug: avoid stacked pass-through APIs that only forward calls without adding meaningful behavior.
-- For public/private pairs, use aligned base names (`name` and `_name`) instead of suffix-heavy internal names like `_name_with_overrides`.
+- For public/private pairs, use aligned base names (`name` and `_name`) instead of suffix-heavy internal names like `_name_with_overrides` or `_name_impl`.
 
 ## 2. Use one clear code path by default
 - Keep branching minimal and intentional.

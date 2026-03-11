@@ -6,7 +6,6 @@ from __future__ import annotations
 import logging
 import math
 from time import perf_counter
-from typing import Callable
 from typing import Literal
 from typing import NamedTuple
 
@@ -407,8 +406,6 @@ class OctreeInterpolator:
         self.value_names: tuple[str, ...] = ()
         self._point_values = self._coerce_point_values(values)
         self._tree_coord = str(self.tree.tree_coord)
-        self._prepare_kernel_cache_impl: Callable[[], None]
-        self._warmup_impl: Callable[[np.ndarray, np.ndarray], None]
         self._configure_backend()
         self.prepare_kernel_cache()
         self.warmup_kernels()
@@ -424,13 +421,9 @@ class OctreeInterpolator:
         if self._tree_coord == "rpa":
             self._prepare_spherical_points()
             self._prepare_trilinear_cache()
-            self._prepare_kernel_cache_impl = self._prepare_kernel_cache_rpa
-            self._warmup_impl = self._warmup_rpa
             return
         if self._tree_coord == "xyz":
             self._prepare_trilinear_cache_xyz()
-            self._prepare_kernel_cache_impl = self._prepare_kernel_cache_xyz
-            self._warmup_impl = self._warmup_xyz
             return
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
 
@@ -591,7 +584,13 @@ class OctreeInterpolator:
         self._point_values_2d = np.array(flat, dtype=np.float64, order="C")
         self._n_value_components = int(self._point_values_2d.shape[1])
         self._bin_to_corner_index = np.array(self._bin_to_corner, dtype=np.int64, order="C")
-        self._prepare_kernel_cache_impl()
+        if self._tree_coord == "rpa":
+            self._prepare_kernel_cache_rpa()
+            return
+        if self._tree_coord == "xyz":
+            self._prepare_kernel_cache_xyz()
+            return
+        raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel cache setup.")
 
     def _prepare_kernel_cache_rpa(self) -> None:
         """Build packed arrays for the spherical backend."""
@@ -647,7 +646,13 @@ class OctreeInterpolator:
         if q_xyz.shape[0] == 0:
             q_xyz = np.zeros((1, 3), dtype=np.float64)
         fill = self._fill_value_vector()
-        self._warmup_impl(q_xyz, fill)
+        if self._tree_coord == "rpa":
+            self._warmup_rpa(q_xyz, fill)
+            return
+        if self._tree_coord == "xyz":
+            self._warmup_xyz(q_xyz, fill)
+            return
+        raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel warmup.")
 
     def _warmup_xyz(self, q_xyz: np.ndarray, fill: np.ndarray) -> None:
         """Warm up Cartesian lookup/interpolation kernels."""
