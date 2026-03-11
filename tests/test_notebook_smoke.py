@@ -16,7 +16,7 @@ _CASES = [
         id="quick_start_default_first",
     ),
     pytest.param(
-        "octree_resampling_plane_sphere.ipynb",
+        "resampling.ipynb",
         ("tree_coord='xyz'",),
         (),
         id="cartesian_resampling_notebook",
@@ -28,7 +28,7 @@ _CASES = [
         id="octree_notebook",
     ),
     pytest.param(
-        "octree_ray_demo.ipynb",
+        "ray.ipynb",
         ("OctreeRayTracer",),
         (),
         id="ray_notebook",
