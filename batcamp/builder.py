@@ -137,10 +137,11 @@ class OctreeBuilder:
         cell_levels: np.ndarray | None = None,
         bind: bool = True,
     ) -> Octree:
-        """Build an `Octree` from dataset geometry.
+        """Build an octree from a dataset.
 
-        `corners=None` uses `ds.corners`.
-        `bind=True` binds geometry caches for lookup/ray queries.
+        If `corners` is not provided, this uses `ds.corners`.
+        If `bind` is `True`, the returned tree is ready for
+        `lookup_point(...)` and ray tracing immediately.
         """
         if tree_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
