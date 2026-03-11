@@ -834,6 +834,28 @@ class OctreeInterpolator:
         """Return whether one cell maps to all 8 logical trilinear corners."""
         return self.trilinear_corner_count(int(cell_id)) == 8
 
+    @property
+    def n_value_components(self) -> int:
+        """Return flattened component count of the interpolated output."""
+        return int(self._n_value_components)
+
+    @property
+    def xyz_interp_state(self) -> CartesianInterpKernelState | None:
+        """Return Cartesian kernel state for xyz trees, otherwise `None`."""
+        if self._tree_coord != "xyz":
+            return None
+        return getattr(self, "_interp_state_xyz", None)
+
+    @property
+    def corners(self) -> np.ndarray:
+        """Return cell-to-node corner connectivity used by interpolation."""
+        return np.asarray(self._corners, dtype=np.int64)
+
+    @property
+    def point_values(self) -> np.ndarray:
+        """Return per-node interpolation values in original component shape."""
+        return np.asarray(self._point_values)
+
     def __str__(self) -> str:
         """Return a compact human-readable interpolator description."""
         n_points = int(self._ds.points.shape[0]) if hasattr(self._ds, "points") else -1

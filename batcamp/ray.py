@@ -964,14 +964,6 @@ def _has_xyz_lookup_kernel(tree: Octree) -> bool:
         return False
 
 
-def _has_xyz_scalar_interp_kernel(interpolator: "OctreeInterpolator") -> bool:
-    """Return whether scalar Cartesian interpolation kernel state is available."""
-    return bool(
-        int(getattr(interpolator, "_n_value_components", 0)) == 1
-        and hasattr(interpolator, "_interp_state_xyz")
-    )
-
-
 @dataclass(frozen=True)
 class RaySegment:
     """Ray interval `[t_enter, t_exit]` that remains inside one leaf cell."""
@@ -1358,10 +1350,15 @@ class OctreeRayInterpolator:
 
         # Fastest path: Cartesian scalar field on axis-aligned rays.
         is_axis_aligned, axis = _axis_alignment(d)
+        xyz_interp_state = self.interpolator.xyz_interp_state
+        can_use_xyz_scalar_kernel = bool(
+            _has_xyz_lookup_kernel(self.tree)
+            and int(self.interpolator.n_value_components) == 1
+            and xyz_interp_state is not None
+        )
         if (
             is_axis_aligned
-            and _has_xyz_lookup_kernel(self.tree)
-            and _has_xyz_scalar_interp_kernel(self.interpolator)
+            and can_use_xyz_scalar_kernel
         ):
             return _integrate_axis_aligned_xyz_scalar_kernel(
                 origins,
@@ -1373,13 +1370,10 @@ class OctreeRayInterpolator:
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup.lookup_state,
-                self.interpolator._interp_state_xyz,
+                xyz_interp_state,
             )
 
-        if (
-            _has_xyz_lookup_kernel(self.tree)
-            and _has_xyz_scalar_interp_kernel(self.interpolator)
-        ):
+        if can_use_xyz_scalar_kernel:
             return _integrate_xyz_scalar_exact_kernel(
                 origins,
                 d,
@@ -1389,7 +1383,7 @@ class OctreeRayInterpolator:
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup.lookup_state,
-                self.interpolator._interp_state_xyz,
+                xyz_interp_state,
             )
 
         use_xyz_kernel = _has_xyz_lookup_kernel(self.tree)
@@ -1507,7 +1501,7 @@ class OctreeRayInterpolator:
 
         if out_2d is None:
             # All rays missed the domain. Preserve scalar/vector behavior.
-            ncomp = int(getattr(self.interpolator, "_n_value_components", 1))
+            ncomp = int(self.interpolator.n_value_components)
             if ncomp == 1:
                 return np.full((n_rays,), np.nan, dtype=float)
             return np.full((n_rays, ncomp), np.nan, dtype=float)
@@ -1633,7 +1627,7 @@ class OctreeRayInterpolator:
 
         n_rays = int(offsets.size - 1)
         if mids.shape[0] == 0:
-            ncomp = int(getattr(self.interpolator, "_n_value_components", 1))
+            ncomp = int(self.interpolator.n_value_components)
             if ncomp == 1:
                 return np.full((n_rays,), np.nan, dtype=float)
             return np.full((n_rays, ncomp), np.nan, dtype=float)
@@ -1685,10 +1679,15 @@ class OctreeRayInterpolator:
 
         # Specialized midpoint path: Cartesian scalar field, axis-aligned rays.
         is_axis_aligned, axis = _axis_alignment(d)
+        xyz_interp_state = self.interpolator.xyz_interp_state
+        can_use_xyz_scalar_kernel = bool(
+            _has_xyz_lookup_kernel(self.tree)
+            and int(self.interpolator.n_value_components) == 1
+            and xyz_interp_state is not None
+        )
         if (
             is_axis_aligned
-            and _has_xyz_lookup_kernel(self.tree)
-            and _has_xyz_scalar_interp_kernel(self.interpolator)
+            and can_use_xyz_scalar_kernel
         ):
             return _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
                 origins,
@@ -1700,13 +1699,10 @@ class OctreeRayInterpolator:
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup.lookup_state,
-                self.interpolator._interp_state_xyz,
+                xyz_interp_state,
             )
 
-        if (
-            _has_xyz_lookup_kernel(self.tree)
-            and _has_xyz_scalar_interp_kernel(self.interpolator)
-        ):
+        if can_use_xyz_scalar_kernel:
             return _integrate_xyz_scalar_midpoint_kernel(
                 origins,
                 d,
@@ -1716,7 +1712,7 @@ class OctreeRayInterpolator:
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup.lookup_state,
-                self.interpolator._interp_state_xyz,
+                xyz_interp_state,
             )
 
         mids, weights, offsets = self.adaptive_midpoint_rule(
@@ -1821,9 +1817,9 @@ class OctreeRayInterpolator:
             return []
 
         interp = self.interpolator
-        corner_ids = interp._corners[cid]
+        corner_ids = interp.corners[cid]
         cell_xyz = interp.lookup.points[corner_ids]
-        cell_vals = interp._point_values[corner_ids]
+        cell_vals = interp.point_values[corner_ids]
         eps = max(_TET_EPS_ABS, _TET_EPS_REL * (1.0 + abs(t_exit - t_enter)))
 
         t = float(t_enter)
