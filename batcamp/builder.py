@@ -17,14 +17,21 @@ from .octree import LevelCountTable
 from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
 from .octree import octree_class_for_coord
-from .builder_cartesian import CartesianOctreeBuilder
-from .builder_spherical import SphericalOctreeBuilder
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""
 
 LevelShapeStatsMap: TypeAlias = dict[int, LevelShapeStatsRow]
 """Map `level -> LevelShapeStatsRow`."""
+
+
+def _median_positive(values: np.ndarray, *, tiny: float = 1e-12) -> float:
+    """Compute the median of positive values above `tiny`."""
+    pos = np.asarray(values, dtype=float)
+    pos = pos[pos > float(tiny)]
+    if pos.size == 0:
+        raise ValueError("No positive values available to infer spacing.")
+    return float(np.median(pos))
 
 
 def point_refinement_levels(
@@ -68,6 +75,9 @@ class OctreeBuilder:
         """Configure tolerances used for dyadic level inference."""
         self.level_rtol = float(level_rtol)
         self.level_atol = float(level_atol)
+        from .builder_cartesian import CartesianOctreeBuilder
+        from .builder_spherical import SphericalOctreeBuilder
+
         self._rpa_builder = SphericalOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
         self._xyz_builder = CartesianOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
 

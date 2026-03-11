@@ -4,31 +4,17 @@
 from __future__ import annotations
 
 import math
-from typing import TypeAlias
 
 import numpy as np
 from starwinds_readplt.dataset import Dataset
 
+from .builder import LevelShapeStatsMap
+from .builder import _median_positive
 from .octree import DEFAULT_AXIS_RHO_TOL
-
-LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
-"""Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""
-
-LevelShapeStatsMap: TypeAlias = dict[int, LevelShapeStatsRow]
-"""Map `level -> LevelShapeStatsRow`."""
 
 
 class SphericalOctreeBuilder:
     """Coordinate-specific spherical inference strategy used by `OctreeBuilder`."""
-
-    @staticmethod
-    def _median_positive(values: np.ndarray, *, tiny: float = 1e-12) -> float:
-        """Compute the median of positive values above `tiny`."""
-        pos = np.asarray(values, dtype=float)
-        pos = pos[pos > float(tiny)]
-        if pos.size == 0:
-            raise ValueError("No positive values available to infer spacing.")
-        return float(np.median(pos))
 
     @staticmethod
     def _circular_span(cell_phi: np.ndarray) -> np.ndarray:
@@ -205,8 +191,8 @@ class SphericalOctreeBuilder:
 
         for level in unique_levels:
             mask = cell_levels == level
-            med_dphi = SphericalOctreeBuilder._median_positive(delta_phi[mask])
-            med_dtheta = SphericalOctreeBuilder._median_positive(delta_theta[mask])
+            med_dphi = _median_positive(delta_phi[mask])
+            med_dtheta = _median_positive(delta_theta[mask])
             n_phi = int(round((2.0 * math.pi) / med_dphi))
             n_theta = int(round(math.pi / med_dtheta))
             if n_phi <= 0 or n_theta <= 0:
