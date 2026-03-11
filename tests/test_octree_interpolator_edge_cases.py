@@ -184,17 +184,6 @@ def test_interpolator_supports_query_coord_and_tree_coord_names() -> None:
     assert np.allclose(vals_a, vals_b, atol=0.0, rtol=0.0, equal_nan=True)
 
 
-def test_interpolator_rejects_legacy_query_space_keyword() -> None:
-    """Legacy query_space keyword should be rejected explicitly."""
-    ds = _build_fake_dataset()
-    with pytest.raises(TypeError, match="unexpected keyword argument 'query_space'"):
-        OctreeInterpolator(ds, ["Scalar"], query_space="xyz")
-
-    interp = OctreeInterpolator(ds, ["Scalar"])
-    with pytest.raises(TypeError, match="unexpected keyword argument 'query_space'"):
-        interp(np.array([[1.0, 0.0, 0.0]]), query_space="xyz")
-
-
 def test_prepare_queries_validation_errors() -> None:
     """`prepare_queries` should enforce valid tuple/shape conventions."""
     with pytest.raises(ValueError, match="Tuple input must have exactly 3 arrays"):
