@@ -54,6 +54,5 @@
 - [x] Deduplicate remaining synthetic dataset builder helpers across edge-case/lookup test modules.
 - [x] Label every private test helper clearly as a private test helper (via helper name and/or docstring).
 - [x] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
-- [x] Update `README.md` quick-start to default-first usage (`OctreeInterpolator(ds, ...)` / `Octree.from_dataset(ds)`) and only show explicit `tree_coord` in an “advanced/override” example.
 - [x] Add lightweight smoke validation for example notebooks (`examples/quick_start.ipynb` and one Cartesian+one spherical notebook) so API drift is caught automatically.
 - [x] Declare `pooch` test marker in `pyproject.toml` (single source of truth) instead of runtime-only registration in `tests/conftest.py`.

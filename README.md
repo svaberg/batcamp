@@ -24,7 +24,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from starwinds_readplt.dataset import Dataset
-from batcamp import Octree
 from batcamp import OctreeInterpolator
 
 # Read the dataset
@@ -39,12 +38,6 @@ X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))
 Z = np.zeros_like(X)
 rho = interp(X, Y, Z)
 plt.pcolormesh(X, Y, rho, norm="log")
-```
-
-If you need to override coordinate detection, build the tree explicitly:
-```python
-tree = Octree.from_dataset(ds, tree_coord="rpa")
-interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree, query_coord="xyz")
 ```
 
 See the examples folder [examples/quick_start.ipynb](examples/quick_start.ipynb) for a running example.
