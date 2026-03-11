@@ -73,3 +73,4 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Does it remove duplication rather than move it?
 - Are assumptions explicit (units, shapes, fallbacks)?
 - Would another engineer find ownership and data flow quickly?
+- After fixing one design smell, did I scan for the same smell elsewhere and either fix those cases or log concrete TODO debt?
