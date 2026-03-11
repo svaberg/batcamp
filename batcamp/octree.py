@@ -206,14 +206,9 @@ class Octree:
         logger.info("Loaded octree from %s", str(in_path))
         return tree
 
-    @property
-    def summary(self) -> str:
-        """Return one-line summary text for this tree."""
-        return format_octree_summary(self)
-
     def __str__(self) -> str:
         """Return human-readable summary text."""
-        return self.summary
+        return format_octree_summary(self)
 
     def build_lookup(
         self,
