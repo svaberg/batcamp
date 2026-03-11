@@ -67,6 +67,8 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Keep ray-related implementation in `batcamp/ray.py` whenever possible.
 - Keep spherical-related implementation in `batcamp/spherical.py` whenever possible.
 - Do not expose spherical-specific methods on coord-agnostic/general classes; keep them on spherical classes/modules only.
+- For polar/azimuth plots, use angular grids/ticks that are clean divisors of 180 degrees (for example 5, 10, 15, 30, 45).
+- For polar-angle axes in 2D plots, orient the axis so the smallest polar values are not at the top (prefer minimum polar at the bottom).
 - Using Numba does not justify scalar-first public API design; bulk NumPy paths should remain the default orchestration layer.
 - If code cannot be placed in its owning module, record blocker and rationale in `DEBT.md`.
 - Remove dead paths and dead code whenever practical.
