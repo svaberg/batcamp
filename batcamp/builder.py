@@ -77,19 +77,6 @@ class OctreeBuilder:
         self._rpa_builder = SphericalOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
         self._xyz_builder = CartesianOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
 
-    def infer_levels_from_delta_phi(self, delta_phi: np.ndarray) -> np.ndarray:
-        """Infer dyadic refinement levels from per-cell `delta_phi` spans."""
-        return self._rpa_builder.infer_levels_from_delta_phi(delta_phi)
-
-    def compute_phi_levels(
-        self,
-        ds: Dataset,
-        *,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
-        """Compute per-cell azimuth spans and dyadic levels from dataset geometry."""
-        return self._rpa_builder.compute_phi_levels(ds, axis_rho_tol=axis_rho_tol)
-
     @staticmethod
     def _twos_factor(n: int) -> int:
         """Compute the exponent of the largest power of two dividing `n`."""

@@ -6,8 +6,8 @@ from starwinds_readplt.dataset import Dataset
 
 from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree
-from batcamp import OctreeBuilder
 from batcamp import point_refinement_levels
+from batcamp.builder_spherical import SphericalOctreeBuilder
 from sample_data_helper import data_file
 
 
@@ -51,7 +51,7 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
         level_rtol=1e-4,
         level_atol=1e-9,
     )
-    delta_phi, center_phi, _levels, expected, coarse = OctreeBuilder(
+    delta_phi, center_phi, _levels, expected, coarse = SphericalOctreeBuilder(
         level_rtol=1e-4,
         level_atol=1e-9,
     ).compute_phi_levels(ds, axis_rho_tol=DEFAULT_AXIS_RHO_TOL)
