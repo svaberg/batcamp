@@ -29,8 +29,7 @@ from batcamp import OctreeInterpolator
 # Read the dataset
 ds = Dataset.from_file("MY_FILE")
 
-# Create the interpolator.
-# The tree is built automatically and the coordinate system is inferred.
+# Create the interpolator; the octree is built automatically.
 interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
 
 # Create a grid of points and interpolate the density
