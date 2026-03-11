@@ -22,10 +22,10 @@
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
-- [ ] Run a repo-wide public-docstring audit and flag jargon/vague phrasing (for example "cache", "state", "kernel", "facade") when the term is not user-facing behavior.
-- [ ] Rewrite public docstrings in `batcamp/builder.py` and `batcamp/octree.py` in plain language.
-- [ ] Rewrite public docstrings in `batcamp/interpolator.py` and `batcamp/ray.py` in plain language.
-- [ ] Rewrite public docstrings in `batcamp/cartesian.py` and `batcamp/spherical.py` in plain language.
+- [x] Run a repo-wide public-docstring audit and flag jargon/vague phrasing (for example "cache", "state", "kernel", "facade") when the term is not user-facing behavior.
+- [x] Rewrite public docstrings in `batcamp/builder.py` and `batcamp/octree.py` in plain language.
+- [x] Rewrite public docstrings in `batcamp/interpolator.py` and `batcamp/ray.py` in plain language.
+- [x] Rewrite public docstrings in `batcamp/cartesian.py` and `batcamp/spherical.py` in plain language.
 - [ ] Remove thin pass-through docstrings by removing the wrapper method or moving the useful behavior to one canonical method.
 - [ ] Ensure every remaining public docstring states plain behavior: required inputs, returned value shape/type, and failure conditions.
 - [x] Remove remaining test-only knobs from public APIs (for example `OctreeBuilder.build(cell_levels=..., bind=...)`) and move this control to private/test helpers.
