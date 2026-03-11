@@ -97,6 +97,31 @@ def _contains_rpa_from_components(
 
 
 @njit(cache=True)
+def _forward_face_exit_dt(
+    coord: float,
+    direction_component: float,
+    coord_min: float,
+    coord_max: float,
+    abs_eps: float,
+    dir_eps: float,
+) -> float:
+    """Return forward time to hit one Cartesian face along one axis.
+
+    Near-zero forward exits are kept as `0.0` so boundary-start outward rays
+    do not get reclassified as long interior segments.
+    """
+    if abs(direction_component) <= dir_eps:
+        return np.inf
+    if direction_component > 0.0:
+        dt = (coord_max - coord) / direction_component
+    else:
+        dt = (coord_min - coord) / direction_component
+    if dt > abs_eps:
+        return dt
+    return 0.0
+
+
+@njit(cache=True)
 def _trace_segments_xyz_kernel(
     origin_xyz: np.ndarray,
     direction_xyz_unit: np.ndarray,
@@ -144,30 +169,30 @@ def _trace_segments_xyz_kernel(
                 break
             cid = cid_near
 
-        tx = np.inf
-        ty = np.inf
-        tz = np.inf
-        if abs(d0) > dir_eps:
-            if d0 > 0.0:
-                tx = (lookup_state.cell_x_max[cid] - x) / d0
-            else:
-                tx = (lookup_state.cell_x_min[cid] - x) / d0
-            if tx <= abs_eps:
-                tx = np.inf
-        if abs(d1) > dir_eps:
-            if d1 > 0.0:
-                ty = (lookup_state.cell_y_max[cid] - y) / d1
-            else:
-                ty = (lookup_state.cell_y_min[cid] - y) / d1
-            if ty <= abs_eps:
-                ty = np.inf
-        if abs(d2) > dir_eps:
-            if d2 > 0.0:
-                tz = (lookup_state.cell_z_max[cid] - z) / d2
-            else:
-                tz = (lookup_state.cell_z_min[cid] - z) / d2
-            if tz <= abs_eps:
-                tz = np.inf
+        tx = _forward_face_exit_dt(
+            x,
+            d0,
+            lookup_state.cell_x_min[cid],
+            lookup_state.cell_x_max[cid],
+            abs_eps,
+            dir_eps,
+        )
+        ty = _forward_face_exit_dt(
+            y,
+            d1,
+            lookup_state.cell_y_min[cid],
+            lookup_state.cell_y_max[cid],
+            abs_eps,
+            dir_eps,
+        )
+        tz = _forward_face_exit_dt(
+            z,
+            d2,
+            lookup_state.cell_z_min[cid],
+            lookup_state.cell_z_max[cid],
+            abs_eps,
+            dir_eps,
+        )
 
         dt_exit = tx
         if ty < dt_exit:
@@ -687,30 +712,30 @@ def _integrate_xyz_scalar_exact_kernel(
                 if cid < 0:
                     break
 
-            tx = np.inf
-            ty = np.inf
-            tz = np.inf
-            if abs(d0) > dir_eps:
-                if d0 > 0.0:
-                    tx = (lookup_state.cell_x_max[cid] - x) / d0
-                else:
-                    tx = (lookup_state.cell_x_min[cid] - x) / d0
-                if tx <= abs_eps:
-                    tx = np.inf
-            if abs(d1) > dir_eps:
-                if d1 > 0.0:
-                    ty = (lookup_state.cell_y_max[cid] - y) / d1
-                else:
-                    ty = (lookup_state.cell_y_min[cid] - y) / d1
-                if ty <= abs_eps:
-                    ty = np.inf
-            if abs(d2) > dir_eps:
-                if d2 > 0.0:
-                    tz = (lookup_state.cell_z_max[cid] - z) / d2
-                else:
-                    tz = (lookup_state.cell_z_min[cid] - z) / d2
-                if tz <= abs_eps:
-                    tz = np.inf
+            tx = _forward_face_exit_dt(
+                x,
+                d0,
+                lookup_state.cell_x_min[cid],
+                lookup_state.cell_x_max[cid],
+                abs_eps,
+                dir_eps,
+            )
+            ty = _forward_face_exit_dt(
+                y,
+                d1,
+                lookup_state.cell_y_min[cid],
+                lookup_state.cell_y_max[cid],
+                abs_eps,
+                dir_eps,
+            )
+            tz = _forward_face_exit_dt(
+                z,
+                d2,
+                lookup_state.cell_z_min[cid],
+                lookup_state.cell_z_max[cid],
+                abs_eps,
+                dir_eps,
+            )
 
             dt_exit = tx
             if ty < dt_exit:
@@ -819,30 +844,30 @@ def _integrate_xyz_scalar_midpoint_kernel(
                 if cid < 0:
                     break
 
-            tx = np.inf
-            ty = np.inf
-            tz = np.inf
-            if abs(d0) > dir_eps:
-                if d0 > 0.0:
-                    tx = (lookup_state.cell_x_max[cid] - x) / d0
-                else:
-                    tx = (lookup_state.cell_x_min[cid] - x) / d0
-                if tx <= abs_eps:
-                    tx = np.inf
-            if abs(d1) > dir_eps:
-                if d1 > 0.0:
-                    ty = (lookup_state.cell_y_max[cid] - y) / d1
-                else:
-                    ty = (lookup_state.cell_y_min[cid] - y) / d1
-                if ty <= abs_eps:
-                    ty = np.inf
-            if abs(d2) > dir_eps:
-                if d2 > 0.0:
-                    tz = (lookup_state.cell_z_max[cid] - z) / d2
-                else:
-                    tz = (lookup_state.cell_z_min[cid] - z) / d2
-                if tz <= abs_eps:
-                    tz = np.inf
+            tx = _forward_face_exit_dt(
+                x,
+                d0,
+                lookup_state.cell_x_min[cid],
+                lookup_state.cell_x_max[cid],
+                abs_eps,
+                dir_eps,
+            )
+            ty = _forward_face_exit_dt(
+                y,
+                d1,
+                lookup_state.cell_y_min[cid],
+                lookup_state.cell_y_max[cid],
+                abs_eps,
+                dir_eps,
+            )
+            tz = _forward_face_exit_dt(
+                z,
+                d2,
+                lookup_state.cell_z_min[cid],
+                lookup_state.cell_z_max[cid],
+                abs_eps,
+                dir_eps,
+            )
 
             dt_exit = tx
             if ty < dt_exit:

@@ -22,10 +22,12 @@
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
-- [ ] Fix Cartesian ray boundary-start behavior in compiled kernels (`_trace_segments_xyz_kernel`, `_integrate_xyz_scalar_exact_kernel`, `_integrate_xyz_scalar_midpoint_kernel`) so outward rays starting on a face do not integrate/trace as interior; add regression tests.
+- [x] Fix Cartesian ray boundary-start behavior in compiled kernels (`_trace_segments_xyz_kernel`, `_integrate_xyz_scalar_exact_kernel`, `_integrate_xyz_scalar_midpoint_kernel`) so outward rays starting on a face do not integrate/trace as interior; add regression tests.
 - [x] Add missing runtime dependency declaration for `starwinds-readplt` in `pyproject.toml` to match imports from core modules.
 - [ ] Expand `[project.optional-dependencies].tests` to include non-pytest test imports (at least `pooch`) and verify tests run in a clean `. [tests]` environment.
 - [ ] Investigate and suppress/resolve intermittent runtime warning: `OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.`
+- [ ] Investigate and suppress/resolve notebook warning from `tqdm.auto`: `TqdmWarning: IProgress not found. Please update jupyter and ipywidgets.`
+- [ ] Fix `examples/octree.ipynb` for current builder API: replace removed `OctreeBuilder.compute_phi_levels(...)` usage with `SphericalOctreeBuilder.compute_delta_phi_and_levels(...)` (or equivalent current public API) so executed notebook tests pass.
 - [ ] Audit polar/azimuth plotting across examples: use angular grids/ticks that divide 180 cleanly and orient polar-angle axes so minimum polar is not shown at the top.
 - [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
 - [ ] Replace `OctreeLookup` private-attribute probing (`getattr(..., \"_lookup_state\"/\"_points\"/\"_cell_phi_*\")`) with explicit backend contracts.
@@ -58,5 +60,5 @@
 - [x] Deduplicate remaining synthetic dataset builder helpers across edge-case/lookup test modules.
 - [x] Label every private test helper clearly as a private test helper (via helper name and/or docstring).
 - [x] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
-- [x] Add lightweight smoke validation for example notebooks (`examples/quick_start.ipynb` and one Cartesian+one spherical notebook) so API drift is caught automatically.
+- [x] Replace brittle notebook token smoke checks with slow, opt-in executed notebook tests (`tests/test_notebook_execution.py`).
 - [x] Declare `pooch` test marker in `pyproject.toml` (single source of truth) instead of runtime-only registration in `tests/conftest.py`.

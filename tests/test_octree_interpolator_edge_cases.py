@@ -274,6 +274,39 @@ def test_integrate_field_along_rays_matches_linear_piece_integral() -> None:
     assert np.allclose(bulk, expected, atol=1e-6, rtol=1e-9)
 
 
+def test_cartesian_boundary_start_outward_ray_has_no_long_interior_path() -> None:
+    """Boundary-start outward rays should not trace/integrate as interior paths."""
+    ds = _build_fake_cartesian_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    ray = OctreeRayInterpolator(interp)
+
+    dmin, dmax = tree.domain_bounds(coord="xyz")
+    origin = np.array(
+        [
+            float(dmin[0]),
+            0.5 * float(dmin[1] + dmax[1]),
+            0.5 * float(dmin[2] + dmax[2]),
+        ],
+        dtype=float,
+    )
+    direction = np.array([-1.0, 1.0e-6, 0.0], dtype=float)
+    t0 = 0.0
+    t1 = float(dmax[0] - dmin[0])
+
+    segments = ray.ray_tracer.trace(origin, direction, t0, t1)
+    total_length = sum(float(seg.t_exit) - float(seg.t_enter) for seg in segments)
+    assert total_length <= 1.0e-6
+
+    origins = origin.reshape(1, 3)
+    exact = np.asarray(ray.integrate_field_along_rays(origins, direction, t0, t1), dtype=float)
+    midpoint = np.asarray(ray.integrate_field_along_rays_midpoint(origins, direction, t0, t1), dtype=float)
+    assert np.all(np.isfinite(exact))
+    assert np.all(np.isfinite(midpoint))
+    assert abs(float(exact[0])) <= 1.0e-6
+    assert abs(float(midpoint[0])) <= 1.0e-6
+
+
 def test_adaptive_midpoint_rule_outputs_consistent_offsets() -> None:
     """Adaptive midpoint packing should return monotone offsets and matching lengths."""
     ds = _build_fake_cartesian_dataset()
