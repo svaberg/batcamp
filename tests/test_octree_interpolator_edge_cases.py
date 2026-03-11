@@ -10,6 +10,8 @@ from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 from fake_dataset import FakeDataset as _FakeDataset
+from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
+from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
 
 def _build_fake_dataset(
@@ -19,46 +21,13 @@ def _build_fake_dataset(
     nphi: int = 4,
 ) -> _FakeDataset:
     """Private test helper: build a small regular spherical hexahedral dataset."""
-    r_edges = np.linspace(1.0, 2.0, nr + 1)
-    theta_edges = np.linspace(0.0, math.pi, ntheta + 1)
-    phi_edges = np.linspace(0.0, 2.0 * math.pi, nphi + 1)
-
-    node_index = -np.ones((nr + 1, ntheta + 1, nphi + 1), dtype=np.int64)
-    xyz_list: list[tuple[float, float, float]] = []
-    node_id = 0
-    for ir in range(nr + 1):
-        r = float(r_edges[ir])
-        for it in range(ntheta + 1):
-            theta = float(theta_edges[it])
-            st = math.sin(theta)
-            ct = math.cos(theta)
-            for ip in range(nphi + 1):
-                phi = float(phi_edges[ip])
-                x = r * st * math.cos(phi)
-                y = r * st * math.sin(phi)
-                z = r * ct
-                xyz_list.append((x, y, z))
-                node_index[ir, it, ip] = node_id
-                node_id += 1
-
-    corners: list[list[int]] = []
-    for ir in range(nr):
-        for it in range(ntheta):
-            for ip in range(nphi):
-                corners.append(
-                    [
-                        int(node_index[ir, it, ip]),
-                        int(node_index[ir + 1, it, ip]),
-                        int(node_index[ir, it + 1, ip]),
-                        int(node_index[ir + 1, it + 1, ip]),
-                        int(node_index[ir, it, ip + 1]),
-                        int(node_index[ir + 1, it, ip + 1]),
-                        int(node_index[ir, it + 1, ip + 1]),
-                        int(node_index[ir + 1, it + 1, ip + 1]),
-                    ]
-                )
-
-    points = np.array(xyz_list)
+    points, corners = _build_spherical_hex_mesh(
+        nr=nr,
+        ntheta=ntheta,
+        nphi=nphi,
+        r_min=1.0,
+        r_max=2.0,
+    )
     x = points[:, 0]
     y = points[:, 1]
     z = points[:, 2]
@@ -66,7 +35,7 @@ def _build_fake_dataset(
     scalar2 = 2.0 * scalar + 3.0
     return _FakeDataset(
         points=points,
-        corners=np.array(corners, dtype=np.int64),
+        corners=corners,
         variables={
             "X [R]": x,
             "Y [R]": y,
@@ -79,38 +48,11 @@ def _build_fake_dataset(
 
 def _build_fake_cartesian_dataset() -> _FakeDataset:
     """Private test helper: build a small regular Cartesian hexahedral dataset."""
-    x_edges = np.array([0.0, 1.0, 2.0], dtype=float)
-    y_edges = np.array([-0.5, 0.5], dtype=float)
-    z_edges = np.array([-0.25, 0.75], dtype=float)
-
-    node_index = -np.ones((x_edges.size, y_edges.size, z_edges.size), dtype=np.int64)
-    xyz_list: list[tuple[float, float, float]] = []
-    node_id = 0
-    for ix, x in enumerate(x_edges):
-        for iy, y in enumerate(y_edges):
-            for iz, z in enumerate(z_edges):
-                xyz_list.append((float(x), float(y), float(z)))
-                node_index[ix, iy, iz] = node_id
-                node_id += 1
-
-    corners: list[list[int]] = []
-    for ix in range(x_edges.size - 1):
-        for iy in range(y_edges.size - 1):
-            for iz in range(z_edges.size - 1):
-                corners.append(
-                    [
-                        int(node_index[ix, iy, iz]),
-                        int(node_index[ix + 1, iy, iz]),
-                        int(node_index[ix, iy + 1, iz]),
-                        int(node_index[ix + 1, iy + 1, iz]),
-                        int(node_index[ix, iy, iz + 1]),
-                        int(node_index[ix + 1, iy, iz + 1]),
-                        int(node_index[ix, iy + 1, iz + 1]),
-                        int(node_index[ix + 1, iy + 1, iz + 1]),
-                    ]
-                )
-
-    points = np.array(xyz_list, dtype=float)
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+        y_edges=np.array([-0.5, 0.5], dtype=float),
+        z_edges=np.array([-0.25, 0.75], dtype=float),
+    )
     x = points[:, 0]
     y = points[:, 1]
     z = points[:, 2]
@@ -118,7 +60,7 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
     scalar2 = -0.5 * scalar + 2.0
     return _FakeDataset(
         points=points,
-        corners=np.array(corners, dtype=np.int64),
+        corners=corners,
         variables={
             "X [R]": x,
             "Y [R]": y,

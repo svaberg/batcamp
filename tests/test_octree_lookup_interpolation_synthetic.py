@@ -7,22 +7,8 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-
-
-class _SyntheticDataset:
-    """Private test helper: minimal dataset-like object for synthetic tests."""
-
-    def __init__(self, points: np.ndarray, corners: np.ndarray, variables: dict[str, np.ndarray]) -> None:
-        """Store geometry and field arrays with a `Dataset`-compatible API surface."""
-        self.points = points
-        self.corners = corners
-        self._variables = variables
-        self.variables = list(variables.keys())
-        self.aux: dict[str, str] = {}
-
-    def variable(self, name: str) -> np.ndarray:
-        """Return one named variable array."""
-        return self._variables[name]
+from fake_dataset import FakeDataset as _FakeDataset
+from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
 
 def _build_uniform_spherical_hex_dataset(
@@ -30,45 +16,15 @@ def _build_uniform_spherical_hex_dataset(
     nr: int = 2,
     ntheta: int = 4,
     nphi: int = 8,
-) -> tuple[_SyntheticDataset, np.ndarray, tuple[float, float, float, float]]:
+) -> tuple[_FakeDataset, np.ndarray, tuple[float, float, float, float]]:
     """Private test helper: build a synthetic full-sphere hexahedral dataset."""
-    r_edges = np.linspace(1.0, 3.0, nr + 1)
-    theta_edges = np.linspace(0.0, math.pi, ntheta + 1)
-    phi_edges = np.linspace(0.0, 2.0 * math.pi, nphi + 1)
-
-    node_index = -np.ones((nr + 1, ntheta + 1, nphi + 1), dtype=np.int64)
-    xyz_list: list[tuple[float, float, float]] = []
-    node_id = 0
-    for ir in range(nr + 1):
-        r = float(r_edges[ir])
-        for it in range(ntheta + 1):
-            theta = float(theta_edges[it])
-            st = math.sin(theta)
-            ct = math.cos(theta)
-            for ip in range(nphi + 1):
-                phi = float(phi_edges[ip])
-                x = r * st * math.cos(phi)
-                y = r * st * math.sin(phi)
-                z = r * ct
-                xyz_list.append((x, y, z))
-                node_index[ir, it, ip] = node_id
-                node_id += 1
-
-    corners: list[list[int]] = []
-    for ir in range(nr):
-        for it in range(ntheta):
-            for ip in range(nphi):
-                c000 = int(node_index[ir, it, ip])
-                c100 = int(node_index[ir + 1, it, ip])
-                c010 = int(node_index[ir, it + 1, ip])
-                c110 = int(node_index[ir + 1, it + 1, ip])
-                c001 = int(node_index[ir, it, ip + 1])
-                c101 = int(node_index[ir + 1, it, ip + 1])
-                c011 = int(node_index[ir, it + 1, ip + 1])
-                c111 = int(node_index[ir + 1, it + 1, ip + 1])
-                corners.append([c000, c100, c010, c110, c001, c101, c011, c111])
-
-    points = np.array(xyz_list)
+    points, corners = _build_spherical_hex_mesh(
+        nr=nr,
+        ntheta=ntheta,
+        nphi=nphi,
+        r_min=1.0,
+        r_max=3.0,
+    )
     x = points[:, 0]
     y = points[:, 1]
     z = points[:, 2]
@@ -81,9 +37,9 @@ def _build_uniform_spherical_hex_dataset(
     linear_field2 = 2.0 * linear_field + 1.0
     linear_const = np.full_like(linear_field, 5.0)
 
-    ds = _SyntheticDataset(
+    ds = _FakeDataset(
         points=points,
-        corners=np.array(corners, dtype=np.int64),
+        corners=corners,
         variables={
             "X [R]": x,
             "Y [R]": y,
@@ -97,7 +53,7 @@ def _build_uniform_spherical_hex_dataset(
 
 
 @pytest.fixture(scope="module")
-def synthetic_context() -> tuple[_SyntheticDataset, Octree, np.ndarray, tuple[float, float, float, float]]:
+def synthetic_context() -> tuple[_FakeDataset, Octree, np.ndarray, tuple[float, float, float, float]]:
     """Return synthetic dataset, built tree, linear nodal field and coefficients."""
     ds, linear_field, coeffs = _build_uniform_spherical_hex_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
