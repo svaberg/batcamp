@@ -110,6 +110,8 @@ def _trace_segments_xyz_kernel(
 
     This kernel computes the next boundary crossing analytically from the
     current point and direction, avoiding expand-and-bisect stepping.
+    It assumes Cartesian cells are axis-aligned boxes with faces at constant
+    `x`, `y`, and `z` (from per-cell min/max bounds).
     """
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
@@ -234,7 +236,11 @@ def _trace_segments_rpa_kernel(
     boundary_tol: float,
     lookup_state: SphericalLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace Cartesian ray segments on spherical trees using compiled kernels."""
+    """Trace straight Cartesian rays on spherical trees using compiled kernels.
+
+    Cell transitions are found with spherical containment checks and
+    bracket+bisection in `t` (not Cartesian plane-crossing formulas).
+    """
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
     exits = np.empty(max_steps, dtype=np.float64)
@@ -986,7 +992,12 @@ class RayLinearPiece:
 
 
 class OctreeRayTracer:
-    """Ray tracer operating on an already-built and bound `Octree`."""
+    """Ray tracer operating on an already-built and bound `Octree`.
+
+    Rays are always straight in Cartesian space.
+    For `tree_coord="xyz"`, fast kernels assume axis-aligned Cartesian cells.
+    For `tree_coord="rpa"`, tracing uses spherical containment on straight rays.
+    """
 
     def __init__(self, tree: Octree) -> None:
         """Store the tree used for cell-segment tracing."""
@@ -1011,6 +1022,9 @@ class OctreeRayTracer:
         - Bisect the exit point for a tight `t_exit`.
         - Step slightly forward and re-resolve near the previous cell.
         Returns ordered `RaySegment` intervals.
+
+        Note:
+        - On `xyz` trees, exact kernel boundary math assumes axis-aligned cells.
         """
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
@@ -1339,6 +1353,9 @@ class OctreeRayInterpolator:
         - trace cell segments along each ray;
         - evaluate field at segment endpoints in batch;
         - use trapezoidal exactness on linear segments.
+
+        Cartesian fast paths (`tree_coord="xyz"`) rely on axis-aligned cell
+        bounds for exact boundary crossing.
         """
         origins = _coerce_origins_xyz(origins_xyz)
         chunk = _coerce_positive_chunk_size(chunk_size)

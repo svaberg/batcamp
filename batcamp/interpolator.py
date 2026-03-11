@@ -302,7 +302,10 @@ def _interp_batch_xyz_cartesian(
     interp_state: CartesianInterpKernelState,
     lookup_state: CartesianLookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate Cartesian queries for Cartesian trees via compiled kernels."""
+    """Evaluate Cartesian queries for Cartesian trees via compiled kernels.
+
+    Assumes the Cartesian backend cell model (axis-aligned per-cell bounds).
+    """
     n_query = queries_xyz.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
@@ -340,11 +343,17 @@ class OctreeInterpolator:
 
     Query algorithm:
     - Find containing leaf cell with octree lookup.
-    - Convert query to local `(r, polar, azimuth)` coordinates.
+    - Convert query to backend-local coordinates:
+      spherical uses `(r, polar, azimuth)`;
+      Cartesian uses normalized `(x, y, z)` from per-cell axis-aligned min/max.
     - Evaluate trilinear interpolation from the 8 corner nodes of that cell.
 
     Ray methods additionally split cells into a fixed 6-tet decomposition and
     produce piecewise-linear functions along the ray.
+
+    Note:
+    - For ``tree_coord="xyz"``, Cartesian cell geometry is treated as
+      axis-aligned boxes; skewed/non-axis-aligned cells are not modeled exactly.
     """
 
     def __init__(
@@ -525,7 +534,11 @@ class OctreeInterpolator:
         self._bin_to_corner = bin_to_corner
 
     def _prepare_trilinear_cache_xyz(self) -> None:
-        """Build per-cell corner mappings used for Cartesian trilinear interpolation."""
+        """Build per-cell corner mappings for Cartesian trilinear interpolation.
+
+        The Cartesian backend maps query/corner positions through per-cell
+        axis-aligned min/max bounds (AABB normalization).
+        """
         corners = self._corners
         pts = np.array(self.lookup.points, dtype=float)
         vx = pts[corners, 0]

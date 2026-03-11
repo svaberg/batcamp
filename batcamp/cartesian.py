@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Cartesian octree and Cartesian lookup implementation."""
+"""Cartesian octree and Cartesian lookup implementation.
+
+Important modeling assumption for ``tree_coord="xyz"``:
+leaf cells are treated as axis-aligned Cartesian boxes (AABBs) from
+per-cell corner min/max values. Lookup/ray/interpolation kernels in the
+Cartesian backend are exact under this axis-aligned representation.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ _DEFAULT_LOOKUP_MAX_RADIUS = 2
 
 
 class CartesianLookupKernelState(NamedTuple):
-    """Arrays used by compiled Cartesian lookup code."""
+    """Arrays used by compiled Cartesian lookup code under an AABB cell model."""
 
     cell_centers: np.ndarray
     cell_x_min: np.ndarray
@@ -68,7 +74,11 @@ def _lookup_xyz_cell_id_kernel(
     lookup_state: CartesianLookupKernelState,
     prev_cid: int = -1,
 ) -> int:
-    """Resolve one Cartesian query to a cell id using bin neighborhoods."""
+    """Resolve one Cartesian query to a cell id using AABB bin neighborhoods.
+
+    This lookup uses axis-aligned min/max bounds per cell and does not model
+    skewed/non-axis-aligned cell faces.
+    """
     if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
         return -1
     if prev_cid >= 0 and _contains_xyz_cell(int(prev_cid), x, y, z, lookup_state):
@@ -152,10 +162,16 @@ def _lookup_xyz_cell_id_kernel(
 
 
 class _CartesianCellLookup:
-    """Leaf-cell lookup accelerator for Cartesian `(x, y, z)` octrees."""
+    """Leaf-cell lookup accelerator for Cartesian `(x, y, z)` octrees.
+
+    The accelerator stores each cell as an axis-aligned box in Cartesian space.
+    """
 
     def _init_lookup_state(self, tree: Octree) -> None:
-        """Build per-cell lookup arrays from a bound Cartesian tree."""
+        """Build per-cell lookup arrays from a bound Cartesian tree.
+
+        Cell geometry is reduced to per-axis min/max bounds (AABBs).
+        """
         if tree.ds is None or tree.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         ds = tree.ds
@@ -321,7 +337,7 @@ class _CartesianCellLookup:
         coord: str,
         tol: float = _LOOKUP_CONTAIN_TOL,
     ) -> bool:
-        """Return whether one point lies inside one Cartesian cell."""
+        """Return whether one point lies inside one Cartesian cell AABB."""
         resolved = str(coord)
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -415,7 +431,10 @@ class _CartesianCellLookup:
         )
 
 class CartesianOctree(_CartesianCellLookup, Octree):
-    """Octree specialization placeholder for Cartesian `(x, y, z)` datasets."""
+    """Octree specialization for Cartesian `(x, y, z)` datasets.
+
+    For this backend, cells are represented as axis-aligned Cartesian boxes.
+    """
 
     TREE_COORD: ClassVar[str | None] = "xyz"
 
