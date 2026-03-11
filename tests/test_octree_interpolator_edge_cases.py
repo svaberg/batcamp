@@ -507,12 +507,10 @@ def test_interpolator_rpa_wrap_equivalence_on_resolvable_point() -> None:
 def test_invalid_level_cells_are_consistently_treated_as_misses() -> None:
     """Lookup and interpolation should both treat level<0 cells as invalid."""
     ds = _build_fake_cartesian_dataset()
-    corners = np.asarray(ds.corners, dtype=np.int64)
     levels = np.array([-1, 0], dtype=np.int64)
     tree = OctreeBuilder().build(
         ds,
         tree_coord="xyz",
-        corners=corners,
         cell_levels=levels,
         bind=False,
     )

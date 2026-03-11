@@ -133,13 +133,11 @@ class OctreeBuilder:
         *,
         tree_coord: TreeCoord = DEFAULT_TREE_COORD,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-        corners: np.ndarray | None = None,
         cell_levels: np.ndarray | None = None,
         bind: bool = True,
     ) -> Octree:
         """Build an octree from a dataset.
 
-        If `corners` is not provided, this uses `ds.corners`.
         If `bind` is `True`, the returned tree is ready for
         `lookup_point(...)` and ray tracing immediately.
         """
@@ -148,12 +146,9 @@ class OctreeBuilder:
                 f"Unsupported tree_coord '{tree_coord}'; "
                 f"expected one of {SUPPORTED_TREE_COORDS}."
             )
-        if corners is None:
-            if ds.corners is None:
-                raise ValueError("Dataset has no corners; cannot build octree.")
-            corners_arr = np.asarray(ds.corners, dtype=np.int64)
-        else:
-            corners_arr = np.asarray(corners, dtype=np.int64)
+        if ds.corners is None:
+            raise ValueError("Dataset has no corners; cannot build octree.")
+        corners_arr = np.asarray(ds.corners, dtype=np.int64)
 
         tree_cls = octree_class_for_coord(tree_coord)
         if tree_coord == "rpa":

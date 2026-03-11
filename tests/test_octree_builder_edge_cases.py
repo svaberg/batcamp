@@ -389,7 +389,7 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
     delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
     all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        builder.build(ds, tree_coord="rpa", corners=ds.corners, cell_levels=all_invalid, bind=False)
+        builder.build(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
 
 
 def test_builder_handles_incompatible_blocks_aux_without_block_tree() -> None:
@@ -423,7 +423,6 @@ def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
     tree = OctreeBuilder().build(
         ds,
         tree_coord="rpa",
-        corners=ds.corners,
         cell_levels=cell_levels,
         bind=False,
     )
@@ -440,7 +439,6 @@ def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
     tree = OctreeBuilder().build(
         ds,
         tree_coord="xyz",
-        corners=ds.corners,
         cell_levels=cell_levels,
         bind=False,
     )
@@ -448,21 +446,19 @@ def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
     assert tree.tree_coord == "xyz"
 
 
-def test_builder_build_uses_explicit_corners_for_spherical_inference() -> None:
-    """Spherical build should infer levels from explicit `corners`, not `ds.corners`."""
+def test_builder_build_rejects_inconsistent_dataset_corners_for_spherical_inference() -> None:
+    """Spherical build should fail when `ds.corners` is internally inconsistent."""
     ds = _build_regular_dataset(nr=1, ntheta=2, nphi=2)
     corners_full = np.array(ds.corners, copy=True)
     ds.corners = np.array(corners_full[:2], copy=True)
 
-    tree = OctreeBuilder().build(
-        ds,
-        tree_coord="rpa",
-        corners=corners_full,
-        cell_levels=None,
-        bind=False,
-    )
-    assert tree.cell_levels is not None
-    assert tree.cell_levels.shape[0] == corners_full.shape[0]
+    with pytest.raises(ValueError, match="Could not infer integer finest n_axis0"):
+        OctreeBuilder().build(
+            ds,
+            tree_coord="rpa",
+            cell_levels=None,
+            bind=False,
+        )
 
 
 def test_lookup_runs_for_xyz_tree_coord() -> None:
