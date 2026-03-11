@@ -53,6 +53,7 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Focus tests on correctness and meaningful edge cases.
 - Keep detailed tests on reusable logic; keep workflow tests lightweight.
 - Do not preserve poor design only to satisfy lock-in tests.
+- Label every private test helper clearly as a private test helper (name or docstring) so intent is explicit.
 
 ## 11. Catch exceptions narrowly
 - Do not catch broad exceptions (for example `except Exception`) in core paths.

@@ -39,6 +39,7 @@
 - [x] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
 - [x] Deduplicate test data scaffolding across `tests/test_octree_builder_edge_cases.py`, `tests/test_octree_interpolator_edge_cases.py`, and `tests/test_octree_fake_edge_cases.py` by sharing one `FakeDataset` helper class.
 - [ ] Deduplicate remaining synthetic dataset builder helpers across edge-case/lookup test modules.
+- [ ] Label every private test helper clearly as a private test helper (via helper name and/or docstring).
 - [x] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
 - [x] Update `README.md` quick-start to default-first usage (`OctreeInterpolator(ds, ...)` / `Octree.from_dataset(ds)`) and only show explicit `tree_coord` in an “advanced/override” example.
 - [x] Add lightweight smoke validation for example notebooks (`examples/quick_start.ipynb` and one Cartesian+one spherical notebook) so API drift is caught automatically.
