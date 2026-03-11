@@ -168,7 +168,7 @@ class OctreeBuilder:
 
         The returned tree is ready for lookup and ray methods.
         """
-        return self._build_with_overrides(
+        return self._build(
             ds,
             tree_coord=tree_coord,
             axis_rho_tol=axis_rho_tol,
@@ -176,7 +176,7 @@ class OctreeBuilder:
             bind=True,
         )
 
-    def _build_with_overrides(
+    def _build(
         self,
         ds: Dataset,
         *,

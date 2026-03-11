@@ -22,6 +22,7 @@
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
+- [x] Normalize public/private pair naming to `name` + `_name` (for example `build` + `_build`) and remove suffix-heavy internal names when no semantic distinction exists.
 - [x] Run a repo-wide public-docstring audit and flag jargon/vague phrasing (for example "cache", "state", "kernel", "facade") when the term is not user-facing behavior.
 - [x] Rewrite public docstrings in `batcamp/builder.py` and `batcamp/octree.py` in plain language.
 - [x] Rewrite public docstrings in `batcamp/interpolator.py` and `batcamp/ray.py` in plain language.

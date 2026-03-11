@@ -430,7 +430,7 @@ def test_invalid_level_cells_are_consistently_treated_as_misses() -> None:
     """Lookup and interpolation should both treat level<0 cells as invalid."""
     ds = _build_fake_cartesian_dataset()
     levels = np.array([-1, 0], dtype=np.int64)
-    tree = OctreeBuilder()._build_with_overrides(
+    tree = OctreeBuilder()._build(
         ds,
         tree_coord="xyz",
         cell_levels=levels,
