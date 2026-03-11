@@ -8,6 +8,7 @@ from starwinds_readplt.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive
+from .builder import _resolve_cell_levels
 
 
 class CartesianOctreeBuilder:
@@ -129,20 +130,19 @@ class CartesianOctreeBuilder:
         dy = np.ptp(cell_y, axis=1)
         dz = np.ptp(cell_z, axis=1)
 
-        levels = cell_levels
-        if levels is None:
-            levels = self.infer_xyz_levels_from_cell_spans(
+        inferred_levels: np.ndarray | None = None
+        if cell_levels is None:
+            inferred_levels = self.infer_xyz_levels_from_cell_spans(
                 dx,
                 dy,
                 dz,
                 rtol=max(2e-2, float(self.level_rtol)),
                 atol=max(1e-10, float(self.level_atol)),
             )
-        levels = np.asarray(levels, dtype=np.int64)
-        valid_levels = levels[levels >= 0]
-        if valid_levels.size == 0:
-            raise ValueError("No valid (>=0) levels available to infer octree.")
+        levels, min_level, max_level = _resolve_cell_levels(
+            inferred_levels=inferred_levels,
+            cell_levels=cell_levels,
+            expected_shape=dx.shape,
+        )
         level_shapes = self.infer_xyz_level_shapes(ds, corners, levels)
-        min_level = int(np.min(valid_levels))
-        max_level = int(np.max(valid_levels))
         return level_shapes, levels, min_level, max_level

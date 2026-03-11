@@ -33,7 +33,7 @@
 - [x] Revisit stale cache-compatibility paths: remove `InterpKernelState` alias in `batcamp/interpolator.py` once cache migration policy is explicit (the old-name shim is still live).
 - [x] Slim package import surface in `batcamp/__init__.py` (avoid eager heavy imports of numba/ray/interpolator on plain `import batcamp`; prefer lazy or narrower exports).
 - [x] Consolidate duplicate builder utilities across `batcamp/builder_cartesian.py` and `batcamp/builder_spherical.py` (shared level-shape types and positive-median helper).
-- [ ] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
+- [x] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
 - [x] Replace dynamic attribute probing in `Octree.cell_bounds/domain_bounds` with explicit subclass hooks.
 - [ ] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
 - [x] Make coordinate conversion/interpolation APIs NumPy-first for bulk arrays; keep scalar conversion helpers private and limited to kernel internals.

@@ -10,6 +10,7 @@ from starwinds_readplt.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive
+from .builder import _resolve_cell_levels
 from .octree import DEFAULT_AXIS_RHO_TOL
 
 
@@ -256,17 +257,10 @@ class SphericalOctreeBuilder:
             corners=corners,
             axis_rho_tol=axis_rho_tol,
         )
-        levels = auto_levels if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
-        levels = np.asarray(levels, dtype=np.int64)
-        if levels.shape != auto_levels.shape:
-            raise ValueError(
-                "cell_levels shape does not match inferred corner-cell shape: "
-                f"levels={levels.shape}, inferred={auto_levels.shape}."
-            )
-        valid_levels = levels[levels >= 0]
-        if valid_levels.size == 0:
-            raise ValueError("No valid (>=0) levels available to infer octree.")
+        levels, min_level, max_level = _resolve_cell_levels(
+            inferred_levels=auto_levels,
+            cell_levels=cell_levels,
+            expected_shape=auto_levels.shape,
+        )
         level_shapes = self.infer_level_angular_shapes(ds, corners, delta_phi, levels)
-        min_level = int(np.min(valid_levels))
-        max_level = int(np.max(valid_levels))
         return level_shapes, levels, min_level, max_level

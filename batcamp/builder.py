@@ -63,6 +63,32 @@ def valid_cell_fraction(levels: np.ndarray) -> tuple[int, int, float]:
     return valid, total, frac
 
 
+def _resolve_cell_levels(
+    *,
+    inferred_levels: np.ndarray | None,
+    cell_levels: np.ndarray | None,
+    expected_shape: tuple[int, ...],
+) -> tuple[np.ndarray, int, int]:
+    """Finalize level array with shared validation and min/max extraction."""
+    if cell_levels is None:
+        if inferred_levels is None:
+            raise ValueError("inferred_levels is required when cell_levels is omitted.")
+        levels = np.asarray(inferred_levels, dtype=np.int64)
+    else:
+        levels = np.asarray(cell_levels, dtype=np.int64)
+    if levels.shape != tuple(expected_shape):
+        raise ValueError(
+            "cell_levels shape does not match inferred corner-cell shape: "
+            f"levels={levels.shape}, inferred={expected_shape}."
+        )
+    valid_levels = levels[levels >= 0]
+    if valid_levels.size == 0:
+        raise ValueError("No valid (>=0) levels available to infer octree.")
+    min_level = int(np.min(valid_levels))
+    max_level = int(np.max(valid_levels))
+    return levels, min_level, max_level
+
+
 class OctreeBuilder:
     """Build octrees from dataset cell connectivity."""
 
