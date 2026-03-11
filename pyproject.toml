@@ -12,6 +12,7 @@ authors = [
   { name = "Dag Evensberget" },
 ]
 dependencies = [
+  "starwinds_readplt",
   "numpy",
   "numba",
   "scipy",
@@ -20,6 +21,14 @@ dependencies = [
 [project.optional-dependencies]
 tests = [
   "pytest",
+  "pooch",
+]
+examples = [
+  "matplotlib",
+  "pooch",
+  "jupyter",
+  "nbconvert",
+  "ipykernel",
 ]
 
 [tool.setuptools.packages.find]
