@@ -9,27 +9,7 @@ from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
-
-
-class _FakeDataset:
-    """Minimal dataset-like object used for interpolator edge-case tests."""
-
-    def __init__(
-        self,
-        points: np.ndarray,
-        corners: np.ndarray | None,
-        variables: dict[str, np.ndarray],
-    ) -> None:
-        """Store geometry/fields with a `Dataset`-compatible API."""
-        self.points = points
-        self.corners = corners
-        self._variables = variables
-        self.variables = list(variables.keys())
-        self.aux: dict[str, str] = {}
-
-    def variable(self, name: str) -> np.ndarray:
-        """Return one variable array by name."""
-        return self._variables[name]
+from fake_dataset import FakeDataset as _FakeDataset
 
 
 def _build_fake_dataset(

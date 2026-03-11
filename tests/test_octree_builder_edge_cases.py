@@ -11,29 +11,7 @@ from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import OctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
-
-
-class _FakeDataset:
-    """Minimal dataset-like object for octree-builder edge tests."""
-
-    def __init__(
-        self,
-        points: np.ndarray,
-        corners: np.ndarray | None,
-        variables: dict[str, np.ndarray],
-        *,
-        aux: dict[str, str] | None = None,
-    ) -> None:
-        """Store geometry/fields with Dataset-compatible attribute names."""
-        self.points = points
-        self.corners = corners
-        self._variables = variables
-        self.variables = list(variables.keys())
-        self.aux = {} if aux is None else dict(aux)
-
-    def variable(self, name: str) -> np.ndarray:
-        """Return one named variable array."""
-        return self._variables[name]
+from fake_dataset import FakeDataset as _FakeDataset
 
 
 def _build_regular_dataset(

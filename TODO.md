@@ -37,7 +37,8 @@
 - [ ] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol so bounds/lookup methods stop probing attributes dynamically.
 - [x] In `batcamp/ray.py`, centralize repeated ray input validation (`origins`, `direction`, `t_start/t_end`) used by `integrate_field_along_rays`, `adaptive_midpoint_rule`, and `integrate_field_along_rays_midpoint`.
 - [x] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
-- [ ] Deduplicate test data scaffolding across `tests/test_octree_builder_edge_cases.py`, `tests/test_octree_interpolator_edge_cases.py`, `tests/test_octree_fake_edge_cases.py`, and `tests/test_octree_lookup_interpolation_synthetic.py` (shared fake dataset/builders).
+- [x] Deduplicate test data scaffolding across `tests/test_octree_builder_edge_cases.py`, `tests/test_octree_interpolator_edge_cases.py`, and `tests/test_octree_fake_edge_cases.py` by sharing one `FakeDataset` helper class.
+- [ ] Deduplicate remaining synthetic dataset builder helpers across edge-case/lookup test modules.
 - [x] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
 - [x] Update `README.md` quick-start to default-first usage (`OctreeInterpolator(ds, ...)` / `Octree.from_dataset(ds)`) and only show explicit `tree_coord` in an “advanced/override” example.
 - [x] Add lightweight smoke validation for example notebooks (`examples/quick_start.ipynb` and one Cartesian+one spherical notebook) so API drift is caught automatically.
