@@ -38,9 +38,9 @@ def _build_regular_dataset(
         points=points,
         corners=corners,
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "Scalar": scalar,
         },
     )
@@ -66,9 +66,9 @@ def _build_regular_xyz_dataset(
         points=points,
         corners=corners,
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "Scalar": scalar,
         },
     )
@@ -106,9 +106,9 @@ def _build_disjoint_xyz_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "Scalar": scalar,
         },
     )
@@ -160,9 +160,9 @@ def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
         points=points_arr,
         corners=np.array(corners, dtype=np.int64),
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "Scalar": scalar,
         },
     )
@@ -226,7 +226,7 @@ def test_builder_build_rejects_missing_corners() -> None:
     ds = _FakeDataset(
         points=points,
         corners=None,
-        variables={"X [R]": points[:, 0], "Y [R]": points[:, 1], "Z [R]": points[:, 2]},
+        variables={Octree.X_VAR: points[:, 0], Octree.Y_VAR: points[:, 1], Octree.Z_VAR: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Dataset has no corners"):
         OctreeBuilder().build(ds)
@@ -261,7 +261,7 @@ def test_builder_compute_phi_levels_rejects_missing_phi_source() -> None:
     ds = _FakeDataset(
         points=points,
         corners=corners,
-        variables={"X [R]": points[:, 0], "Z [R]": points[:, 2]},
+        variables={Octree.X_VAR: points[:, 0], Octree.Z_VAR: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Could not determine phi"):
         SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
@@ -274,7 +274,7 @@ def test_builder_compute_phi_levels_rejects_bad_corner_rank() -> None:
     ds = _FakeDataset(
         points=points,
         corners=corners,
-        variables={"X [R]": points[:, 0], "Y [R]": points[:, 1], "Z [R]": points[:, 2]},
+        variables={Octree.X_VAR: points[:, 0], Octree.Y_VAR: points[:, 1], Octree.Z_VAR: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Expected 2D corner array"):
         SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
@@ -287,7 +287,7 @@ def test_builder_compute_phi_levels_rejects_too_few_corners_per_cell() -> None:
     ds = _FakeDataset(
         points=points,
         corners=corners,
-        variables={"X [R]": points[:, 0], "Y [R]": points[:, 1], "Z [R]": points[:, 2]},
+        variables={Octree.X_VAR: points[:, 0], Octree.Y_VAR: points[:, 1], Octree.Z_VAR: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Need at least 3 corners per cell"):
         SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)

@@ -12,6 +12,7 @@ from .builder import LevelShapeStatsMap
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
 from .octree import DEFAULT_AXIS_RHO_TOL
+from .octree import Octree
 
 
 class SphericalOctreeBuilder:
@@ -73,10 +74,10 @@ class SphericalOctreeBuilder:
     def _axis_corner_mask(ds: Dataset, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
         """Mark corners near the polar axis where azimuth is singular."""
         names = set(ds.variables)
-        if not {"X [R]", "Y [R]"}.issubset(names):
+        if not set(Octree.XY_VARS).issubset(names):
             return np.zeros(corners.shape, dtype=bool)
-        x = np.asarray(ds.variable("X [R]"), dtype=float)
-        y = np.asarray(ds.variable("Y [R]"), dtype=float)
+        x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
+        y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
         rho = np.hypot(x, y)
         return rho[corners] <= float(axis_rho_tol)
 
@@ -93,9 +94,9 @@ class SphericalOctreeBuilder:
         if "phi [rad]" in variable_names:
             phi_rad = np.asarray(ds.variable("phi [rad]"), dtype=float)
             return np.mod(phi_rad, 2.0 * math.pi)
-        if {"X [R]", "Y [R]"}.issubset(variable_names):
-            x = np.asarray(ds.variable("X [R]"), dtype=float)
-            y = np.asarray(ds.variable("Y [R]"), dtype=float)
+        if set(Octree.XY_VARS).issubset(variable_names):
+            x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
+            y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
             return np.mod(np.arctan2(y, x), 2.0 * math.pi)
         raise ValueError(
             "Could not determine phi. Need either (X [R], Y [R]) or Lon/phi fields. "
@@ -178,9 +179,9 @@ class SphericalOctreeBuilder:
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level angular counts/spacings from spherical mesh geometry."""
-        x = np.asarray(ds.variable("X [R]"), dtype=float)
-        y = np.asarray(ds.variable("Y [R]"), dtype=float)
-        z = np.asarray(ds.variable("Z [R]"), dtype=float)
+        x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
+        y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
+        z = np.asarray(ds.variable(Octree.Z_VAR), dtype=float)
         r = np.sqrt(x * x + y * y + z * z)
         theta = np.arccos(np.clip(z / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
         delta_theta = np.ptp(theta[corners], axis=1)

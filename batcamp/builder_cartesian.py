@@ -9,6 +9,7 @@ from starwinds_readplt.dataset import Dataset
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
+from .octree import Octree
 
 
 class CartesianOctreeBuilder:
@@ -57,9 +58,9 @@ class CartesianOctreeBuilder:
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level axis counts/spacings for Cartesian octrees."""
-        x = np.asarray(ds.variable("X [R]"), dtype=float)
-        y = np.asarray(ds.variable("Y [R]"), dtype=float)
-        z = np.asarray(ds.variable("Z [R]"), dtype=float)
+        x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
+        y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
+        z = np.asarray(ds.variable(Octree.Z_VAR), dtype=float)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -120,9 +121,9 @@ class CartesianOctreeBuilder:
         cell_levels: np.ndarray | None = None,
     ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int]:
         """Infer Cartesian level-shape map and validated levels."""
-        x = np.asarray(ds.variable("X [R]"), dtype=float)
-        y = np.asarray(ds.variable("Y [R]"), dtype=float)
-        z = np.asarray(ds.variable("Z [R]"), dtype=float)
+        x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
+        y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
+        z = np.asarray(ds.variable(Octree.Z_VAR), dtype=float)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]

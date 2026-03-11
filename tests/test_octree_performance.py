@@ -8,6 +8,7 @@ import pytest
 from starwinds_readplt.dataset import Dataset
 
 from sample_data_helper import data_file
+from batcamp import Octree
 from batcamp import OctreeInterpolator
 
 pytestmark = [
@@ -33,9 +34,9 @@ def test_octree_build_and_query_runtime_on_mixed_level_3d_file() -> None:
 
     xyz = np.column_stack(
         [
-            np.asarray(ds.variable("X [R]"), dtype=float),
-            np.asarray(ds.variable("Y [R]"), dtype=float),
-            np.asarray(ds.variable("Z [R]"), dtype=float),
+            np.asarray(ds.variable(Octree.X_VAR), dtype=float),
+            np.asarray(ds.variable(Octree.Y_VAR), dtype=float),
+            np.asarray(ds.variable(Octree.Z_VAR), dtype=float),
         ]
     )
     n_query = min(4000, xyz.shape[0])

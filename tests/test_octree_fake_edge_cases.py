@@ -34,9 +34,9 @@ def _build_regular_fake_dataset(
         points=points,
         corners=corners,
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "Scalar": scalar,
         },
     )
@@ -54,9 +54,9 @@ def _build_axis_only_fake_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "Scalar": scalar,
         },
     )

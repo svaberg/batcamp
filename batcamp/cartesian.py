@@ -160,16 +160,16 @@ class _CartesianCellLookup:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         ds = tree.ds
         corners = np.array(ds.corners, dtype=np.int64)
-        if not {"X [R]", "Y [R]", "Z [R]"}.issubset(set(ds.variables)):
+        if not set(Octree.XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Lookup requires X/Y/Z variables.")
 
         self.tree = tree
         self._corners = np.array(corners, dtype=np.int64)
         self._points = np.column_stack(
             (
-                np.array(ds.variable("X [R]"), dtype=float),
-                np.array(ds.variable("Y [R]"), dtype=float),
-                np.array(ds.variable("Z [R]"), dtype=float),
+                np.array(ds.variable(Octree.X_VAR), dtype=float),
+                np.array(ds.variable(Octree.Y_VAR), dtype=float),
+                np.array(ds.variable(Octree.Z_VAR), dtype=float),
             )
         )
         cell_xyz = self._points[self._corners]

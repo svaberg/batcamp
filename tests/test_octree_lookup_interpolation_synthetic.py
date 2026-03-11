@@ -41,9 +41,9 @@ def _build_uniform_spherical_hex_dataset(
         points=points,
         corners=corners,
         variables={
-            "X [R]": x,
-            "Y [R]": y,
-            "Z [R]": z,
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
             "LinField": linear_field,
             "LinField2": linear_field2,
             "LinFieldConst": linear_const,

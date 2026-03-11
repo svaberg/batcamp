@@ -467,9 +467,9 @@ class OctreeInterpolator:
 
     def _prepare_spherical_points(self) -> None:
         """Precompute spherical coordinates `(r, theta, phi)` for each node."""
-        x = np.array(self._ds.variable("X [R]"), dtype=float)
-        y = np.array(self._ds.variable("Y [R]"), dtype=float)
-        z = np.array(self._ds.variable("Z [R]"), dtype=float)
+        x = np.array(self._ds.variable(Octree.X_VAR), dtype=float)
+        y = np.array(self._ds.variable(Octree.Y_VAR), dtype=float)
+        z = np.array(self._ds.variable(Octree.Z_VAR), dtype=float)
         r = np.sqrt(x * x + y * y + z * z)
         self._node_r = r
         self._node_theta = np.arccos(np.clip(z / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))

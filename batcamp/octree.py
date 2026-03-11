@@ -57,9 +57,9 @@ def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> T
     else:
         sample = corners_arr
 
-    x = np.asarray(ds.variable("X [R]"), dtype=float)
-    y = np.asarray(ds.variable("Y [R]"), dtype=float)
-    z = np.asarray(ds.variable("Z [R]"), dtype=float)
+    x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
+    y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
+    z = np.asarray(ds.variable(Octree.Z_VAR), dtype=float)
     xr = np.round(x[sample], 12)
     yr = np.round(y[sample], 12)
     zr = np.round(z[sample], 12)
@@ -81,6 +81,11 @@ class Octree:
     """
 
     TREE_COORD: ClassVar[str | None] = None
+    X_VAR: ClassVar[str] = "X [R]"
+    Y_VAR: ClassVar[str] = "Y [R]"
+    Z_VAR: ClassVar[str] = "Z [R]"
+    XY_VARS: ClassVar[tuple[str, str]] = (X_VAR, Y_VAR)
+    XYZ_VARS: ClassVar[tuple[str, str, str]] = (X_VAR, Y_VAR, Z_VAR)
 
     leaf_shape: GridShape
     root_shape: GridShape
