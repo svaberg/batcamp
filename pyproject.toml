@@ -15,7 +15,6 @@ dependencies = [
   "starwinds_readplt",
   "numpy",
   "numba",
-  "scipy",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +23,7 @@ tests = [
   "pooch",
 ]
 examples = [
+  "scipy",
   "matplotlib",
   "pooch",
   "jupyter",
