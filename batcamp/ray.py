@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from numba import njit
 from numba import prange
+from numba.core.errors import NumbaError
 import numpy as np
 
 from .octree import Octree
@@ -46,6 +47,7 @@ TET_FACES_INDEX = np.array(
 )
 
 _TRACE_CONTAIN_TOL = 1e-8
+_KERNEL_FALLBACK_EXCEPTIONS = (NumbaError, RuntimeError, TypeError, ValueError)
 
 
 @njit(cache=True)
@@ -992,54 +994,67 @@ class OctreeRayTracer:
             return []
 
         lookup = self.tree.lookup
+        lookup_state = getattr(lookup, "_lookup_state", None)
         tree_coord = str(self.tree.tree_coord)
         if tree_coord == "xyz":
-            try:
-                n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
-                    o,
-                    d,
-                    t0,
-                    t1,
-                    int(max_steps),
-                    float(boundary_tol),
-                    lookup._lookup_state,
-                )
-                return [
-                    RaySegment(
-                        cell_id=int(cids[i]),
-                        t_enter=float(enters[i]),
-                        t_exit=float(exits[i]),
+            if isinstance(lookup_state, CartesianLookupKernelState):
+                try:
+                    n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+                        o,
+                        d,
+                        t0,
+                        t1,
+                        int(max_steps),
+                        float(boundary_tol),
+                        lookup_state,
                     )
-                    for i in range(int(n_seg))
-                ]
-            except Exception:
-                logger.debug("Falling back to Python ray tracer path for xyz tree.", exc_info=True)
+                    return [
+                        RaySegment(
+                            cell_id=int(cids[i]),
+                            t_enter=float(enters[i]),
+                            t_exit=float(exits[i]),
+                        )
+                        for i in range(int(n_seg))
+                    ]
+                except _KERNEL_FALLBACK_EXCEPTIONS:
+                    logger.debug("Falling back to Python ray tracer path for xyz tree.", exc_info=True)
+            else:
+                logger.debug(
+                    "Skipping xyz ray kernel due to missing/incompatible lookup state: %s",
+                    type(lookup_state).__name__,
+                )
         elif tree_coord == "rpa":
-            try:
-                n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
-                    o,
-                    d,
-                    t0,
-                    t1,
-                    int(max_steps),
-                    int(bisect_iters),
-                    float(boundary_tol),
-                    lookup._lookup_state,
-                )
-                if n_seg == 0:
-                    p0 = o + t0 * d
-                    if self.tree.lookup_point(p0, coord="xyz") is None:
-                        logger.warning("Ray start point is outside interpolation domain.")
-                return [
-                    RaySegment(
-                        cell_id=int(cids[i]),
-                        t_enter=float(enters[i]),
-                        t_exit=float(exits[i]),
+            if isinstance(lookup_state, SphericalLookupKernelState):
+                try:
+                    n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                        o,
+                        d,
+                        t0,
+                        t1,
+                        int(max_steps),
+                        int(bisect_iters),
+                        float(boundary_tol),
+                        lookup_state,
                     )
-                    for i in range(int(n_seg))
-                ]
-            except Exception:
-                logger.debug("Falling back to Python ray tracer path for rpa tree.", exc_info=True)
+                    if n_seg == 0:
+                        p0 = o + t0 * d
+                        if self.tree.lookup_point(p0, coord="xyz") is None:
+                            logger.warning("Ray start point is outside interpolation domain.")
+                    return [
+                        RaySegment(
+                            cell_id=int(cids[i]),
+                            t_enter=float(enters[i]),
+                            t_exit=float(exits[i]),
+                        )
+                        for i in range(int(n_seg))
+                    ]
+                except _KERNEL_FALLBACK_EXCEPTIONS:
+                    logger.debug("Falling back to Python ray tracer path for rpa tree.", exc_info=True)
+            else:
+                logger.debug(
+                    "Skipping rpa ray kernel due to missing/incompatible lookup state: %s",
+                    type(lookup_state).__name__,
+                )
 
         return self._trace_prepared_python(
             o,
