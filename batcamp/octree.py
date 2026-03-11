@@ -130,19 +130,7 @@ class Octree:
         from .builder import OctreeBuilder
 
         builder = OctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
-        allow_default_fallback = bool(cls is Octree and tree_coord is None)
-        try:
-            return builder.build(ds, tree_coord=resolved_tree_coord, axis_rho_tol=axis_rho_tol)
-        except ValueError:
-            if not allow_default_fallback:
-                raise
-            alt_tree_coord: TreeCoord = "rpa" if resolved_tree_coord == "xyz" else "xyz"
-            logger.info(
-                "Falling back to tree_coord='%s' after primary tree_coord='%s' failed in Octree.from_dataset.",
-                alt_tree_coord,
-                resolved_tree_coord,
-            )
-            return builder.build(ds, tree_coord=alt_tree_coord, axis_rho_tol=axis_rho_tol)
+        return builder.build(ds, tree_coord=resolved_tree_coord, axis_rho_tol=axis_rho_tol)
 
     @property
     def levels(self) -> tuple[int, ...]:
