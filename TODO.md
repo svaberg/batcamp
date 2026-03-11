@@ -34,8 +34,8 @@
 - [ ] Slim package import surface in `batcamp/__init__.py` (avoid eager heavy imports of numba/ray/interpolator on plain `import batcamp`; prefer lazy or narrower exports).
 - [ ] Consolidate duplicate builder utilities across `batcamp/builder_cartesian.py` and `batcamp/builder_spherical.py` (shared level-shape types, positive-median helper, and repeated infer flow).
 - [ ] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol so bounds/lookup methods stop probing attributes dynamically.
-- [ ] In `batcamp/ray.py`, centralize repeated ray input validation (`origins`, `direction`, `t_start/t_end`) used by `integrate_field_along_rays`, `adaptive_midpoint_rule`, and `integrate_field_along_rays_midpoint`.
-- [ ] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
+- [x] In `batcamp/ray.py`, centralize repeated ray input validation (`origins`, `direction`, `t_start/t_end`) used by `integrate_field_along_rays`, `adaptive_midpoint_rule`, and `integrate_field_along_rays_midpoint`.
+- [x] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
 - [ ] Deduplicate test data scaffolding across `tests/test_octree_builder_edge_cases.py`, `tests/test_octree_interpolator_edge_cases.py`, `tests/test_octree_fake_edge_cases.py`, and `tests/test_octree_lookup_interpolation_synthetic.py` (shared fake dataset/builders).
 - [ ] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
 - [x] Update `README.md` quick-start to default-first usage (`OctreeInterpolator(ds, ...)` / `Octree.from_dataset(ds)`) and only show explicit `tree_coord` in an “advanced/override” example.

@@ -48,6 +48,12 @@ TET_FACES_INDEX = np.array(
 
 _TRACE_CONTAIN_TOL = 1e-8
 _KERNEL_FALLBACK_EXCEPTIONS = (NumbaError, RuntimeError, TypeError, ValueError)
+_DEFAULT_TRACE_BOUNDARY_TOL = 1e-9
+_DEFAULT_TRACE_MAX_STEPS = 16_384
+_FAST_KERNEL_TRACE_MAX_STEPS = 200_000
+_AXIS_ALIGNED_DIR_TOL = 1e-12
+_TET_EPS_ABS = 1e-12
+_TET_EPS_REL = 1e-9
 
 
 @njit(cache=True)
@@ -907,6 +913,60 @@ def _as_xyz(point_xyz: np.ndarray) -> np.ndarray:
     return np.asarray(point_xyz, dtype=float).reshape(3)
 
 
+def _coerce_origins_xyz(origins_xyz: np.ndarray) -> np.ndarray:
+    """Validate and normalize ray origins to shape `(n_rays, 3)`."""
+    origins = np.asarray(origins_xyz, dtype=float)
+    if origins.ndim == 1:
+        if origins.shape[0] != 3:
+            raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
+        origins = origins.reshape(1, 3)
+    if origins.ndim != 2 or origins.shape[1] != 3:
+        raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
+    return origins
+
+
+def _coerce_ray_interval(t_start: float, t_end: float) -> tuple[float, float]:
+    """Validate a ray interval and return `(t0, t1)` as floats."""
+    t0 = float(t_start)
+    t1 = float(t_end)
+    if t1 <= t0:
+        raise ValueError("t_end must be greater than t_start.")
+    return t0, t1
+
+
+def _coerce_positive_chunk_size(chunk_size: int) -> int:
+    """Validate chunk size for batched ray workflows."""
+    chunk = int(chunk_size)
+    if chunk <= 0:
+        raise ValueError("chunk_size must be positive.")
+    return chunk
+
+
+def _axis_alignment(direction_xyz_unit: np.ndarray) -> tuple[bool, int]:
+    """Return `(is_axis_aligned, axis_index)` for a normalized direction."""
+    abs_d = np.abs(direction_xyz_unit)
+    axis = int(np.argmax(abs_d))
+    is_axis_aligned = bool(
+        abs_d[axis] >= (1.0 - _AXIS_ALIGNED_DIR_TOL)
+        and abs_d[(axis + 1) % 3] <= _AXIS_ALIGNED_DIR_TOL
+        and abs_d[(axis + 2) % 3] <= _AXIS_ALIGNED_DIR_TOL
+    )
+    return is_axis_aligned, axis
+
+
+def _has_xyz_lookup_kernel(tree: Octree) -> bool:
+    """Return whether Cartesian compiled lookup state is available on the tree."""
+    return bool(str(tree.tree_coord) == "xyz" and hasattr(tree.lookup, "_lookup_state"))
+
+
+def _has_xyz_scalar_interp_kernel(interpolator: "OctreeInterpolator") -> bool:
+    """Return whether scalar Cartesian interpolation kernel state is available."""
+    return bool(
+        int(getattr(interpolator, "_n_value_components", 0)) == 1
+        and hasattr(interpolator, "_interp_state_xyz")
+    )
+
+
 @dataclass(frozen=True)
 class RaySegment:
     """Ray interval `[t_enter, t_exit]` that remains inside one leaf cell."""
@@ -944,7 +1004,7 @@ class OctreeRayTracer:
         *,
         max_steps: int = 100000,
         bisect_iters: int = 48,
-        boundary_tol: float = 1e-9,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> list[RaySegment]:
         """Trace a Cartesian ray into contiguous per-cell segments.
 
@@ -976,7 +1036,7 @@ class OctreeRayTracer:
         *,
         max_steps: int = 100000,
         bisect_iters: int = 48,
-        boundary_tol: float = 1e-9,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> list[RaySegment]:
         """Trace ray segments for pre-normalized inputs.
 
@@ -1072,7 +1132,7 @@ class OctreeRayTracer:
         *,
         max_steps: int = 100000,
         bisect_iters: int = 48,
-        boundary_tol: float = 1e-9,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> list[RaySegment]:
         """Python fallback implementation of ray tracing."""
         o = origin_xyz
@@ -1280,39 +1340,20 @@ class OctreeRayInterpolator:
         - evaluate field at segment endpoints in batch;
         - use trapezoidal exactness on linear segments.
         """
-        origins = np.asarray(origins_xyz, dtype=float)
-        if origins.ndim == 1:
-            if origins.shape[0] != 3:
-                raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
-            origins = origins.reshape(1, 3)
-        if origins.ndim != 2 or origins.shape[1] != 3:
-            raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
-        if int(chunk_size) <= 0:
-            raise ValueError("chunk_size must be positive.")
+        origins = _coerce_origins_xyz(origins_xyz)
+        chunk = _coerce_positive_chunk_size(chunk_size)
 
         d = _normalize_direction(direction_xyz)
-        t0 = float(t_start)
-        t1 = float(t_end)
-        if t1 <= t0:
-            raise ValueError("t_end must be greater than t_start.")
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
 
         n_rays = int(origins.shape[0])
 
         # Fastest path: Cartesian scalar field on axis-aligned rays.
-        abs_d = np.abs(d)
-        axis = int(np.argmax(abs_d))
-        axis_tol = 1e-12
-        is_axis_aligned = bool(
-            abs_d[axis] >= (1.0 - axis_tol)
-            and abs_d[(axis + 1) % 3] <= axis_tol
-            and abs_d[(axis + 2) % 3] <= axis_tol
-        )
+        is_axis_aligned, axis = _axis_alignment(d)
         if (
             is_axis_aligned
-            and str(self.tree.tree_coord) == "xyz"
-            and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
-            and hasattr(self.interpolator, "_interp_state_xyz")
-            and hasattr(self.tree.lookup, "_lookup_state")
+            and _has_xyz_lookup_kernel(self.tree)
+            and _has_xyz_scalar_interp_kernel(self.interpolator)
         ):
             return _integrate_axis_aligned_xyz_scalar_kernel(
                 origins,
@@ -1321,17 +1362,15 @@ class OctreeRayInterpolator:
                 t1,
                 int(axis),
                 float(scale),
-                200000,
-                1e-9,
+                _FAST_KERNEL_TRACE_MAX_STEPS,
+                _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup._lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
         if (
-            str(self.tree.tree_coord) == "xyz"
-            and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
-            and hasattr(self.interpolator, "_interp_state_xyz")
-            and hasattr(self.tree.lookup, "_lookup_state")
+            _has_xyz_lookup_kernel(self.tree)
+            and _has_xyz_scalar_interp_kernel(self.interpolator)
         ):
             return _integrate_xyz_scalar_exact_kernel(
                 origins,
@@ -1339,19 +1378,19 @@ class OctreeRayInterpolator:
                 t0,
                 t1,
                 float(scale),
-                200000,
-                1e-9,
+                _FAST_KERNEL_TRACE_MAX_STEPS,
+                _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup._lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
-        use_xyz_kernel = bool(str(self.tree.tree_coord) == "xyz" and hasattr(self.tree.lookup, "_lookup_state"))
-        trace_max_steps = 16384
-        trace_boundary_tol = 1e-9
+        use_xyz_kernel = _has_xyz_lookup_kernel(self.tree)
+        trace_max_steps = _DEFAULT_TRACE_MAX_STEPS
+        trace_boundary_tol = _DEFAULT_TRACE_BOUNDARY_TOL
         out_2d: np.ndarray | None = None
 
-        for i0 in range(0, n_rays, int(chunk_size)):
-            i1 = min(n_rays, i0 + int(chunk_size))
+        for i0 in range(0, n_rays, chunk):
+            i1 = min(n_rays, i0 + chunk)
             n_chunk = i1 - i0
 
             endpoint_offsets = np.zeros(n_chunk + 1, dtype=np.int64)
@@ -1485,33 +1524,23 @@ class OctreeRayInterpolator:
         and returns `ray_offsets` so ray `i` uses samples in
         `[ray_offsets[i], ray_offsets[i+1])`.
         """
-        origins = np.asarray(origins_xyz, dtype=float)
-        if origins.ndim == 1:
-            if origins.shape[0] != 3:
-                raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
-            origins = origins.reshape(1, 3)
-        if origins.ndim != 2 or origins.shape[1] != 3:
-            raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
-        if int(chunk_size) <= 0:
-            raise ValueError("chunk_size must be positive.")
+        origins = _coerce_origins_xyz(origins_xyz)
+        chunk = _coerce_positive_chunk_size(chunk_size)
 
         d = _normalize_direction(direction_xyz)
-        t0 = float(t_start)
-        t1 = float(t_end)
-        if t1 <= t0:
-            raise ValueError("t_end must be greater than t_start.")
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
 
         n_rays = int(origins.shape[0])
         ray_offsets = np.zeros(n_rays + 1, dtype=np.int64)
         midpoints_list: list[tuple[float, float, float]] = []
         weights_list: list[float] = []
         global_count = 0
-        use_xyz_kernel = bool(str(self.tree.tree_coord) == "xyz" and hasattr(self.tree.lookup, "_lookup_state"))
-        trace_max_steps = 16384
-        trace_boundary_tol = 1e-9
+        use_xyz_kernel = _has_xyz_lookup_kernel(self.tree)
+        trace_max_steps = _DEFAULT_TRACE_MAX_STEPS
+        trace_boundary_tol = _DEFAULT_TRACE_BOUNDARY_TOL
 
-        for i0 in range(0, n_rays, int(chunk_size)):
-            i1 = min(n_rays, i0 + int(chunk_size))
+        for i0 in range(0, n_rays, chunk):
+            i1 = min(n_rays, i0 + chunk)
             n_chunk = i1 - i0
             if use_xyz_kernel:
                 lookup_state = self.tree.lookup._lookup_state
@@ -1640,35 +1669,18 @@ class OctreeRayInterpolator:
         scale: float = 1.0,
     ) -> np.ndarray:
         """One-shot adaptive midpoint integration on many rays."""
-        origins = np.asarray(origins_xyz, dtype=float)
-        if origins.ndim == 1:
-            if origins.shape[0] != 3:
-                raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
-            origins = origins.reshape(1, 3)
-        if origins.ndim != 2 or origins.shape[1] != 3:
-            raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
+        origins = _coerce_origins_xyz(origins_xyz)
+        chunk = _coerce_positive_chunk_size(chunk_size)
 
         d = _normalize_direction(direction_xyz)
-        t0 = float(t_start)
-        t1 = float(t_end)
-        if t1 <= t0:
-            raise ValueError("t_end must be greater than t_start.")
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
 
         # Specialized midpoint path: Cartesian scalar field, axis-aligned rays.
-        abs_d = np.abs(d)
-        axis = int(np.argmax(abs_d))
-        axis_tol = 1e-12
-        is_axis_aligned = bool(
-            abs_d[axis] >= (1.0 - axis_tol)
-            and abs_d[(axis + 1) % 3] <= axis_tol
-            and abs_d[(axis + 2) % 3] <= axis_tol
-        )
+        is_axis_aligned, axis = _axis_alignment(d)
         if (
             is_axis_aligned
-            and str(self.tree.tree_coord) == "xyz"
-            and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
-            and hasattr(self.interpolator, "_interp_state_xyz")
-            and hasattr(self.tree.lookup, "_lookup_state")
+            and _has_xyz_lookup_kernel(self.tree)
+            and _has_xyz_scalar_interp_kernel(self.interpolator)
         ):
             return _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
                 origins,
@@ -1677,17 +1689,15 @@ class OctreeRayInterpolator:
                 t1,
                 int(axis),
                 float(scale),
-                200000,
-                1e-9,
+                _FAST_KERNEL_TRACE_MAX_STEPS,
+                _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup._lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
         if (
-            str(self.tree.tree_coord) == "xyz"
-            and int(getattr(self.interpolator, "_n_value_components", 0)) == 1
-            and hasattr(self.interpolator, "_interp_state_xyz")
-            and hasattr(self.tree.lookup, "_lookup_state")
+            _has_xyz_lookup_kernel(self.tree)
+            and _has_xyz_scalar_interp_kernel(self.interpolator)
         ):
             return _integrate_xyz_scalar_midpoint_kernel(
                 origins,
@@ -1695,8 +1705,8 @@ class OctreeRayInterpolator:
                 t0,
                 t1,
                 float(scale),
-                200000,
-                1e-9,
+                _FAST_KERNEL_TRACE_MAX_STEPS,
+                _DEFAULT_TRACE_BOUNDARY_TOL,
                 self.tree.lookup._lookup_state,
                 self.interpolator._interp_state_xyz,
             )
@@ -1706,7 +1716,7 @@ class OctreeRayInterpolator:
             d,
             t0,
             t1,
-            chunk_size=chunk_size,
+            chunk_size=chunk,
         )
         return self.integrate_midpoint_rule(mids, weights, offsets, scale=scale)
 
@@ -1729,7 +1739,7 @@ class OctreeRayInterpolator:
 
         abs_d = np.abs(direction_xyz_unit)
         axis = int(np.argmax(abs_d))
-        axis_tol = 1e-12
+        axis_tol = _AXIS_ALIGNED_DIR_TOL
         if abs_d[axis] < (1.0 - axis_tol):
             return None
         if abs_d[(axis + 1) % 3] > axis_tol or abs_d[(axis + 2) % 3] > axis_tol:
@@ -1806,7 +1816,7 @@ class OctreeRayInterpolator:
         corner_ids = interp._corners[cid]
         cell_xyz = interp.lookup._points[corner_ids]
         cell_vals = interp._point_values[corner_ids]
-        eps = max(1e-12, 1e-9 * (1.0 + abs(t_exit - t_enter)))
+        eps = max(_TET_EPS_ABS, _TET_EPS_REL * (1.0 + abs(t_exit - t_enter)))
 
         t = float(t_enter)
         t_probe = min(float(t_exit), t + eps)
