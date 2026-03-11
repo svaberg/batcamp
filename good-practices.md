@@ -6,6 +6,7 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Prefer direct expressions when logic is simple.
 - Add helpers only when they reduce real duplication or complexity.
 - Avoid boilerplate wrappers that hide 1-3 lines of real work.
+- Avoid thin pass-through methods; if the method body is trivial and the docstring is longer than the logic, treat it as a design smell.
 
 ## 2. Use one clear code path by default
 - Keep branching minimal and intentional.
