@@ -21,6 +21,11 @@ dependencies = [
 tests = [
   "pytest",
   "pooch",
+  "nbclient",
+  "nbformat",
+  "ipykernel",
+  "matplotlib",
+  "scipy",
 ]
 examples = [
   "scipy",
