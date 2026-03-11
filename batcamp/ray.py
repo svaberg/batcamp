@@ -15,7 +15,7 @@ import numpy as np
 from .octree import Octree
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
-from .spherical import LookupKernelState
+from .spherical import SphericalLookupKernelState
 from .spherical import lookup_rpa_cell_id_kernel
 from .spherical import xyz_to_rpa_components as _xyz_to_rpa_components
 
@@ -73,7 +73,7 @@ def _contains_rpa_from_components(
     r: float,
     polar: float,
     azimuth: float,
-    lookup_state: LookupKernelState,
+    lookup_state: SphericalLookupKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
     """Check spherical point containment using packed lookup state arrays."""
@@ -224,7 +224,7 @@ def _trace_segments_rpa_kernel(
     max_steps: int,
     bisect_iters: int,
     boundary_tol: float,
-    lookup_state: LookupKernelState,
+    lookup_state: SphericalLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
     """Trace Cartesian ray segments on spherical trees using compiled kernels."""
     cell_ids = np.empty(max_steps, dtype=np.int64)

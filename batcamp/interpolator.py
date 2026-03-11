@@ -21,7 +21,7 @@ from .octree import SUPPORTED_TREE_COORDS
 from .octree import infer_tree_coord_from_geometry as _infer_tree_coord_from_geometry
 from .cartesian import CartesianLookupKernelState
 from .cartesian import lookup_xyz_cell_id_kernel
-from .spherical import LookupKernelState
+from .spherical import SphericalLookupKernelState
 from .spherical import SphericalOctree
 from .spherical import lookup_rpa_cell_id_kernel
 
@@ -213,7 +213,7 @@ def _interp_batch_xyz(
     queries_xyz: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
-    lookup_state: LookupKernelState,
+    lookup_state: SphericalLookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a batch of Cartesian queries with local previous-cell hinting.
 
@@ -281,7 +281,7 @@ def _interp_batch_rpa(
     queries_rpa: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
-    lookup_state: LookupKernelState,
+    lookup_state: SphericalLookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a batch of spherical queries with local previous-cell hinting.
 

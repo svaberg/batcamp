@@ -15,6 +15,9 @@ from .octree import GridPath
 from .octree import LookupHit
 from .octree import Octree
 
+_LOOKUP_CONTAIN_TOL = 1e-10
+_DEFAULT_LOOKUP_MAX_RADIUS = 2
+
 
 class CartesianLookupKernelState(NamedTuple):
     """Packed Cartesian lookup arrays/scalars consumed by numba kernels."""
@@ -43,7 +46,7 @@ def _contains_xyz_cell(
     y: float,
     z: float,
     lookup_state: CartesianLookupKernelState,
-    tol: float = 1e-10,
+    tol: float = _LOOKUP_CONTAIN_TOL,
 ) -> bool:
     """Check one Cartesian query against one cell AABB bounds."""
     if not lookup_state.cell_valid[cid]:
@@ -250,7 +253,7 @@ class _CartesianCellLookup:
             if end > start:
                 self._bin_cell_ids[start:end] = np.array(bin_lists[key], dtype=np.int64)
 
-        self._max_radius = 2
+        self._max_radius = int(_DEFAULT_LOOKUP_MAX_RADIUS)
         self._lookup_state = CartesianLookupKernelState(
             cell_centers=self._cell_centers,
             cell_x_min=self._cell_x_min,
@@ -284,7 +287,7 @@ class _CartesianCellLookup:
         point: np.ndarray,
         *,
         coord: str,
-        tol: float = 1e-10,
+        tol: float = _LOOKUP_CONTAIN_TOL,
     ) -> bool:
         """Containment test of one query point in `coord` against one leaf cell."""
         resolved = str(coord)
@@ -312,7 +315,15 @@ class _CartesianCellLookup:
         q = np.array(point, dtype=float).reshape(3)
         return self.lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
 
-    def contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
+    def contains_xyz_cell(
+        self,
+        cell_id: int,
+        x: float,
+        y: float,
+        z: float,
+        *,
+        tol: float = _LOOKUP_CONTAIN_TOL,
+    ) -> bool:
         """Containment test of one Cartesian query point against one leaf cell."""
         return bool(
             _contains_xyz_cell(

@@ -37,7 +37,7 @@ def xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, f
     return r, polar, azimuth
 
 
-class LookupKernelState(NamedTuple):
+class SphericalLookupKernelState(NamedTuple):
     """Numba lookup-kernel arrays/scalars with explicit field names."""
 
     levels_desc: np.ndarray
@@ -64,7 +64,7 @@ def _contains_rpa_cell(
     r: float,
     polar: float,
     azimuth: float,
-    lookup_state: LookupKernelState,
+    lookup_state: SphericalLookupKernelState,
 ) -> bool:
     """Check one spherical query against one cell's spherical bounds.
 
@@ -94,7 +94,7 @@ def lookup_rpa_cell_id_kernel(
     r: float,
     polar: float,
     azimuth: float,
-    lookup_state: LookupKernelState,
+    lookup_state: SphericalLookupKernelState,
     prev_cid: int = -1,
 ) -> int:
     """Resolve one spherical query to one leaf-cell id.
@@ -389,9 +389,9 @@ class _SphericalCellLookup:
             ids = bin_lists[key]
             bin_cell_ids[start:end] = np.array(ids, dtype=np.int64)
 
-        self._ir = ir_abs
-        self._itheta = itheta
-        self._iphi = iphi
+        self._i0 = ir_abs
+        self._i1 = itheta
+        self._i2 = iphi
         self._cell_r_min = cell_r_min
         self._cell_r_max = cell_r_max
         self._r_min = float(np.min(cell_r_min))
@@ -414,7 +414,7 @@ class _SphericalCellLookup:
         self._bin_counts = bin_counts
         self._bin_offsets = bin_offsets
         self._bin_cell_ids = bin_cell_ids
-        self._lookup_state = LookupKernelState(
+        self._lookup_state = SphericalLookupKernelState(
             levels_desc=self._levels_desc,
             shape_table=self._shape_table,
             dtheta_table=self._dtheta_table,
@@ -436,11 +436,11 @@ class _SphericalCellLookup:
         )
 
     @staticmethod
-    def _path(ir: int, itheta: int, iphi: int, depth: int) -> GridPath:
+    def _path(i0: int, i1: int, i2: int, depth: int) -> GridPath:
         """Construct root-to-leaf index path for one leaf coordinate triplet.
 
         Consumes:
-        - `ir`, `itheta`, `iphi`: leaf-grid indices.
+        - `i0`, `i1`, `i2`: leaf-grid indices.
         - `depth`: tree depth for those indices.
         Returns:
         - `GridPath` tuple from root index to leaf index (inclusive).
@@ -448,7 +448,7 @@ class _SphericalCellLookup:
         out: list[GridIndex] = []
         for level in range(depth + 1):
             shift = depth - level
-            out.append((ir >> shift, itheta >> shift, iphi >> shift))
+            out.append((i0 >> shift, i1 >> shift, i2 >> shift))
         return tuple(out)
 
     @staticmethod
@@ -698,16 +698,16 @@ class _SphericalCellLookup:
                     f"Derived negative tree depth for level {level}; "
                     f"tree.depth={self.tree.depth}, max_level={self.tree.max_level}."
                 )
-        cell_ir = int(self._ir[chosen])
-        cell_ipolar = int(self._itheta[chosen])
-        cell_iazimuth = int(self._iphi[chosen])
+        cell_i0 = int(self._i0[chosen])
+        cell_i1 = int(self._i1[chosen])
+        cell_i2 = int(self._i2[chosen])
         return LookupHit(
             cell_id=chosen,
             level=level,
-            i0=cell_ir,
-            i1=cell_ipolar,
-            i2=cell_iazimuth,
-            path=self._path(cell_ir, cell_ipolar, cell_iazimuth, depth),
+            i0=cell_i0,
+            i1=cell_i1,
+            i2=cell_i2,
+            path=self._path(cell_i0, cell_i1, cell_i2, depth),
             center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         )
 
@@ -754,8 +754,8 @@ class SphericalOctree(_SphericalCellLookup, Octree):
                 return self.hit_from_cell_id(near)
 
             near_level = int(lookup._cell_level_rel[near])
-            near_ipolar = int(lookup._itheta[near])
-            near_iazimuth = int(lookup._iphi[near])
+            near_i1 = int(lookup._i1[near])
+            near_i2 = int(lookup._i2[near])
             shape_table = lookup._shape_table
             near_shape: np.ndarray | None = None
             if 0 <= near_level < shape_table.shape[0] and int(shape_table[near_level, 0]) > 0:
@@ -770,25 +770,25 @@ class SphericalOctree(_SphericalCellLookup, Octree):
                 ntheta = int(shape[1])
                 nphi = int(shape[2])
                 if near_shape is None:
-                    mapped_t = near_ipolar
-                    mapped_p = near_iazimuth
+                    mapped_i1 = near_i1
+                    mapped_i2 = near_i2
                 else:
-                    mapped_t = int(
+                    mapped_i1 = int(
                         np.clip(
-                            round(((near_ipolar + 0.5) * shape[1] / near_shape[1]) - 0.5),
+                            round(((near_i1 + 0.5) * shape[1] / near_shape[1]) - 0.5),
                             0,
                             ntheta - 1,
                         )
                     )
-                    mapped_p = int(
+                    mapped_i2 = int(
                         np.clip(
-                            round(((near_iazimuth + 0.5) * shape[2] / near_shape[2]) - 0.5),
+                            round(((near_i2 + 0.5) * shape[2] / near_shape[2]) - 0.5),
                             0,
                             nphi - 1,
                         )
                     )
                 for radius in (0, 1):
-                    cands = lookup._candidate_ids(int(level), mapped_t, mapped_p, radius)
+                    cands = lookup._candidate_ids(int(level), mapped_i1, mapped_i2, radius)
                     if cands.size > 0:
                         candidate_arrays.append(cands)
 
