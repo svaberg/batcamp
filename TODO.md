@@ -36,6 +36,7 @@
 - [ ] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
 - [x] Replace dynamic attribute probing in `Octree.cell_bounds/domain_bounds` with explicit subclass hooks.
 - [ ] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
+- [ ] Make coordinate conversion/interpolation APIs NumPy-first for bulk arrays; keep scalar conversion helpers private and limited to kernel internals.
 - [x] In `batcamp/ray.py`, centralize repeated ray input validation (`origins`, `direction`, `t_start/t_end`) used by `integrate_field_along_rays`, `adaptive_midpoint_rule`, and `integrate_field_along_rays_midpoint`.
 - [x] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
 - [x] Deduplicate test data scaffolding across `tests/test_octree_builder_edge_cases.py`, `tests/test_octree_interpolator_edge_cases.py`, and `tests/test_octree_fake_edge_cases.py` by sharing one `FakeDataset` helper class.

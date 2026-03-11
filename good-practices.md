@@ -33,6 +33,7 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Define each core quantity/formula once and reuse it.
 - Keep conversions and constants in one authoritative place.
 - Avoid scattered hard-coded units and repeated numeric constants.
+- Prefer NumPy-first bulk APIs for conversions and transforms; keep scalar helpers private and only for true kernel/hot-loop needs.
 
 ## 7. Keep dependencies and imports clean
 - Avoid circular imports and layer inversions.
@@ -64,6 +65,7 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Keep ray-related implementation in `batcamp/ray.py` whenever possible.
 - Keep spherical-related implementation in `batcamp/spherical.py` whenever possible.
 - Do not expose spherical-specific methods on coord-agnostic/general classes; keep them on spherical classes/modules only.
+- Using Numba does not justify scalar-first public API design; bulk NumPy paths should remain the default orchestration layer.
 - If code cannot be placed in its owning module, record blocker and rationale in `DEBT.md`.
 - Remove dead paths and dead code whenever practical.
 - Do not create additional modules at this stage; simplify existing modules first.
