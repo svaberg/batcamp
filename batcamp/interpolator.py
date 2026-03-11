@@ -74,15 +74,7 @@ def _trilinear_from_cell_rpa(
     azimuth: float,
     interp_state: SphericalInterpKernelState,
 ) -> None:
-    """Write one trilinear interpolation result row for one resolved cell.
-
-    Consumes:
-    - `out_row`: output row for one query and all value components.
-    - `cell_id`, `r`, `polar`, `azimuth`: resolved cell/query coordinates.
-    - `interp_state`: packed interpolation arrays.
-    Returns:
-    - `None`; writes interpolated values in-place to `out_row`.
-    """
+    """Write one interpolated value row for one spherical query in one cell."""
     cid = int(cell_id)
 
     u = (r - interp_state.cell_r0[cid]) / interp_state.cell_rden[cid]
@@ -215,16 +207,7 @@ def _interp_batch_xyz(
     interp_state: SphericalInterpKernelState,
     lookup_state: SphericalLookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate a batch of Cartesian queries with local previous-cell hinting.
-
-    Consumes:
-    - `queries_xyz`: `(n_query, 3)` Cartesian query array.
-    - `fill_values`: `(n_comp,)` fallback values for misses.
-    - `interp_state`, `lookup_state`: packed interpolation/lookup arrays.
-    Returns:
-    - `(values, cell_ids)` where `values` is `(n_query, n_comp)` and `cell_ids`
-      is `(n_query,)` with `-1` for misses.
-    """
+    """Evaluate a batch of Cartesian queries and return values plus cell ids."""
     n_query = queries_xyz.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
@@ -283,16 +266,7 @@ def _interp_batch_rpa(
     interp_state: SphericalInterpKernelState,
     lookup_state: SphericalLookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate a batch of spherical queries with local previous-cell hinting.
-
-    Consumes:
-    - `queries_rpa`: `(n_query, 3)` spherical query array.
-    - `fill_values`: `(n_comp,)` fallback values for misses.
-    - `interp_state`, `lookup_state`: packed interpolation/lookup arrays.
-    Returns:
-    - `(values, cell_ids)` where `values` is `(n_query, n_comp)` and `cell_ids`
-      is `(n_query,)` with `-1` for misses.
-    """
+    """Evaluate a batch of spherical queries and return values plus cell ids."""
     n_query = queries_rpa.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
@@ -398,15 +372,9 @@ class OctreeInterpolator:
         level_atol: float = 1e-9,
         tree: Octree | None = None,
     ) -> None:
-        """Initialize lookup structures and interpolation caches from a plain dataset.
+        """Create an interpolator from dataset fields and an octree.
 
-        If `tree` is provided, it is used directly.
-        Consumes:
-        - `ds`: point/corner dataset.
-        - `values`: `None` for all dataset fields, or `list[str]` field names.
-        - Optional tree/build controls (`tree`, tolerances, `tree_coord`).
-        Returns:
-        - `None`; constructs caches and compiles kernels for this interpolator.
+        If `tree` is provided, it is reused. Otherwise a tree is built.
         """
         self._ds = ds
         if ds.corners is None:
@@ -457,7 +425,7 @@ class OctreeInterpolator:
         )
 
     def _configure_backend(self) -> None:
-        """Bind backend-specific hooks and precompute geometry caches once."""
+        """Select backend-specific helpers and precompute per-cell arrays."""
         if self._tree_coord == "rpa":
             self._prepare_spherical_points()
             self._prepare_trilinear_cache()
@@ -472,13 +440,7 @@ class OctreeInterpolator:
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
 
     def _coerce_point_values(self, values: list[str] | None) -> np.ndarray:
-        """Resolve interpolation values into a point-centered array.
-
-        Consumes:
-        - `values`: `None` for all dataset fields, or `list[str]` field names.
-        Returns:
-        - `np.ndarray` whose first dimension matches dataset points.
-        """
+        """Resolve requested fields into an array indexed by dataset points."""
         n_points = int(self._ds.points.shape[0])
         names: list[str]
         if values is None:
@@ -516,13 +478,7 @@ class OctreeInterpolator:
         return merged
 
     def _prepare_spherical_points(self) -> None:
-        """Precompute nodal spherical coordinates from dataset `X/Y/Z`.
-
-        Consumes:
-        - Bound dataset coordinate variables on `self`.
-        Returns:
-        - `None`; stores nodal `r/theta/phi` arrays on `self`.
-        """
+        """Precompute spherical coordinates `(r, theta, phi)` for each node."""
         x = np.array(self._ds.variable("X [R]"), dtype=float)
         y = np.array(self._ds.variable("Y [R]"), dtype=float)
         z = np.array(self._ds.variable("Z [R]"), dtype=float)
@@ -532,16 +488,7 @@ class OctreeInterpolator:
         self._node_phi = np.mod(np.arctan2(y, x), 2.0 * math.pi)
 
     def _prepare_trilinear_cache(self) -> None:
-        """Precompute per-cell trilinear mapping data.
-
-        Each cell corner is mapped to one logical trilinear corner index using
-        midpoint bit tests in `(r, polar, phi)`. Missing logical corners are
-        filled by nearest bit-pattern match.
-        Consumes:
-        - Corner connectivity and precomputed nodal spherical coordinates.
-        Returns:
-        - `None`; stores per-cell interpolation mapping/cache arrays on `self`.
-        """
+        """Build per-cell corner mappings used for spherical trilinear interpolation."""
         corners = self._corners
         vr = self._node_r[corners]
         vt = self._node_theta[corners]
@@ -597,13 +544,7 @@ class OctreeInterpolator:
         self._bin_to_corner = bin_to_corner
 
     def _prepare_trilinear_cache_xyz(self) -> None:
-        """Precompute per-cell trilinear mapping data for Cartesian `(x, y, z)` cells.
-
-        Consumes:
-        - Corner connectivity and nodal Cartesian coordinates.
-        Returns:
-        - `None`; stores per-cell Cartesian interpolation caches on `self`.
-        """
+        """Build per-cell corner mappings used for Cartesian trilinear interpolation."""
         corners = self._corners
         pts = np.array(self.lookup._points, dtype=float)
         vx = pts[corners, 0]
@@ -650,7 +591,7 @@ class OctreeInterpolator:
         self._bin_to_corner = bin_to_corner
 
     def prepare_kernel_cache(self) -> None:
-        """Pack contiguous arrays used by compiled lookup/interpolation kernels."""
+        """Pack arrays used by compiled interpolation code."""
         flat = self._point_values.reshape(int(self._point_values.shape[0]), -1)
         self._point_values_2d = np.array(flat, dtype=np.float64, order="C")
         self._n_value_components = int(self._point_values_2d.shape[1])
@@ -658,7 +599,7 @@ class OctreeInterpolator:
         self._prepare_kernel_cache_impl()
 
     def _prepare_kernel_cache_rpa(self) -> None:
-        """Build kernel-cache state for spherical tree backend."""
+        """Build packed arrays for the spherical backend."""
         self._interp_state_rpa = SphericalInterpKernelState(
             point_values_2d=self._point_values_2d,
             corners=self._corners,
@@ -676,7 +617,7 @@ class OctreeInterpolator:
         self._lookup_state_rpa = self.lookup._lookup_state
 
     def _prepare_kernel_cache_xyz(self) -> None:
-        """Build kernel-cache state for Cartesian tree backend."""
+        """Build packed arrays for the Cartesian backend."""
         self._interp_state_xyz = CartesianInterpKernelState(
             point_values_2d=self._point_values_2d,
             corners=self._corners,
@@ -691,13 +632,7 @@ class OctreeInterpolator:
         self._lookup_state_xyz = self.lookup._lookup_state
 
     def _fill_value_vector(self) -> np.ndarray:
-        """Normalize `fill_value` into one vector matching component count.
-
-        Consumes:
-        - `self.fill_value` and cached number of value components.
-        Returns:
-        - `np.ndarray` with shape `(n_components,)`.
-        """
+        """Convert `fill_value` to one vector of length `n_components`."""
         ncomp = int(self._n_value_components)
         if np.isscalar(self.fill_value):
             return np.full(ncomp, float(self.fill_value), dtype=np.float64)
@@ -796,11 +731,8 @@ class OctreeInterpolator:
         - `xi` with shape `(..., 3)`
         - tuple/list of 3 broadcastable arrays
         - three separate coordinate arrays.
-        Consumes:
-        - Query arguments in any supported form above.
-        Returns:
-        - `(q, shape)` where `q` is `(N, 3)` and `shape` is the broadcasted
-          leading output shape.
+        Returns `(q, shape)` where `q` has shape `(N, 3)` and `shape` is the
+        broadcasted leading output shape.
         """
         if len(args) == 1:
             xi = args[0]
@@ -835,18 +767,15 @@ class OctreeInterpolator:
         query_coord: Literal["xyz", "rpa"] = "xyz",
         return_cell_ids: bool = False,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        """Evaluate interpolation at query points (optionally returning `cell_id`).
+        """Evaluate interpolation at query points.
 
         For each query:
         - resolve containing cell via octree lookup,
         - convert to local spherical coordinates,
         - evaluate cached trilinear interpolation.
-        Consumes:
-        - Query arguments in supported scalar/array forms.
-        - Optional `query_coord` override and `return_cell_ids` flag.
-        Returns:
-        - Interpolated values reshaped to broadcasted query shape.
-        - When `return_cell_ids=True`, returns `(values, cell_ids)`.
+
+        Returns values reshaped to the query broadcast shape.
+        If `return_cell_ids=True`, also returns the resolved cell ids.
         """
         qs = str(query_coord)
         self._validate_query_coord(qs)

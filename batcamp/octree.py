@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
-    """Infer tree type from geometry (axis-aligned vs curvilinear cells)."""
+    """Guess whether the mesh is Cartesian (`xyz`) or spherical-like (`rpa`)."""
     corners = getattr(ds, "corners", None)
     if corners is None:
         raise ValueError("Dataset has no cell connectivity (corners).")
@@ -104,14 +104,7 @@ class Octree:
         level_rtol: float = 1e-4,
         level_atol: float = 1e-9,
     ) -> "Octree":
-        """Build and bind an octree directly from a plain dataset.
-
-        Consumes:
-        - `ds`: source dataset with points/corners.
-        - Coordinate-system and level-inference tolerance parameters.
-        Returns:
-        - Built and bound octree instance.
-        """
+        """Build a tree from a dataset and bind it so lookup methods can run."""
         resolved_tree_coord: TreeCoord
         if cls is not Octree and cls.TREE_COORD is not None:
             if tree_coord is None:
@@ -134,24 +127,12 @@ class Octree:
 
     @property
     def levels(self) -> tuple[int, ...]:
-        """Expose sorted refinement levels present in this tree.
-
-        Consumes:
-        - `self.level_counts`.
-        Returns:
-        - Tuple of level integers.
-        """
+        """Return the sorted refinement levels present in this tree."""
         return tuple(int(level) for level, _count, _expected in self.level_counts)
 
     @property
     def is_uniform(self) -> bool:
-        """Report whether the tree has one refinement level.
-
-        Consumes:
-        - `self.min_level`, `self.max_level`.
-        Returns:
-        - `True` when min/max levels are equal, else `False`.
-        """
+        """Return `True` when all cells are at one refinement level."""
         return int(self.min_level) == int(self.max_level)
 
     @property
@@ -165,14 +146,7 @@ class Octree:
         *,
         axis_rho_tol: float | None = None,
     ) -> None:
-        """Bind this octree to dataset geometry for lookups/ray queries.
-
-        Consumes:
-        - `ds`: dataset with point variables.
-        - Optional `axis_rho_tol`.
-        Returns:
-        - `None`; binds geometry and invalidates cached lookup state.
-        """
+        """Attach a dataset to this tree so lookup and ray methods can run."""
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")
         next_axis_rho_tol = float(self.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
@@ -185,13 +159,7 @@ class Octree:
             self._lookup_ready = False
 
     def save(self, path: str | Path) -> None:
-        """Save octree metadata to a compressed `.npz` file.
-
-        Consumes:
-        - Output `path`.
-        Returns:
-        - `None`; writes one `.npz` persistence file.
-        """
+        """Save this tree to a compressed `.npz` file."""
         from .persistence import OctreeArrayState
         from .persistence import OctreePersistenceState
 
@@ -212,13 +180,7 @@ class Octree:
         ds: Dataset,
         axis_rho_tol: float | None = None,
     ) -> "Octree":
-        """Load octree metadata from `.npz` and bind dataset geometry.
-
-        Consumes:
-        - Input file `path` and bound dataset `ds`.
-        Returns:
-        - Loaded `Octree` (or subclass) instance.
-        """
+        """Load a tree from `.npz` and bind it to the given dataset."""
         from .persistence import OctreePersistenceState
 
         in_path = Path(path)
@@ -239,13 +201,7 @@ class Octree:
         return tree
 
     def summary(self) -> str:
-        """Return compact summary text for this tree.
-
-        Consumes:
-        - Octree summary fields on `self`.
-        Returns:
-        - Single summary string.
-        """
+        """Return one-line summary text for this tree."""
         return format_octree_summary(self)
 
     def __str__(self) -> str:
@@ -255,23 +211,11 @@ class Octree:
     def build_lookup(
         self,
     ) -> None:
-        """Construct a bound cell-lookup object for this tree.
-
-        Consumes:
-        - Bound tree geometry.
-        Returns:
-        - `None`; concrete subclasses populate lookup state on `self`.
-        """
+        """Build the per-cell lookup data used by query methods."""
         raise NotImplementedError("Lookup must be implemented by concrete octree subclasses.")
 
     def _require_lookup(self) -> "Octree":
-        """Return cached lookup state, building it lazily if needed.
-
-        Consumes:
-        - Bound dataset state on `self`.
-        Returns:
-        - Bound octree instance with lookup state initialized.
-        """
+        """Ensure lookup data is built, then return `self`."""
         if self._lookup_ready:
             return self
         if self.ds is None or self.ds.corners is None:
@@ -282,13 +226,7 @@ class Octree:
 
     @property
     def lookup(self) -> "Octree":
-        """Expose bound lookup state (the octree object itself).
-
-        Consumes:
-        - Cached/bound lookup state on `self`.
-        Returns:
-        - `Octree` with lookup state initialized.
-        """
+        """Return this tree after ensuring lookup data is ready."""
         return self._require_lookup()
 
     def cell_count(self) -> int:
@@ -411,14 +349,7 @@ class Octree:
         *,
         coord: TreeCoord,
     ) -> "LookupHit | None":
-        """Lookup one query point in the requested coord.
-
-        Consumes:
-        - `point`: query coordinate triple.
-        - `coord`: `"xyz"` or `"rpa"`.
-        Returns:
-        - `LookupHit` if a cell is resolved, else `None`.
-        """
+        """Find which cell contains one point, or return `None` if not found."""
         q = np.array(point, dtype=float).reshape(3)
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
@@ -437,26 +368,11 @@ class Octree:
         coord: TreeCoord,
         tol: float = 1e-10,
     ) -> bool:
-        """Containment test of one query point against one leaf cell.
-
-        Consumes:
-        - `cell_id`: integer leaf cell id.
-        - `point`: query coordinate triple.
-        - `coord`: `"xyz"` or `"rpa"`.
-        - Optional containment tolerance `tol`.
-        Returns:
-        - `True` when the point lies inside/on the cell bounds, else `False`.
-        """
+        """Return whether one point lies inside one cell."""
         raise NotImplementedError
 
     def hit_from_cell_id(self, cell_id: int) -> "LookupHit":
-        """Materialize `LookupHit` metadata from a known cell id.
-
-        Consumes:
-        - `cell_id`: integer leaf-cell id.
-        Returns:
-        - `LookupHit` for that id, or raises `ValueError` when invalid.
-        """
+        """Return lookup metadata for a known cell id."""
         cid = int(cell_id)
         self._require_lookup()
         n_cells = int(self._cell_centers.shape[0])
@@ -468,13 +384,7 @@ class Octree:
         return hit
 
     def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> "LookupHit | None":
-        """Lookup in xyz using a nearby-cell hint, then fallback to full lookup.
-
-        Consumes:
-        - Cartesian query `xyz` and optional nearby `cell_id` hint.
-        Returns:
-        - `LookupHit` if resolved, else `None`.
-        """
+        """Lookup in `xyz`, first trying `near_cid` if one is provided."""
         q = np.array(xyz, dtype=float)
         x = float(q[0])
         y = float(q[1])
@@ -486,13 +396,7 @@ class Octree:
         return self.lookup_point(np.array([x, y, z], dtype=float), coord="xyz")
 
 def octree_class_for_coord(tree_coord: str) -> type[Octree]:
-    """Resolve coordinate-system tag to the concrete octree class.
-
-    Consumes:
-    - `tree_coord` tag (`"rpa"` or `"xyz"`).
-    Returns:
-    - Matching `Octree` subclass type.
-    """
+    """Return the octree class that matches `tree_coord`."""
     from .cartesian import CartesianOctree
     from .spherical import SphericalOctree
 
@@ -537,13 +441,7 @@ class LookupHit:
     center_xyz: tuple[float, float, float]
 
 def format_octree_summary(tree: Octree) -> str:
-    """Format one-line summary text for an `Octree` object.
-
-    Consumes:
-    - `tree`: octree summary object.
-    Returns:
-    - Single formatted summary string.
-    """
+    """Build one-line summary text for an octree."""
     leaf_levels = ", ".join(
         f"L{level}:{count} (fine-equiv {expected})"
         for level, count, expected in tree.level_counts

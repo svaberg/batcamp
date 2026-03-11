@@ -20,7 +20,7 @@ _DEFAULT_LOOKUP_MAX_RADIUS = 2
 
 
 class CartesianLookupKernelState(NamedTuple):
-    """Packed Cartesian lookup arrays/scalars consumed by numba kernels."""
+    """Arrays used by compiled Cartesian lookup code."""
 
     cell_centers: np.ndarray
     cell_x_min: np.ndarray
@@ -155,7 +155,7 @@ class _CartesianCellLookup:
     """Leaf-cell lookup accelerator for Cartesian `(x, y, z)` octrees."""
 
     def _init_lookup_state(self, tree: Octree) -> None:
-        """Build Cartesian lookup geometry and sparse 3D bin index from one bound tree."""
+        """Build per-cell lookup arrays from a bound Cartesian tree."""
         if tree.ds is None or tree.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         ds = tree.ds
@@ -289,7 +289,7 @@ class _CartesianCellLookup:
         coord: str,
         tol: float = _LOOKUP_CONTAIN_TOL,
     ) -> bool:
-        """Containment test of one query point in `coord` against one leaf cell."""
+        """Return whether one point lies inside one Cartesian cell."""
         resolved = str(coord)
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -308,7 +308,7 @@ class _CartesianCellLookup:
         *,
         coord: str,
     ) -> int:
-        """Resolve one query point to a leaf `cell_id` (or `-1`)."""
+        """Return the containing Cartesian cell id, or `-1` when not found."""
         resolved = str(coord)
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -324,7 +324,7 @@ class _CartesianCellLookup:
         *,
         tol: float = _LOOKUP_CONTAIN_TOL,
     ) -> bool:
-        """Containment test of one Cartesian query point against one leaf cell."""
+        """Return whether one `(x, y, z)` point lies inside one cell."""
         return bool(
             _contains_xyz_cell(
                 int(cell_id),
@@ -337,12 +337,12 @@ class _CartesianCellLookup:
         )
 
     def cell_step_hint(self, cell_id: int) -> float:
-        """Return one characteristic Cartesian step size used for ray marching."""
+        """Return an initial step size hint for Python ray tracing."""
         cid = int(cell_id)
         return float(max(float(self._cell_dx[cid]), float(self._cell_dy[cid]), float(self._cell_dz[cid]), 1e-6))
 
     def lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
-        """Resolve one Cartesian query to a leaf `cell_id` (or `-1`)."""
+        """Return the containing cell id for `(x, y, z)`, or `-1`."""
         return int(
             lookup_xyz_cell_id_kernel(
                 float(x),
@@ -353,7 +353,7 @@ class _CartesianCellLookup:
         )
 
     def hit_from_chosen(self, chosen: int, *, allow_invalid_depth: bool = False) -> LookupHit | None:
-        """Materialize lookup metadata from one chosen cell id."""
+        """Build a `LookupHit` from an internal cell id."""
         if chosen < 0:
             return None
         center = self._cell_centers[chosen]
@@ -390,13 +390,7 @@ class CartesianOctree(_CartesianCellLookup, Octree):
     def build_lookup(
         self,
     ) -> None:
-        """Construct Cartesian lookup state directly on this octree instance.
-
-        Consumes:
-        - Bound Cartesian tree geometry.
-        Returns:
-        - `None`; lookup state is initialized on `self`.
-        """
+        """Build lookup arrays for this Cartesian tree."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Octree is not bound to a dataset. Call bind(...) before lookup.")
         self._init_lookup_state(self)

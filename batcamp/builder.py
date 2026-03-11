@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Octree orchestration builder and coordinate-agnostic utilities."""
+"""Octree builder and related utility functions."""
 
 from __future__ import annotations
 
@@ -32,13 +32,7 @@ def point_refinement_levels(
     corners: np.ndarray,
     cell_levels: np.ndarray,
 ) -> np.ndarray:
-    """Assign each mesh point the finest adjacent valid cell level.
-
-    Consumes:
-    - Number of points, corner connectivity, and per-cell levels.
-    Returns:
-    - Point-level array of length `n_points` (`-1` where unknown).
-    """
+    """Assign each point the finest valid level among its neighboring cells."""
     out = np.full(n_points, -1, dtype=np.int64)
     for cell_id, nodes in enumerate(corners):
         level = int(cell_levels[cell_id])
@@ -63,7 +57,7 @@ def valid_cell_fraction(levels: np.ndarray) -> tuple[int, int, float]:
 
 
 class OctreeBuilder:
-    """Build `Octree` objects from dataset geometry using coord strategies."""
+    """Build octrees from dataset cell connectivity."""
 
     def __init__(
         self,

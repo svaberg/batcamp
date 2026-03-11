@@ -38,7 +38,7 @@ def xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, f
 
 
 class SphericalLookupKernelState(NamedTuple):
-    """Numba lookup-kernel arrays/scalars with explicit field names."""
+    """Arrays used by compiled spherical lookup code."""
 
     levels_desc: np.ndarray
     shape_table: np.ndarray
@@ -66,15 +66,7 @@ def _contains_rpa_cell(
     azimuth: float,
     lookup_state: SphericalLookupKernelState,
 ) -> bool:
-    """Check one spherical query against one cell's spherical bounds.
-
-    Consumes:
-    - `cid`: leaf-cell index.
-    - `r`, `polar`, `azimuth`: query coordinates in `(r, polar, azimuth)`.
-    - `lookup_state`: packed per-cell bounds arrays.
-    Returns:
-    - `True` when the query is inside the cell bounds (with tolerance), else `False`.
-    """
+    """Return whether one spherical point lies inside one cell."""
     if not lookup_state.cell_valid[cid]:
         return False
     tol = _LOOKUP_CONTAIN_TOL
@@ -97,16 +89,7 @@ def lookup_rpa_cell_id_kernel(
     lookup_state: SphericalLookupKernelState,
     prev_cid: int = -1,
 ) -> int:
-    """Resolve one spherical query to one leaf-cell id.
-
-    Consumes:
-    - Query scalars `r`, `polar`, `azimuth`.
-    - `lookup_state`: packed level/bin/cell arrays.
-    - `prev_cid`: previous hit hint (`-1` when unavailable).
-    Returns:
-    - A resolved `cell_id` on success.
-    - `-1` for invalid/out-of-domain inputs.
-    """
+    """Return the containing spherical cell id, or `-1` when not found."""
     if not (math.isfinite(r) and math.isfinite(polar) and math.isfinite(azimuth)):
         return -1
     if polar < 0.0 or polar > math.pi:
@@ -216,25 +199,13 @@ def lookup_rpa_cell_id_kernel(
     return -1
 
 class _SphericalCellLookup:
-    """Leaf-cell lookup accelerator for spherical/Cartesian queries.
-
-    The index is built from leaf-cell centers and bounds in spherical space.
-    Angular bins are stored in CSR-like arrays (`_bin_offsets/_bin_counts/
-    _bin_cell_ids`) so candidate retrieval avoids tuple-key dict lookups in
-    the hot path.
-    """
+    """Cell lookup helper for spherical trees."""
 
     def _init_lookup_state(
         self,
         tree: Octree,
     ) -> None:
-        """Build lookup geometry from one bound tree.
-
-        Consumes:
-        - `tree`: an `Octree` bound to dataset+covers with valid XYZ variables.
-        Returns:
-        - `None`; initializes lookup arrays and compiled lookup state on `self`.
-        """
+        """Build lookup arrays from a bound spherical tree."""
         if tree.ds is None or tree.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         ds = tree.ds
@@ -263,19 +234,7 @@ class _SphericalCellLookup:
         self._build_index()
 
     def _build_index(self) -> None:
-        """Build per-level lookup tables, bounds, and CSR-like angular bins.
-
-        Steps:
-        - Build dense per-level tables (shape, spacing, depth, bin offsets).
-        - Assign each valid leaf cell to one `(level, itheta, iphi)` angular bin.
-        - Sort cells in each bin by radial center for stable local ranking.
-        - Pack bins into CSR-like arrays for candidate gathering.
-        - Precompute per-cell radial/theta/phi bounds for containment tests.
-        Consumes:
-        - Bound dataset points/corners and per-cell levels on `self`.
-        Returns:
-        - `None`; writes packed lookup/index arrays to instance fields.
-        """
+        """Build per-level lookup tables, bins, and per-cell bounds."""
         n_cells = self._corners.shape[0]
         valid = self._cell_level_rel >= 0
         if not np.any(valid):
@@ -437,14 +396,7 @@ class _SphericalCellLookup:
 
     @staticmethod
     def _path(i0: int, i1: int, i2: int, depth: int) -> GridPath:
-        """Construct root-to-leaf index path for one leaf coordinate triplet.
-
-        Consumes:
-        - `i0`, `i1`, `i2`: leaf-grid indices.
-        - `depth`: tree depth for those indices.
-        Returns:
-        - `GridPath` tuple from root index to leaf index (inclusive).
-        """
+        """Build the root-to-leaf grid index path for one cell."""
         out: list[GridIndex] = []
         for level in range(depth + 1):
             shift = depth - level
@@ -453,13 +405,7 @@ class _SphericalCellLookup:
 
     @staticmethod
     def _minimal_phi_interval(values: np.ndarray) -> tuple[float, float]:
-        """Find the minimal wrapped azimuth interval covering sample azimuths.
-
-        Consumes:
-        - `values`: azimuth samples in radians (any shape accepted via flattening).
-        Returns:
-        - `(start, width)` in radians for the minimal wrapped interval.
-        """
+        """Return the smallest wrapped azimuth interval covering the samples."""
         vals = np.sort(np.mod(np.array(values, dtype=float), 2.0 * math.pi))
         if vals.size == 0:
             return 0.0, 2.0 * math.pi
@@ -473,17 +419,7 @@ class _SphericalCellLookup:
         return start, width
 
     def _candidate_ids(self, level: int, itheta: int, iphi: int, radius: int) -> np.ndarray:
-        """Gather candidate ids from a square angular neighborhood.
-
-        Neighborhood bins are centered at `(itheta, iphi)` with half-width
-        `radius`. Bin contents are copied from CSR-like storage into one output
-        array.
-        Consumes:
-        - `level`, `itheta`, `iphi`: center bin coordinates.
-        - `radius`: neighborhood half-width in bins.
-        Returns:
-        - `np.ndarray[int64]` of candidate cell ids (possibly empty).
-        """
+        """Return candidate cell ids from nearby angular bins."""
         if level < 0 or level >= self._shape_table.shape[0]:
             return np.array([], dtype=np.int64)
         ntheta = int(self._shape_table[level, 1])
@@ -529,14 +465,7 @@ class _SphericalCellLookup:
         polar: float,
         azimuth: float,
     ) -> np.ndarray:
-        """Vectorized containment mask for one spherical query over candidate ids.
-
-        Consumes:
-        - `cids`: candidate cell ids.
-        - `r`, `polar`, `azimuth`: spherical query coordinates.
-        Returns:
-        - Boolean mask aligned with `cids`, `True` where the query is contained.
-        """
+        """Return a boolean mask for which candidate cells contain the point."""
         tol = 1e-10
         if cids.size == 0:
             return np.array([], dtype=np.bool_)
@@ -556,7 +485,7 @@ class _SphericalCellLookup:
         *,
         coord: str,
     ) -> int:
-        """Resolve one query point to a leaf `cell_id` in `coord`."""
+        """Return the containing cell id for one point in `xyz` or `rpa`."""
         q = np.array(point, dtype=float).reshape(3)
         resolved = str(coord)
         if resolved == "xyz":
@@ -573,7 +502,7 @@ class _SphericalCellLookup:
         coord: str,
         tol: float = 1e-10,
     ) -> bool:
-        """Containment test of one query point in `coord` against one leaf cell."""
+        """Return whether one point lies inside one cell."""
         q = np.array(point, dtype=float).reshape(3)
         resolved = str(coord)
         if resolved == "xyz":
@@ -595,19 +524,7 @@ class _SphericalCellLookup:
         raise ValueError("coord must be 'xyz' or 'rpa'.")
 
     def lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
-        """Resolve one spherical query to a leaf `cell_id` (or `-1`).
-
-        Search strategy:
-        - Iterate refinement levels from fine to coarse.
-        - For each level, expand angular neighborhood radius (`0..2`).
-        - Filter by radial bounds, then apply vectorized containment tests.
-        - Break ties by nearest cell center in xyz.
-        - If nothing contains, fall back to nearest-center candidates.
-        Consumes:
-        - `r`, `polar`, `azimuth` query coordinates.
-        Returns:
-        - Resolved `cell_id`, or `-1` for invalid/out-of-domain inputs.
-        """
+        """Return the containing spherical cell id, or `-1` when not found."""
         return int(
             lookup_rpa_cell_id_kernel(
                 float(r),
@@ -618,7 +535,7 @@ class _SphericalCellLookup:
         )
 
     def contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
-        """Containment test of one spherical query point against one leaf cell."""
+        """Return whether one spherical point lies inside one cell."""
         cid = int(cell_id)
         rr = float(r)
         pp = float(polar)
@@ -636,7 +553,7 @@ class _SphericalCellLookup:
         return dphi <= (width + t)
 
     def contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
-        """Containment test of one Cartesian query point against one leaf cell."""
+        """Return whether one Cartesian point lies inside one cell."""
         r = float(math.sqrt(x * x + y * y + z * z))
         if r == 0.0:
             polar = 0.0
@@ -646,7 +563,7 @@ class _SphericalCellLookup:
         return self.contains_rpa_cell(int(cell_id), r, polar, azimuth, tol=float(tol))
 
     def cell_step_hint(self, cell_id: int) -> float:
-        """Return one characteristic step size used for ray marching in this cell."""
+        """Return an initial step-size hint for Python ray tracing."""
         cid = int(cell_id)
         r_span = float(self._cell_r_max[cid] - self._cell_r_min[cid])
         theta_span = float(self._cell_theta_max[cid] - self._cell_theta_min[cid])
@@ -655,15 +572,7 @@ class _SphericalCellLookup:
         return float(max(r_span, length_scale * theta_span, length_scale * phi_span, 1e-6))
 
     def lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
-        """Resolve one Cartesian query to a leaf `cell_id` (or `-1`).
-
-        Converts `(x, y, z)` to `(r, polar, azimuth)` then runs the spherical
-        lookup path.
-        Consumes:
-        - Cartesian query scalars `x`, `y`, `z`.
-        Returns:
-        - Resolved `cell_id`, or `-1` for invalid/out-of-domain inputs.
-        """
+        """Return the containing cell id for `(x, y, z)`, or `-1`."""
         if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
             return -1
         r = float(math.sqrt(x * x + y * y + z * z))
@@ -675,14 +584,7 @@ class _SphericalCellLookup:
         return self.lookup_rpa_cell_id(r, polar, azimuth)
 
     def hit_from_chosen(self, chosen: int, *, allow_invalid_depth: bool = False) -> LookupHit | None:
-        """Materialize lookup metadata from one chosen cell id.
-
-        Consumes:
-        - `chosen`: candidate cell id.
-        - `allow_invalid_depth`: whether depth `< 0` may still be materialized.
-        Returns:
-        - `LookupHit` if `chosen` is valid and depth policy allows it, else `None`.
-        """
+        """Build a `LookupHit` from an internal cell id."""
         if chosen < 0:
             return None
         center = self._cell_centers[chosen]
@@ -720,29 +622,11 @@ class SphericalOctree(_SphericalCellLookup, Octree):
 
     @staticmethod
     def xyz_to_rpa(q: np.ndarray) -> tuple[float, float, float]:
-        """Convert one Cartesian point to spherical `(r, polar, azimuth)`.
-
-        Consumes:
-        - `q`: Cartesian coordinate triple.
-        Returns:
-        - `(r, polar, azimuth)` as floats.
-        """
+        """Convert one Cartesian point to `(r, polar, azimuth)`."""
         return xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
 
     def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> "LookupHit | None":
-        """Lookup in xyz using local spherical-bin neighborhoods around a near cell.
-
-        Algorithm:
-        - If a nearby cell is provided, test it directly.
-        - Probe local angular neighborhoods at the nearby level and adjacent
-          levels, mapping angular indices between levels by center alignment.
-        - Run vectorized containment on merged candidates.
-        - Fall back to full lookup if no local candidate contains the point.
-        Consumes:
-        - Cartesian query `xyz` and optional nearby `cell_id` hint.
-        Returns:
-        - `LookupHit` if resolved, else `None`.
-        """
+        """Lookup in `xyz`, first trying cells near `near_cid` when provided."""
         q = np.array(xyz, dtype=float)
         x = float(q[0])
         y = float(q[1])
@@ -806,13 +690,7 @@ class SphericalOctree(_SphericalCellLookup, Octree):
     def build_lookup(
         self,
     ) -> None:
-        """Construct spherical lookup state directly on this octree instance.
-
-        Consumes:
-        - Bound spherical tree geometry.
-        Returns:
-        - `None`; lookup state is initialized on `self`.
-        """
+        """Build lookup arrays for this spherical tree."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Octree is not bound to a dataset. Call bind(...) before lookup.")
         self._init_lookup_state(self)

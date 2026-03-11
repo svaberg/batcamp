@@ -59,7 +59,7 @@ def _contains_xyz_from_state(
     lookup_state: CartesianLookupKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
-    """Check Cartesian point containment using packed lookup state arrays."""
+    """Return whether a Cartesian point lies inside one cell."""
     if x < (lookup_state.cell_x_min[cid] - tol) or x > (lookup_state.cell_x_max[cid] + tol):
         return False
     if y < (lookup_state.cell_y_min[cid] - tol) or y > (lookup_state.cell_y_max[cid] + tol):
@@ -78,7 +78,7 @@ def _contains_rpa_from_components(
     lookup_state: SphericalLookupKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
-    """Check spherical point containment using packed lookup state arrays."""
+    """Return whether a spherical point lies inside one cell."""
     if r < (lookup_state.cell_r_min[cid] - tol) or r > (lookup_state.cell_r_max[cid] + tol):
         return False
     if polar < (lookup_state.cell_theta_min[cid] - tol) or polar > (lookup_state.cell_theta_max[cid] + tol):
@@ -953,10 +953,7 @@ class OctreeRayTracer:
         - Expand a trial step size until leaving the current cell.
         - Bisect the exit point for a tight `t_exit`.
         - Step slightly forward and re-resolve near the previous cell.
-        Consumes:
-        - Ray origin/direction, `t` bounds, and tracing controls.
-        Returns:
-        - Ordered list of `RaySegment` intervals.
+        Returns ordered `RaySegment` intervals.
         """
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
@@ -983,7 +980,7 @@ class OctreeRayTracer:
     ) -> list[RaySegment]:
         """Trace ray segments for pre-normalized inputs.
 
-        Uses compiled traversal kernels when lookup state supports them;
+        Uses compiled traversal code when lookup data supports it;
         falls back to the Python path otherwise.
         """
         o = origin_xyz
