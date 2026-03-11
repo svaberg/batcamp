@@ -40,4 +40,4 @@
 - [ ] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
 - [ ] Update `README.md` quick-start to default-first usage (`OctreeInterpolator(ds, ...)` / `Octree.from_dataset(ds)`) and only show explicit `tree_coord` in an “advanced/override” example.
 - [ ] Add lightweight smoke validation for example notebooks (`examples/quick_start.ipynb` and one Cartesian+one spherical notebook) so API drift is caught automatically.
-- [ ] Declare `pooch` test marker in `pyproject.toml` (single source of truth) instead of runtime-only registration in `tests/conftest.py`.
+- [x] Declare `pooch` test marker in `pyproject.toml` (single source of truth) instead of runtime-only registration in `tests/conftest.py`.
