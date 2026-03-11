@@ -119,18 +119,16 @@ def _trilinear_from_cell_rpa(
     c6 = int(local[int(map_row[6])])
     c7 = int(local[int(map_row[7])])
 
-    ncomp = out_row.shape[0]
-    for comp in range(ncomp):
-        out_row[comp] = (
-            w0 * interp_state.point_values_2d[c0, comp]
-            + w1 * interp_state.point_values_2d[c1, comp]
-            + w2 * interp_state.point_values_2d[c2, comp]
-            + w3 * interp_state.point_values_2d[c3, comp]
-            + w4 * interp_state.point_values_2d[c4, comp]
-            + w5 * interp_state.point_values_2d[c5, comp]
-            + w6 * interp_state.point_values_2d[c6, comp]
-            + w7 * interp_state.point_values_2d[c7, comp]
-        )
+    out_row[:] = (
+        w0 * interp_state.point_values_2d[c0]
+        + w1 * interp_state.point_values_2d[c1]
+        + w2 * interp_state.point_values_2d[c2]
+        + w3 * interp_state.point_values_2d[c3]
+        + w4 * interp_state.point_values_2d[c4]
+        + w5 * interp_state.point_values_2d[c5]
+        + w6 * interp_state.point_values_2d[c6]
+        + w7 * interp_state.point_values_2d[c7]
+    )
 
 
 @njit(cache=True)
@@ -180,18 +178,16 @@ def _trilinear_from_cell(
     c6 = int(local[int(map_row[6])])
     c7 = int(local[int(map_row[7])])
 
-    ncomp = out_row.shape[0]
-    for comp in range(ncomp):
-        out_row[comp] = (
-            w0 * interp_state.point_values_2d[c0, comp]
-            + w1 * interp_state.point_values_2d[c1, comp]
-            + w2 * interp_state.point_values_2d[c2, comp]
-            + w3 * interp_state.point_values_2d[c3, comp]
-            + w4 * interp_state.point_values_2d[c4, comp]
-            + w5 * interp_state.point_values_2d[c5, comp]
-            + w6 * interp_state.point_values_2d[c6, comp]
-            + w7 * interp_state.point_values_2d[c7, comp]
-        )
+    out_row[:] = (
+        w0 * interp_state.point_values_2d[c0]
+        + w1 * interp_state.point_values_2d[c1]
+        + w2 * interp_state.point_values_2d[c2]
+        + w3 * interp_state.point_values_2d[c3]
+        + w4 * interp_state.point_values_2d[c4]
+        + w5 * interp_state.point_values_2d[c5]
+        + w6 * interp_state.point_values_2d[c6]
+        + w7 * interp_state.point_values_2d[c7]
+    )
 
 
 @njit(cache=True, parallel=True)
@@ -213,8 +209,7 @@ def _interp_batch_xyz(
         end = min(n_query, start + chunk_size)
         hint_cid = -1
         for i in range(start, end):
-            for comp in range(ncomp):
-                out[i, comp] = fill_values[comp]
+            out[i, :] = fill_values
 
             x = queries_xyz[i, 0]
             y = queries_xyz[i, 1]
@@ -272,8 +267,7 @@ def _interp_batch_rpa(
         end = min(n_query, start + chunk_size)
         hint_cid = -1
         for i in range(start, end):
-            for comp in range(ncomp):
-                out[i, comp] = fill_values[comp]
+            out[i, :] = fill_values
 
             r = queries_rpa[i, 0]
             polar = queries_rpa[i, 1]
@@ -320,8 +314,7 @@ def _interp_batch_xyz_cartesian(
         end = min(n_query, start + chunk_size)
         hint_cid = -1
         for i in range(start, end):
-            for comp in range(ncomp):
-                out[i, comp] = fill_values[comp]
+            out[i, :] = fill_values
 
             x = queries_xyz[i, 0]
             y = queries_xyz[i, 1]
