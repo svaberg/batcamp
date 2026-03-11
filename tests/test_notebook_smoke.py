@@ -16,16 +16,22 @@ _CASES = [
         id="quick_start_default_first",
     ),
     pytest.param(
-        "cartesian_octree_read_large_file.ipynb",
+        "octree_resampling_plane_sphere.ipynb",
         ("tree_coord='xyz'",),
         (),
-        id="cartesian_notebook",
+        id="cartesian_resampling_notebook",
     ),
     pytest.param(
-        "octree_interpolator_demo.ipynb",
+        "octree.ipynb",
         ("tree_coord='rpa'",),
         (),
-        id="spherical_notebook",
+        id="octree_notebook",
+    ),
+    pytest.param(
+        "octree_ray_demo.ipynb",
+        ("OctreeRayTracer",),
+        (),
+        id="ray_notebook",
     ),
 ]
 
