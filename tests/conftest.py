@@ -31,6 +31,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 @lru_cache(maxsize=1)
 def _build_difflevels_rpa_context() -> dict[str, object]:
+    """Private test helper: build and cache shared spherical test context."""
     input_file = data_file("difflevels-3d__var_1_n00000000.dat")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))

@@ -10,7 +10,7 @@ from batcamp import OctreeInterpolator
 
 
 class _SyntheticDataset:
-    """Minimal dataset-like object supporting octree build/interpolation tests."""
+    """Private test helper: minimal dataset-like object for synthetic tests."""
 
     def __init__(self, points: np.ndarray, corners: np.ndarray, variables: dict[str, np.ndarray]) -> None:
         """Store geometry and field arrays with a `Dataset`-compatible API surface."""
@@ -31,7 +31,7 @@ def _build_uniform_spherical_hex_dataset(
     ntheta: int = 4,
     nphi: int = 8,
 ) -> tuple[_SyntheticDataset, np.ndarray, tuple[float, float, float, float]]:
-    """Build a synthetic full-sphere structured dataset with hexahedral cells."""
+    """Private test helper: build a synthetic full-sphere hexahedral dataset."""
     r_edges = np.linspace(1.0, 3.0, nr + 1)
     theta_edges = np.linspace(0.0, math.pi, ntheta + 1)
     phi_edges = np.linspace(0.0, 2.0 * math.pi, nphi + 1)
@@ -105,7 +105,7 @@ def synthetic_context() -> tuple[_SyntheticDataset, Octree, np.ndarray, tuple[fl
 
 
 def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    """Generate one interior xyz and matching rpa point per requested cell id."""
+    """Private test helper: sample one interior xyz/rpa point per selected cell."""
     xyz_list: list[np.ndarray] = []
     rpa_list: list[np.ndarray] = []
     for cid in cids.tolist():
@@ -138,7 +138,7 @@ def _interpolation_valid_cells(
     *,
     interp: OctreeInterpolator | None = None,
 ) -> np.ndarray:
-    """Return cells suitable for stable interpolation checks."""
+    """Private test helper: return cells suitable for stable interpolation checks."""
     n_cells = int(tree.cell_count())
     lo = np.empty((n_cells, 3), dtype=float)
     hi = np.empty((n_cells, 3), dtype=float)

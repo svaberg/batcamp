@@ -20,7 +20,7 @@ def _build_regular_dataset(
     ntheta: int = 4,
     nphi: int = 8,
 ) -> _FakeDataset:
-    """Build a small regular spherical hexahedral dataset."""
+    """Private test helper: build a small regular spherical hexahedral dataset."""
     r_edges = np.linspace(1.0, 3.0, nr + 1)
     theta_edges = np.linspace(0.0, math.pi, ntheta + 1)
     phi_edges = np.linspace(0.0, 2.0 * math.pi, nphi + 1)
@@ -83,7 +83,7 @@ def _build_regular_xyz_dataset(
     ny: int = 3,
     nz: int = 2,
 ) -> _FakeDataset:
-    """Build a small regular Cartesian hexahedral dataset."""
+    """Private test helper: build a small regular Cartesian hexahedral dataset."""
     x_edges = np.linspace(-2.0, 2.0, nx + 1)
     y_edges = np.linspace(-1.5, 1.5, ny + 1)
     z_edges = np.linspace(-1.0, 1.0, nz + 1)
@@ -136,7 +136,7 @@ def _build_regular_xyz_dataset(
 
 
 def _build_disjoint_xyz_dataset() -> _FakeDataset:
-    """Build two separated Cartesian cells with an empty gap between them."""
+    """Private test helper: build two Cartesian cells separated by an empty gap."""
     cube0 = np.array(
         [
             [0.0, 0.0, 0.0],
@@ -176,7 +176,7 @@ def _build_disjoint_xyz_dataset() -> _FakeDataset:
 
 
 def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
-    """Build two separated spherical shell layers with a radial gap."""
+    """Private test helper: build two spherical shell layers with a radial gap."""
     theta_edges = np.array([0.0, 0.5 * math.pi, math.pi], dtype=float)
     phi_edges = np.array([0.0, math.pi, 2.0 * math.pi], dtype=float)
     shell_edges = ((1.0, 2.0), (4.0, 5.0))

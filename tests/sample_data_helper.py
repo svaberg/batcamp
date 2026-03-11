@@ -11,7 +11,7 @@ _G2211_SHA256 = "c31a32aab08cc20d5b643bba734fd7220e6b369e691f55f88a3a08cc5b2a213
 
 
 def _unique_match(paths: list[Path], *, name: str) -> Path:
-    """Return the only match for `name` or raise for none/ambiguous results."""
+    """Private test helper: return one match for `name` or raise."""
     if not paths:
         raise FileNotFoundError(name)
     if len(paths) > 1:
@@ -20,12 +20,12 @@ def _unique_match(paths: list[Path], *, name: str) -> Path:
 
 
 def _find_in_example_data(root: Path, name: str) -> Path:
-    """Find one file by basename under repo `example_data` recursively."""
+    """Private test helper: find one file by basename under `example_data`."""
     return _unique_match(sorted(root.rglob(name)), name=name)
 
 
 def _fetch_from_g2211_archive(name: str) -> Path:
-    """Fetch one uniquely named file from the Zenodo G2211 archive via pooch."""
+    """Private test helper: fetch one named file from the Zenodo G2211 archive."""
     archive_path = Path(
         pooch.retrieve(
             url=_G2211_URL,

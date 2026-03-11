@@ -17,7 +17,7 @@ def _build_regular_fake_dataset(
     ntheta: int = 2,
     nphi: int = 4,
 ) -> _FakeDataset:
-    """Build a small regular spherical dataset suitable for lookup/interp tests."""
+    """Private test helper: build a regular spherical dataset for edge-case tests."""
     r_edges = np.linspace(1.0, 2.0, nr + 1)
     theta_edges = np.linspace(0.0, math.pi, ntheta + 1)
     phi_edges = np.linspace(0.0, 2.0 * math.pi, nphi + 1)
@@ -75,7 +75,7 @@ def _build_regular_fake_dataset(
 
 
 def _build_axis_only_fake_dataset() -> _FakeDataset:
-    """Build an intentionally invalid dataset where all corners are on axis."""
+    """Private test helper: build an invalid dataset with all corners on axis."""
     z = np.array([-4.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0])
     x = np.zeros_like(z)
     y = np.zeros_like(z)

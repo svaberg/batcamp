@@ -18,7 +18,7 @@ def _build_fake_dataset(
     ntheta: int = 2,
     nphi: int = 4,
 ) -> _FakeDataset:
-    """Build a small regular spherical hexahedral dataset."""
+    """Private test helper: build a small regular spherical hexahedral dataset."""
     r_edges = np.linspace(1.0, 2.0, nr + 1)
     theta_edges = np.linspace(0.0, math.pi, ntheta + 1)
     phi_edges = np.linspace(0.0, 2.0 * math.pi, nphi + 1)
@@ -78,7 +78,7 @@ def _build_fake_dataset(
 
 
 def _build_fake_cartesian_dataset() -> _FakeDataset:
-    """Build a small regular Cartesian hexahedral dataset."""
+    """Private test helper: build a small regular Cartesian hexahedral dataset."""
     x_edges = np.array([0.0, 1.0, 2.0], dtype=float)
     y_edges = np.array([-0.5, 0.5], dtype=float)
     z_edges = np.array([-0.25, 0.75], dtype=float)
@@ -130,7 +130,7 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
 
 
 def _first_resolvable_center(tree: Octree) -> np.ndarray:
-    """Return first cell center that successfully resolves via lookup."""
+    """Private test helper: return first cell center that resolves via lookup."""
     for c in np.array(tree.cell_centers(), dtype=float):
         hit = tree.lookup_point(np.array(c, dtype=float), coord="xyz")
         if hit is not None:
@@ -139,7 +139,7 @@ def _first_resolvable_center(tree: Octree) -> np.ndarray:
 
 
 def _first_resolvable_rpa(tree: Octree) -> tuple[float, float, float]:
-    """Return one interior spherical point that resolves in lookup."""
+    """Private test helper: return one interior spherical point resolved by lookup."""
     for cid in range(int(tree.cell_count())):
         lo, hi = tree.cell_bounds(int(cid), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))

@@ -16,7 +16,7 @@ def advanced_context(difflevels_rpa_context: dict[str, object]) -> tuple[object,
 
 
 def _select_center_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarray:
-    """Pick deterministic random cell centers as robust inside-domain query points."""
+    """Private test helper: pick deterministic random interior query points."""
     rng = np.random.default_rng(seed)
     centers = np.asarray(tree.cell_centers(), dtype=float)
     n = min(int(n_query), int(centers.shape[0]))
@@ -25,7 +25,7 @@ def _select_center_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarr
 
 
 def _select_resolvable_center_near_radius(tree: Octree, *, target_r: float) -> np.ndarray:
-    """Pick a resolvable center with radius closest to `target_r`."""
+    """Private test helper: pick one resolvable center near `target_r`."""
     centers = np.asarray(tree.cell_centers(), dtype=float)
     center_r = np.linalg.norm(centers, axis=1)
     order = np.argsort(np.abs(center_r - float(target_r)))
