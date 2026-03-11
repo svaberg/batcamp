@@ -93,6 +93,7 @@ class Octree:
     ds: Dataset | None = field(default=None, repr=False)
     axis_rho_tol: float = field(default=DEFAULT_AXIS_RHO_TOL, repr=False)
     _lookup_ready: bool = field(default=False, init=False, repr=False)
+    _lookup_view: "OctreeLookup | None" = field(default=None, init=False, repr=False)
 
     @classmethod
     def from_dataset(
@@ -226,9 +227,12 @@ class Octree:
         return self
 
     @property
-    def lookup(self) -> "Octree":
-        """Return this tree after ensuring lookup data is ready."""
-        return self._require_lookup()
+    def lookup(self) -> "OctreeLookup":
+        """Return the lookup/query interface bound to this tree."""
+        self._require_lookup()
+        if self._lookup_view is None:
+            self._lookup_view = OctreeLookup(self)
+        return self._lookup_view
 
     @property
     def cell_count(self) -> int:
@@ -358,6 +362,99 @@ class Octree:
             if self.contains_cell(near, q, coord="xyz"):
                 return self.hit_from_cell_id(near)
         return self.lookup_point(np.array([x, y, z], dtype=float), coord="xyz")
+
+
+@dataclass(frozen=True)
+class OctreeLookup:
+    """Lookup/query interface for one bound octree."""
+
+    tree: Octree
+
+    @property
+    def tree_coord(self) -> TreeCoord:
+        """Return coordinate system tag for this lookup interface."""
+        return self.tree.tree_coord
+
+    @property
+    def cell_count(self) -> int:
+        """Return number of leaf cells available for lookup."""
+        return self.tree.cell_count
+
+    @property
+    def cell_centers(self) -> np.ndarray:
+        """Return leaf-cell centers in Cartesian coordinates."""
+        return self.tree.cell_centers
+
+    @property
+    def lookup_state(self) -> object:
+        """Return compiled lookup state used by numba kernels."""
+        self.tree._require_lookup()
+        state = getattr(self.tree, "_lookup_state", None)
+        if state is None:
+            raise ValueError("Lookup state is unavailable for this tree.")
+        return state
+
+    @property
+    def points(self) -> np.ndarray:
+        """Return node coordinates used by lookup/interpolation setup."""
+        self.tree._require_lookup()
+        pts = getattr(self.tree, "_points", None)
+        if pts is None:
+            raise ValueError("Lookup points are unavailable for this tree.")
+        return np.asarray(pts, dtype=float)
+
+    @property
+    def cell_phi_start(self) -> np.ndarray:
+        """Return per-cell azimuth start for spherical lookup trees."""
+        self.tree._require_lookup()
+        starts = getattr(self.tree, "_cell_phi_start", None)
+        if starts is None:
+            raise ValueError("cell_phi_start is only available for spherical lookups.")
+        return np.asarray(starts, dtype=float)
+
+    @property
+    def cell_phi_width(self) -> np.ndarray:
+        """Return per-cell wrapped azimuth width for spherical lookup trees."""
+        self.tree._require_lookup()
+        widths = getattr(self.tree, "_cell_phi_width", None)
+        if widths is None:
+            raise ValueError("cell_phi_width is only available for spherical lookups.")
+        return np.asarray(widths, dtype=float)
+
+    def lookup_cell_id(self, point: np.ndarray, *, coord: str) -> int:
+        """Resolve one query point to a leaf `cell_id` (or `-1`)."""
+        return self.tree.lookup_cell_id(point, coord=coord)
+
+    def lookup_point(self, point: np.ndarray, *, coord: TreeCoord) -> LookupHit | None:
+        """Find which cell contains one point, or return `None`."""
+        return self.tree.lookup_point(point, coord=coord)
+
+    def contains_cell(
+        self,
+        cell_id: int,
+        point: np.ndarray,
+        *,
+        coord: TreeCoord,
+        tol: float = 1e-10,
+    ) -> bool:
+        """Return whether one point lies inside one cell."""
+        return self.tree.contains_cell(cell_id, point, coord=coord, tol=tol)
+
+    def hit_from_cell_id(self, cell_id: int) -> LookupHit:
+        """Return lookup metadata for a known cell id."""
+        return self.tree.hit_from_cell_id(cell_id)
+
+    def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> LookupHit | None:
+        """Lookup in xyz and optionally seed with a nearby cell id."""
+        return self.tree.lookup_local(xyz, near_cid=near_cid)
+
+    def cell_bounds(self, cell_id: int, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
+        """Return `(lo, hi)` bounds for one cell in requested coord."""
+        return self.tree.cell_bounds(cell_id, coord=coord)
+
+    def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
+        """Return global `(lo, hi)` bounds in requested coord."""
+        return self.tree.domain_bounds(coord=coord)
 
 def octree_class_for_coord(tree_coord: str) -> type[Octree]:
     """Return the octree class that matches `tree_coord`."""

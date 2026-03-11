@@ -653,7 +653,8 @@ class SphericalOctree(_SphericalCellLookup, Octree):
         x = float(q[0])
         y = float(q[1])
         z = float(q[2])
-        lookup = self.lookup
+        self._require_lookup()
+        lookup = self
         if near_cid is not None and int(near_cid) >= 0:
             near = int(near_cid)
             if self.contains_cell(near, q, coord="xyz"):

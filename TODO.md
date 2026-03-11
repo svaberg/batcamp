@@ -35,7 +35,7 @@
 - [x] Consolidate duplicate builder utilities across `batcamp/builder_cartesian.py` and `batcamp/builder_spherical.py` (shared level-shape types and positive-median helper).
 - [x] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
 - [x] Replace dynamic attribute probing in `Octree.cell_bounds/domain_bounds` with explicit subclass hooks.
-- [ ] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
+- [x] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
 - [x] Make coordinate conversion/interpolation APIs NumPy-first for bulk arrays; keep scalar conversion helpers private and limited to kernel internals.
 - [x] Rename `spherical.xyz_to_rpa_components` to private `_xyz_to_rpa_components` and keep it kernel-internal.
 - [x] Purge public `SphericalOctree.xyz_to_rpa`; keep scalar xyz->rpa conversion kernel-internal only.

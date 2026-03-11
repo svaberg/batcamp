@@ -956,7 +956,12 @@ def _axis_alignment(direction_xyz_unit: np.ndarray) -> tuple[bool, int]:
 
 def _has_xyz_lookup_kernel(tree: Octree) -> bool:
     """Return whether Cartesian compiled lookup state is available on the tree."""
-    return bool(str(tree.tree_coord) == "xyz" and hasattr(tree.lookup, "_lookup_state"))
+    if str(tree.tree_coord) != "xyz":
+        return False
+    try:
+        return isinstance(tree.lookup.lookup_state, CartesianLookupKernelState)
+    except ValueError:
+        return False
 
 
 def _has_xyz_scalar_interp_kernel(interpolator: "OctreeInterpolator") -> bool:
@@ -1051,7 +1056,10 @@ class OctreeRayTracer:
             return []
 
         lookup = self.tree.lookup
-        lookup_state = getattr(lookup, "_lookup_state", None)
+        try:
+            lookup_state = lookup.lookup_state
+        except ValueError:
+            lookup_state = None
         tree_coord = str(self.tree.tree_coord)
         if tree_coord == "xyz":
             if isinstance(lookup_state, CartesianLookupKernelState):
@@ -1364,7 +1372,7 @@ class OctreeRayInterpolator:
                 float(scale),
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup._lookup_state,
+                self.tree.lookup.lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
@@ -1380,7 +1388,7 @@ class OctreeRayInterpolator:
                 float(scale),
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup._lookup_state,
+                self.tree.lookup.lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
@@ -1398,7 +1406,7 @@ class OctreeRayInterpolator:
             query_points: list[tuple[float, float, float]] = []
             k = 0
             if use_xyz_kernel:
-                lookup_state = self.tree.lookup._lookup_state
+                lookup_state = self.tree.lookup.lookup_state
                 for j in range(n_chunk):
                     endpoint_offsets[j] = int(k)
                     o = origins[i0 + j]
@@ -1543,7 +1551,7 @@ class OctreeRayInterpolator:
             i1 = min(n_rays, i0 + chunk)
             n_chunk = i1 - i0
             if use_xyz_kernel:
-                lookup_state = self.tree.lookup._lookup_state
+                lookup_state = self.tree.lookup.lookup_state
                 for j in range(n_chunk):
                     ray_offsets[i0 + j] = int(global_count)
                     o = origins[i0 + j]
@@ -1691,7 +1699,7 @@ class OctreeRayInterpolator:
                 float(scale),
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup._lookup_state,
+                self.tree.lookup.lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
@@ -1707,7 +1715,7 @@ class OctreeRayInterpolator:
                 float(scale),
                 _FAST_KERNEL_TRACE_MAX_STEPS,
                 _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup._lookup_state,
+                self.tree.lookup.lookup_state,
                 self.interpolator._interp_state_xyz,
             )
 
@@ -1814,7 +1822,7 @@ class OctreeRayInterpolator:
 
         interp = self.interpolator
         corner_ids = interp._corners[cid]
-        cell_xyz = interp.lookup._points[corner_ids]
+        cell_xyz = interp.lookup.points[corner_ids]
         cell_vals = interp._point_values[corner_ids]
         eps = max(_TET_EPS_ABS, _TET_EPS_REL * (1.0 + abs(t_exit - t_enter)))
 
