@@ -46,11 +46,6 @@ class SphericalInterpKernelState(NamedTuple):
     cell_phi_full: np.ndarray
     cell_phi_tiny: np.ndarray
 
-
-# Keep old symbol available for numba cache entries compiled before rename.
-InterpKernelState = SphericalInterpKernelState
-
-
 class CartesianInterpKernelState(NamedTuple):
     """Numba Cartesian interpolation-kernel arrays with explicit field names."""
 
