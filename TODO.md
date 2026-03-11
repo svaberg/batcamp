@@ -22,6 +22,10 @@
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
+- [ ] Fix README quick-start API mismatch: remove constructor-time `query_coord` usage and keep `query_coord` call-time only in examples.
+- [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
+- [ ] Replace `OctreeLookup` private-attribute probing (`getattr(..., \"_lookup_state\"/\"_points\"/\"_cell_phi_*\")`) with explicit backend contracts.
+- [ ] Collapse `OctreeLookup` pass-through wrappers where they only forward to `Octree` without adding behavior.
 - [x] Normalize public/private pair naming to `name` + `_name` (for example `build` + `_build`) and remove suffix-heavy internal names when no semantic distinction exists.
 - [x] Apply the same naming rule to dispatch slots/helpers (remove `_..._impl` naming when direct `name`/`_name` dispatch is sufficient).
 - [x] Run a repo-wide public-docstring audit and flag jargon/vague phrasing (for example "cache", "state", "kernel", "facade") when the term is not user-facing behavior.
