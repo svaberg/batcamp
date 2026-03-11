@@ -200,13 +200,14 @@ class Octree:
         logger.info("Loaded octree from %s", str(in_path))
         return tree
 
+    @property
     def summary(self) -> str:
         """Return one-line summary text for this tree."""
         return format_octree_summary(self)
 
     def __str__(self) -> str:
         """Return human-readable summary text."""
-        return self.summary()
+        return self.summary
 
     def build_lookup(
         self,
@@ -229,11 +230,13 @@ class Octree:
         """Return this tree after ensuring lookup data is ready."""
         return self._require_lookup()
 
+    @property
     def cell_count(self) -> int:
         """Return number of leaf cells available in the bound lookup."""
         self._require_lookup()
         return int(self._cell_centers.shape[0])
 
+    @property
     def cell_centers(self) -> np.ndarray:
         """Return leaf-cell centers in Cartesian coordinates."""
         self._require_lookup()

@@ -139,7 +139,7 @@ def _interpolation_valid_cells(
     interp: OctreeInterpolator | None = None,
 ) -> np.ndarray:
     """Private test helper: return cells suitable for stable interpolation checks."""
-    n_cells = int(tree.cell_count())
+    n_cells = int(tree.cell_count)
     lo = np.empty((n_cells, 3), dtype=float)
     hi = np.empty((n_cells, 3), dtype=float)
     for cid in range(n_cells):
@@ -159,7 +159,7 @@ def _interpolation_valid_cells(
 def test_synthetic_lookup_hits_its_own_cell_centers(synthetic_context) -> None:
     """Lookup of each synthetic cell center should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context
-    centers = np.array(tree.cell_centers(), dtype=float)
+    centers = np.array(tree.cell_centers, dtype=float)
     for cid in range(centers.shape[0]):
         q = centers[cid]
         hit = tree.lookup_point(q, coord="xyz")
@@ -245,7 +245,7 @@ def test_synthetic_outside_points_use_fill_value_and_negative_cell_id(synthetic_
     fill = -999.0
     interp = OctreeInterpolator(ds, ["LinField"], tree=tree, fill_value=fill)
 
-    inside = np.array(tree.cell_centers()[0]).reshape(1, 3)
+    inside = np.array(tree.cell_centers[0]).reshape(1, 3)
     outside = np.array([[100.0, 0.0, 0.0], [-100.0, 0.0, 0.0]])
     q = np.vstack((inside, outside))
 

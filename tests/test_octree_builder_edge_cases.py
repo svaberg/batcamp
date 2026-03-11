@@ -250,7 +250,7 @@ def test_cartesian_fixture_builds_xyz_tree(cartesian_octree_context) -> None:
 def test_cartesian_lookup_hits_cell_centers(cartesian_octree_context) -> None:
     """Cartesian lookup should resolve each cell center to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
-    centers = np.array(tree.cell_centers(), dtype=float)
+    centers = np.array(tree.cell_centers, dtype=float)
     for cid in range(centers.shape[0]):
         q = centers[cid]
         hit = tree.lookup_point(q, coord="xyz")
@@ -262,7 +262,7 @@ def test_cartesian_interpolation_matches_linear_xyz_field(cartesian_octree_conte
     """Cartesian trilinear interpolation should reconstruct the synthetic linear xyz field."""
     _ds, tree, interp = cartesian_octree_context
     rng = np.random.default_rng(42)
-    n_cells = int(tree.cell_count())
+    n_cells = int(tree.cell_count)
     choose = rng.choice(n_cells, size=min(20, n_cells), replace=False)
 
     q = np.empty((choose.size, 3), dtype=float)

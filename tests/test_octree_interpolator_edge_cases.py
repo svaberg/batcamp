@@ -131,7 +131,7 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
 
 def _first_resolvable_center(tree: Octree) -> np.ndarray:
     """Private test helper: return first cell center that resolves via lookup."""
-    for c in np.array(tree.cell_centers(), dtype=float):
+    for c in np.array(tree.cell_centers, dtype=float):
         hit = tree.lookup_point(np.array(c, dtype=float), coord="xyz")
         if hit is not None:
             return np.array(c, dtype=float)
@@ -140,7 +140,7 @@ def _first_resolvable_center(tree: Octree) -> np.ndarray:
 
 def _first_resolvable_rpa(tree: Octree) -> tuple[float, float, float]:
     """Private test helper: return one interior spherical point resolved by lookup."""
-    for cid in range(int(tree.cell_count())):
+    for cid in range(int(tree.cell_count)):
         lo, hi = tree.cell_bounds(int(cid), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
         polar = 0.5 * (float(lo[1]) + float(hi[1]))
