@@ -317,22 +317,22 @@ class Octree:
         self,
         cell_id: int,
         *,
-        space: TreeCoord = "xyz",
+        coord: TreeCoord = "xyz",
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return `(lo, hi)` bounds for one cell in requested coordinate space."""
+        """Return `(lo, hi)` bounds for one cell in requested coord."""
         self._require_lookup()
         cid = int(cell_id)
         n_cells = int(self._cell_centers.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
 
-        resolved_space = str(space)
-        if resolved_space not in SUPPORTED_TREE_COORDS:
+        resolved_coord = str(coord)
+        if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
-                f"Unsupported lookup space '{resolved_space}'; expected one of {SUPPORTED_TREE_COORDS}."
+                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
-        if resolved_space == "xyz":
+        if resolved_coord == "xyz":
             if all(hasattr(self, name) for name in ("_cell_x_min", "_cell_y_min", "_cell_z_min")):
                 lo = np.array(
                     [self._cell_x_min[cid], self._cell_y_min[cid], self._cell_z_min[cid]],
@@ -348,7 +348,7 @@ class Octree:
             pts = np.asarray(self._points[corners], dtype=float)
             return np.min(pts, axis=0), np.max(pts, axis=0)
 
-        # resolved_space == "rpa"
+        # resolved_coord == "rpa"
         if all(hasattr(self, name) for name in ("_cell_r_min", "_cell_theta_min", "_cell_phi_start")):
             lo = np.array(
                 [self._cell_r_min[cid], self._cell_theta_min[cid], self._cell_phi_start[cid]],
@@ -374,22 +374,22 @@ class Octree:
             np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
         )
 
-    def domain_bounds(self, *, space: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
-        """Return global `(lo, hi)` bounds for the bound tree in requested space."""
+    def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
+        """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
         self._require_lookup()
-        resolved_space = str(space)
-        if resolved_space not in SUPPORTED_TREE_COORDS:
+        resolved_coord = str(coord)
+        if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
-                f"Unsupported lookup space '{resolved_space}'; expected one of {SUPPORTED_TREE_COORDS}."
+                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
-        if resolved_space == "xyz":
+        if resolved_coord == "xyz":
             if all(hasattr(self, name) for name in ("_xyz_min", "_xyz_max")):
                 return np.asarray(self._xyz_min, dtype=float), np.asarray(self._xyz_max, dtype=float)
             pts = np.asarray(self._points, dtype=float)
             return np.min(pts, axis=0), np.max(pts, axis=0)
 
-        # resolved_space == "rpa"
+        # resolved_coord == "rpa"
         if all(hasattr(self, name) for name in ("_r_min", "_r_max")):
             lo = np.array([self._r_min, 0.0, 0.0], dtype=float)
             hi = np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
@@ -408,7 +408,7 @@ class Octree:
         self,
         point: np.ndarray,
         *,
-        space: str,
+        coord: str,
     ) -> int:
         """Resolve one query point to a leaf `cell_id` (or `-1`)."""
         raise NotImplementedError
@@ -421,24 +421,24 @@ class Octree:
         self,
         point: np.ndarray,
         *,
-        space: TreeCoord,
+        coord: TreeCoord,
     ) -> "LookupHit | None":
-        """Lookup one query point in the requested coordinate space.
+        """Lookup one query point in the requested coord.
 
         Consumes:
         - `point`: query coordinate triple.
-        - `space`: `"xyz"` or `"rpa"`.
+        - `coord`: `"xyz"` or `"rpa"`.
         Returns:
         - `LookupHit` if a cell is resolved, else `None`.
         """
         q = np.array(point, dtype=float).reshape(3)
-        resolved_space = str(space)
-        if resolved_space not in SUPPORTED_TREE_COORDS:
+        resolved_coord = str(coord)
+        if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
-                f"Unsupported lookup space '{resolved_space}'; expected one of {SUPPORTED_TREE_COORDS}."
+                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
         self._require_lookup()
-        chosen = self.lookup_cell_id(q, space=resolved_space)
+        chosen = self.lookup_cell_id(q, coord=resolved_coord)
         return self.hit_from_chosen(int(chosen))
 
     def contains_cell(
@@ -446,7 +446,7 @@ class Octree:
         cell_id: int,
         point: np.ndarray,
         *,
-        space: TreeCoord,
+        coord: TreeCoord,
         tol: float = 1e-10,
     ) -> bool:
         """Containment test of one query point against one leaf cell.
@@ -454,7 +454,7 @@ class Octree:
         Consumes:
         - `cell_id`: integer leaf cell id.
         - `point`: query coordinate triple.
-        - `space`: `"xyz"` or `"rpa"`.
+        - `coord`: `"xyz"` or `"rpa"`.
         - Optional containment tolerance `tol`.
         Returns:
         - `True` when the point lies inside/on the cell bounds, else `False`.
@@ -493,9 +493,9 @@ class Octree:
         z = float(q[2])
         if near_cid is not None and int(near_cid) >= 0:
             near = int(near_cid)
-            if self.contains_cell(near, q, space="xyz"):
+            if self.contains_cell(near, q, coord="xyz"):
                 return self.hit_from_cell_id(near)
-        return self.lookup_point(np.array([x, y, z], dtype=float), space="xyz")
+        return self.lookup_point(np.array([x, y, z], dtype=float), coord="xyz")
 
 def octree_class_for_coord(tree_coord: str) -> type[Octree]:
     """Resolve coordinate-system tag to the concrete octree class.

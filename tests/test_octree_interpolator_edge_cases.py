@@ -152,7 +152,7 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
 def _first_resolvable_center(tree: Octree) -> np.ndarray:
     """Return first cell center that successfully resolves via lookup."""
     for c in np.array(tree.cell_centers(), dtype=float):
-        hit = tree.lookup_point(np.array(c, dtype=float), space="xyz")
+        hit = tree.lookup_point(np.array(c, dtype=float), coord="xyz")
         if hit is not None:
             return np.array(c, dtype=float)
     raise AssertionError("No resolvable center found in fake dataset.")
@@ -161,14 +161,14 @@ def _first_resolvable_center(tree: Octree) -> np.ndarray:
 def _first_resolvable_rpa(tree: Octree) -> tuple[float, float, float]:
     """Return one interior spherical point that resolves in lookup."""
     for cid in range(int(tree.cell_count())):
-        lo, hi = tree.cell_bounds(int(cid), space="rpa")
+        lo, hi = tree.cell_bounds(int(cid), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
         polar = 0.5 * (float(lo[1]) + float(hi[1]))
         width = float((hi[2] - lo[2]) % (2.0 * math.pi))
         if np.isclose(width, 0.0, atol=1e-12):
             width = 2.0 * math.pi
         azimuth = (float(lo[2]) + 0.4 * width) % (2.0 * math.pi)
-        hit = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), space="rpa")
+        hit = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), coord="rpa")
         if hit is not None:
             return r, polar, azimuth
     raise AssertionError("No resolvable interior rpa point found in fake dataset.")
@@ -323,7 +323,7 @@ def test_integrate_field_along_rays_matches_linear_piece_integral() -> None:
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
     ray = OctreeRayInterpolator(interp)
 
-    dmin, dmax = tree.domain_bounds(space="xyz")
+    dmin, dmax = tree.domain_bounds(coord="xyz")
     xmin = float(dmin[0])
     xmax = float(dmax[0])
     yc = 0.5 * float(dmin[1] + dmax[1])
@@ -520,8 +520,8 @@ def test_invalid_level_cells_are_consistently_treated_as_misses() -> None:
     q_invalid = np.array([0.5, 0.0, 0.25], dtype=float)
     q_valid = np.array([1.5, 0.0, 0.25], dtype=float)
 
-    assert tree.lookup_point(q_invalid, space="xyz") is None
-    assert tree.lookup_point(q_valid, space="xyz") is not None
+    assert tree.lookup_point(q_invalid, coord="xyz") is None
+    assert tree.lookup_point(q_valid, coord="xyz") is not None
 
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree, fill_value=-123.0)
     vals, cids = interp(np.vstack((q_invalid, q_valid)), return_cell_ids=True)

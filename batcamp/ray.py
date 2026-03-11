@@ -1028,7 +1028,7 @@ class OctreeRayTracer:
                 )
                 if n_seg == 0:
                     p0 = o + t0 * d
-                    if self.tree.lookup_point(p0, space="xyz") is None:
+                    if self.tree.lookup_point(p0, coord="xyz") is None:
                         logger.warning("Ray start point is outside interpolation domain.")
                 return [
                     RaySegment(
@@ -1068,7 +1068,7 @@ class OctreeRayTracer:
         abs_eps = max(float(boundary_tol) * (1.0 + abs(t_end - t_start)), 1e-12)
         t = float(t_start)
         p = o + t * d
-        hit = self.tree.lookup_point(p, space="xyz")
+        hit = self.tree.lookup_point(p, coord="xyz")
         if hit is None:
             logger.warning("Ray start point is outside interpolation domain.")
             return []
@@ -1079,7 +1079,7 @@ class OctreeRayTracer:
                 break
             cid = int(hit.cell_id)
 
-            if not self.tree.contains_cell(cid, p, space="xyz", tol=1e-8):
+            if not self.tree.contains_cell(cid, p, coord="xyz", tol=1e-8):
                 near_hit = self.tree.lookup_local(p, cid)
                 if near_hit is None:
                     break
@@ -1091,12 +1091,12 @@ class OctreeRayTracer:
             t_lo = t
             t_hi = min(t_end, t + dt)
             p_hi = o + t_hi * d
-            while t_hi < t_end and self.tree.contains_cell(cid, p_hi, space="xyz", tol=1e-8):
+            while t_hi < t_end and self.tree.contains_cell(cid, p_hi, coord="xyz", tol=1e-8):
                 dt *= 2.0
                 t_hi = min(t_end, t + dt)
                 p_hi = o + t_hi * d
 
-            if self.tree.contains_cell(cid, p_hi, space="xyz", tol=1e-8):
+            if self.tree.contains_cell(cid, p_hi, coord="xyz", tol=1e-8):
                 segments.append(RaySegment(cell_id=cid, t_enter=t, t_exit=t_end))
                 break
 
@@ -1105,7 +1105,7 @@ class OctreeRayTracer:
             for _ in range(bisect_iters):
                 mid = 0.5 * (lo + hi)
                 p_mid = o + mid * d
-                if self.tree.contains_cell(cid, p_mid, space="xyz", tol=1e-8):
+                if self.tree.contains_cell(cid, p_mid, coord="xyz", tol=1e-8):
                     lo = mid
                 else:
                     hi = mid

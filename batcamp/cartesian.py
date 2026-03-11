@@ -283,13 +283,13 @@ class _CartesianCellLookup:
         cell_id: int,
         point: np.ndarray,
         *,
-        space: str,
+        coord: str,
         tol: float = 1e-10,
     ) -> bool:
-        """Containment test of one query point in `space` against one leaf cell."""
-        resolved = str(space)
+        """Containment test of one query point in `coord` against one leaf cell."""
+        resolved = str(coord)
         if resolved != "xyz":
-            raise ValueError("Cartesian lookup supports only space='xyz'.")
+            raise ValueError("Cartesian lookup supports only coord='xyz'.")
         q = np.array(point, dtype=float).reshape(3)
         return self.contains_xyz_cell(
             int(cell_id),
@@ -303,12 +303,12 @@ class _CartesianCellLookup:
         self,
         point: np.ndarray,
         *,
-        space: str,
+        coord: str,
     ) -> int:
         """Resolve one query point to a leaf `cell_id` (or `-1`)."""
-        resolved = str(space)
+        resolved = str(coord)
         if resolved != "xyz":
-            raise ValueError("Cartesian lookup supports only space='xyz'.")
+            raise ValueError("Cartesian lookup supports only coord='xyz'.")
         q = np.array(point, dtype=float).reshape(3)
         return self.lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
 

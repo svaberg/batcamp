@@ -109,7 +109,7 @@ def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generato
     xyz_list: list[np.ndarray] = []
     rpa_list: list[np.ndarray] = []
     for cid in cids.tolist():
-        lo, hi = tree.cell_bounds(int(cid), space="rpa")
+        lo, hi = tree.cell_bounds(int(cid), coord="rpa")
         r0 = float(lo[0])
         r1 = float(hi[0])
         t0 = float(lo[1])
@@ -143,7 +143,7 @@ def _interpolation_valid_cells(
     lo = np.empty((n_cells, 3), dtype=float)
     hi = np.empty((n_cells, 3), dtype=float)
     for cid in range(n_cells):
-        lo[cid], hi[cid] = tree.cell_bounds(cid, space="rpa")
+        lo[cid], hi[cid] = tree.cell_bounds(cid, coord="rpa")
     phi_end = hi[:, 2]
     ids = np.flatnonzero(
         (lo[:, 1] > 1e-6)
@@ -162,7 +162,7 @@ def test_synthetic_lookup_hits_its_own_cell_centers(synthetic_context) -> None:
     centers = np.array(tree.cell_centers(), dtype=float)
     for cid in range(centers.shape[0]):
         q = centers[cid]
-        hit = tree.lookup_point(q, space="xyz")
+        hit = tree.lookup_point(q, coord="xyz")
         assert hit is not None
         assert int(hit.cell_id) == int(cid)
 
@@ -176,8 +176,8 @@ def test_synthetic_lookup_xyz_and_rpa_match_for_random_interior_points(synthetic
     xyz, rpa = _sample_inside_cells(tree, choose, rng)
 
     for i in range(xyz.shape[0]):
-        hit_xyz = tree.lookup_point(xyz[i], space="xyz")
-        hit_rpa = tree.lookup_point(rpa[i], space="rpa")
+        hit_xyz = tree.lookup_point(xyz[i], coord="xyz")
+        hit_rpa = tree.lookup_point(rpa[i], coord="rpa")
         assert hit_xyz is not None
         assert hit_rpa is not None
         assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)

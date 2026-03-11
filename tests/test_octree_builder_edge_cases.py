@@ -275,7 +275,7 @@ def test_cartesian_lookup_hits_cell_centers(cartesian_octree_context) -> None:
     centers = np.array(tree.cell_centers(), dtype=float)
     for cid in range(centers.shape[0]):
         q = centers[cid]
-        hit = tree.lookup_point(q, space="xyz")
+        hit = tree.lookup_point(q, coord="xyz")
         assert hit is not None
         assert int(hit.cell_id) == int(cid)
 
@@ -290,7 +290,7 @@ def test_cartesian_interpolation_matches_linear_xyz_field(cartesian_octree_conte
     q = np.empty((choose.size, 3), dtype=float)
     expected = np.empty(choose.size, dtype=float)
     for i, cid in enumerate(choose.tolist()):
-        lo, hi = tree.cell_bounds(int(cid), space="xyz")
+        lo, hi = tree.cell_bounds(int(cid), coord="xyz")
         u, v, w = rng.uniform(0.1, 0.9, size=3)
         x = float(lo[0] + u * (hi[0] - lo[0]))
         y = float(lo[1] + v * (hi[1] - lo[1]))
@@ -428,7 +428,7 @@ def test_build_octree_helper_returns_unbound_tree_until_bind() -> None:
         cell_levels=cell_levels,
     )
     with pytest.raises(ValueError, match="not bound to a dataset"):
-        tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), space="xyz")
+        tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
     tree.bind(ds)
     assert tree.ds is ds
 
@@ -468,7 +468,7 @@ def test_lookup_runs_for_xyz_tree_coord() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    hit_xyz = tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), space="xyz")
+    hit_xyz = tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
     assert hit_xyz is not None
     assert not hasattr(tree, "lookup_rpa")
 
@@ -478,7 +478,7 @@ def test_lookup_gap_returns_none_for_disjoint_cartesian_cells() -> None:
     ds = _build_disjoint_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
     q_gap = np.array([5.0, 0.5, 0.5], dtype=float)
-    hit = tree.lookup_point(q_gap, space="xyz")
+    hit = tree.lookup_point(q_gap, coord="xyz")
     assert hit is None
 
 
@@ -487,5 +487,5 @@ def test_lookup_gap_returns_none_for_disjoint_spherical_shells() -> None:
     ds = _build_disjoint_spherical_shell_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
     q_gap = np.array([3.0, 0.5 * math.pi, 0.5 * math.pi], dtype=float)
-    hit = tree.lookup_point(q_gap, space="rpa")
+    hit = tree.lookup_point(q_gap, coord="rpa")
     assert hit is None

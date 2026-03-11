@@ -47,7 +47,7 @@ def test_octree_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> No
 
     loaded = Octree.load(path, ds=ds)
     assert loaded.ds is ds
-    hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), space="xyz")
+    hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
     assert hit is not None
 
 
@@ -61,7 +61,7 @@ def test_octree_persistence_no_longer_stores_corners_payload(tree_dataset_pair, 
     with np.load(path, allow_pickle=False) as data:
         assert "corners" not in data.files
         assert "has_corners" not in data.files
-    hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), space="xyz")
+    hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
     assert hit is not None
 
 

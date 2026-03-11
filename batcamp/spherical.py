@@ -554,28 +554,28 @@ class _SphericalCellLookup:
         self,
         point: np.ndarray,
         *,
-        space: str,
+        coord: str,
     ) -> int:
-        """Resolve one query point to a leaf `cell_id` in `space`."""
+        """Resolve one query point to a leaf `cell_id` in `coord`."""
         q = np.array(point, dtype=float).reshape(3)
-        resolved = str(space)
+        resolved = str(coord)
         if resolved == "xyz":
             return self.lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
         if resolved == "rpa":
             return self.lookup_rpa_cell_id(float(q[0]), float(q[1]), float(q[2]))
-        raise ValueError("space must be 'xyz' or 'rpa'.")
+        raise ValueError("coord must be 'xyz' or 'rpa'.")
 
     def contains_cell(
         self,
         cell_id: int,
         point: np.ndarray,
         *,
-        space: str,
+        coord: str,
         tol: float = 1e-10,
     ) -> bool:
-        """Containment test of one query point in `space` against one leaf cell."""
+        """Containment test of one query point in `coord` against one leaf cell."""
         q = np.array(point, dtype=float).reshape(3)
-        resolved = str(space)
+        resolved = str(coord)
         if resolved == "xyz":
             return self.contains_xyz_cell(
                 int(cell_id),
@@ -592,7 +592,7 @@ class _SphericalCellLookup:
                 float(q[2]),
                 tol=float(tol),
             )
-        raise ValueError("space must be 'xyz' or 'rpa'.")
+        raise ValueError("coord must be 'xyz' or 'rpa'.")
 
     def lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
         """Resolve one spherical query to a leaf `cell_id` (or `-1`).
@@ -750,7 +750,7 @@ class SphericalOctree(_SphericalCellLookup, Octree):
         lookup = self.lookup
         if near_cid is not None and int(near_cid) >= 0:
             near = int(near_cid)
-            if self.contains_cell(near, q, space="xyz"):
+            if self.contains_cell(near, q, coord="xyz"):
                 return self.hit_from_cell_id(near)
 
             near_level = int(lookup._cell_level_rel[near])
@@ -801,7 +801,7 @@ class SphericalOctree(_SphericalCellLookup, Octree):
                     d = np.linalg.norm(lookup._cell_centers[valid] - q, axis=1)
                     return self.hit_from_cell_id(int(valid[int(np.argmin(d))]))
 
-        return self.lookup_point(np.array([x, y, z], dtype=float), space="xyz")
+        return self.lookup_point(np.array([x, y, z], dtype=float), coord="xyz")
 
     def build_lookup(
         self,

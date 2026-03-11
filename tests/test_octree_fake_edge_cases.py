@@ -126,11 +126,11 @@ def test_fake_lookup_rejects_invalid_queries() -> None:
     ds = _build_regular_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
 
-    assert tree.lookup_point(np.array([float("nan"), 0.0, 0.0], dtype=float), space="xyz") is None
-    assert tree.lookup_point(np.array([float("inf"), 0.0, 0.0], dtype=float), space="xyz") is None
-    assert tree.lookup_point(np.array([1.5, -1e-6, 0.0], dtype=float), space="rpa") is None
-    assert tree.lookup_point(np.array([1.5, math.pi + 1e-6, 0.0], dtype=float), space="rpa") is None
-    assert tree.lookup_point(np.array([float("nan"), 1.0, 0.0], dtype=float), space="rpa") is None
+    assert tree.lookup_point(np.array([float("nan"), 0.0, 0.0], dtype=float), coord="xyz") is None
+    assert tree.lookup_point(np.array([float("inf"), 0.0, 0.0], dtype=float), coord="xyz") is None
+    assert tree.lookup_point(np.array([1.5, -1e-6, 0.0], dtype=float), coord="rpa") is None
+    assert tree.lookup_point(np.array([1.5, math.pi + 1e-6, 0.0], dtype=float), coord="rpa") is None
+    assert tree.lookup_point(np.array([float("nan"), 1.0, 0.0], dtype=float), coord="rpa") is None
 
 
 def test_fake_trace_ray_zero_direction_raises() -> None:

@@ -63,14 +63,14 @@ def test_tree_build_caches_metadata(octree_context: dict[str, object]) -> None:
 
 
 def test_lookup_xyz_and_rpa_agree(octree_context: dict[str, object]) -> None:
-    """Cartesian and spherical lookup spaces resolve the same leaf cell."""
+    """Cartesian and spherical lookup coords resolve the same leaf cell."""
     lookup = octree_context["lookup"]
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-    hit_xyz = lookup.lookup_point(q_xyz, space="xyz")
+    hit_xyz = lookup.lookup_point(q_xyz, coord="xyz")
     assert hit_xyz is not None
 
-    hit_rpa = lookup.lookup_point(np.array(SphericalOctree.xyz_to_rpa(q_xyz), dtype=float), space="rpa")
+    hit_rpa = lookup.lookup_point(np.array(SphericalOctree.xyz_to_rpa(q_xyz), dtype=float), coord="rpa")
     assert hit_rpa is not None
     assert hit_xyz.cell_id == hit_rpa.cell_id
 
@@ -94,8 +94,8 @@ def test_octree_save_load_roundtrip(octree_context: dict[str, object], tmp_path)
     assert tree.cell_levels is not None
     assert np.array_equal(loaded.cell_levels, tree.cell_levels)
 
-    hit_tree = tree.lookup_point(q_xyz, space="xyz")
-    hit_loaded = loaded.lookup_point(q_xyz, space="xyz")
+    hit_tree = tree.lookup_point(q_xyz, coord="xyz")
+    hit_loaded = loaded.lookup_point(q_xyz, coord="xyz")
     assert hit_tree is not None
     assert hit_loaded is not None
     assert hit_tree.cell_id == hit_loaded.cell_id

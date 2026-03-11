@@ -31,22 +31,22 @@ def _select_resolvable_center_near_radius(tree: Octree, *, target_r: float) -> n
     order = np.argsort(np.abs(center_r - float(target_r)))
     for idx in order.tolist():
         q = np.asarray(centers[int(idx)], dtype=float)
-        if tree.lookup_point(q, space="xyz") is not None:
+        if tree.lookup_point(q, coord="xyz") is not None:
             return q
     raise AssertionError("No resolvable center found near requested radius.")
 
 
 @pytest.mark.slow
 def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
-    """Many interior points should map to the same cell in xyz and rpa lookup spaces."""
+    """Many interior points should map to the same cell in xyz and rpa lookup coords."""
     _ds, tree = advanced_context
     queries = _select_center_queries(tree, n_query=64, seed=1)
 
     for q in queries:
-        hit_xyz = tree.lookup_point(q, space="xyz")
+        hit_xyz = tree.lookup_point(q, coord="xyz")
         assert hit_xyz is not None
         r, polar, azimuth = SphericalOctree.xyz_to_rpa(q)
-        hit_rpa = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), space="rpa")
+        hit_rpa = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), coord="rpa")
         assert hit_rpa is not None
         assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
 
@@ -71,7 +71,7 @@ def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> No
         prev_exit = float(seg.t_exit)
         mid_t = 0.5 * (float(seg.t_enter) + float(seg.t_exit))
         p_mid = origin + mid_t * ray_dir
-        assert tree.contains_cell(int(seg.cell_id), p_mid, space="xyz", tol=1e-6)
+        assert tree.contains_cell(int(seg.cell_id), p_mid, coord="xyz", tol=1e-6)
     assert float(segments[0].t_enter) >= float(t_start) - 1e-8
     assert float(segments[-1].t_exit) <= float(t_end) + 1e-6
 
