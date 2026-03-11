@@ -219,30 +219,6 @@ class SphericalOctreeBuilder:
         self.level_rtol = float(level_rtol)
         self.level_atol = float(level_atol)
 
-    def infer_levels_from_delta_phi(self, delta_phi: np.ndarray) -> np.ndarray:
-        """Infer dyadic refinement levels from per-cell `delta_phi` spans."""
-        return self.infer_levels_from_span(
-            delta_phi,
-            rtol=self.level_rtol,
-            atol=self.level_atol,
-        )
-
-    def compute_phi_levels(
-        self,
-        ds: Dataset,
-        *,
-        corners: np.ndarray | None = None,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
-        """Compute per-cell azimuth spans and dyadic levels from dataset geometry."""
-        return self.compute_delta_phi_and_levels(
-            ds,
-            corners=corners,
-            rtol=self.level_rtol,
-            atol=self.level_atol,
-            axis_rho_tol=axis_rho_tol,
-        )
-
     def infer_level_shapes(
         self,
         ds: Dataset,
@@ -252,9 +228,11 @@ class SphericalOctreeBuilder:
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int]:
         """Infer spherical level-shape map and validated levels."""
-        delta_phi, _center_phi, auto_levels, _expected, _coarse = self.compute_phi_levels(
+        delta_phi, _center_phi, auto_levels, _expected, _coarse = self.compute_delta_phi_and_levels(
             ds,
             corners=corners,
+            rtol=self.level_rtol,
+            atol=self.level_atol,
             axis_rho_tol=axis_rho_tol,
         )
         levels, min_level, max_level = _resolve_cell_levels(

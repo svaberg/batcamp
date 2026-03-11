@@ -264,7 +264,7 @@ def test_builder_compute_phi_levels_rejects_missing_phi_source() -> None:
         variables={"X [R]": points[:, 0], "Z [R]": points[:, 2]},
     )
     with pytest.raises(ValueError, match="Could not determine phi"):
-        SphericalOctreeBuilder().compute_phi_levels(ds)
+        SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
 
 
 def test_builder_compute_phi_levels_rejects_bad_corner_rank() -> None:
@@ -277,7 +277,7 @@ def test_builder_compute_phi_levels_rejects_bad_corner_rank() -> None:
         variables={"X [R]": points[:, 0], "Y [R]": points[:, 1], "Z [R]": points[:, 2]},
     )
     with pytest.raises(ValueError, match="Expected 2D corner array"):
-        SphericalOctreeBuilder().compute_phi_levels(ds)
+        SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
 
 
 def test_builder_compute_phi_levels_rejects_too_few_corners_per_cell() -> None:
@@ -290,12 +290,12 @@ def test_builder_compute_phi_levels_rejects_too_few_corners_per_cell() -> None:
         variables={"X [R]": points[:, 0], "Y [R]": points[:, 1], "Z [R]": points[:, 2]},
     )
     with pytest.raises(ValueError, match="Need at least 3 corners per cell"):
-        SphericalOctreeBuilder().compute_phi_levels(ds)
+        SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
 
 
 def test_builder_infer_levels_marks_non_dyadic_span_invalid() -> None:
     """Non-dyadic delta-phi spans should map to level -1."""
-    levels = SphericalOctreeBuilder().infer_levels_from_delta_phi(np.array([1.0, 0.5, 0.3]))
+    levels = SphericalOctreeBuilder.infer_levels_from_span(np.array([1.0, 0.5, 0.3]))
     assert np.array_equal(levels, np.array([0, 1, -1], dtype=np.int64))
 
 
@@ -303,7 +303,7 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
     """Tree construction should fail when all provided levels are invalid."""
     ds = _build_regular_dataset()
     builder = OctreeBuilder()
-    delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
+    delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
     all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
         builder._build_with_overrides(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
@@ -336,7 +336,7 @@ def test_octree_trace_ray_returns_empty_for_non_increasing_interval() -> None:
 def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
     """Builder with `bind=False` should return unbound tree requiring explicit bind."""
     ds = _build_regular_dataset()
-    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
+    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
     tree = OctreeBuilder()._build_with_overrides(
         ds,
         tree_coord="rpa",
@@ -352,7 +352,7 @@ def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
 def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_dataset()
-    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
+    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
     tree = OctreeBuilder()._build_with_overrides(
         ds,
         tree_coord="xyz",

@@ -45,10 +45,12 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
         level_rtol=1e-4,
         level_atol=1e-9,
     )
-    delta_phi, center_phi, _levels, expected, coarse = SphericalOctreeBuilder(
-        level_rtol=1e-4,
-        level_atol=1e-9,
-    ).compute_phi_levels(ds, axis_rho_tol=DEFAULT_AXIS_RHO_TOL)
+    delta_phi, center_phi, _levels, expected, coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(
+        ds,
+        rtol=1e-4,
+        atol=1e-9,
+        axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
+    )
     assert tree.cell_levels is not None
     cell_levels = tree.cell_levels
     point_levels = point_refinement_levels(
