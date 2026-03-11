@@ -20,10 +20,10 @@ from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
 from .octree import infer_tree_coord_from_geometry as _infer_tree_coord_from_geometry
 from .cartesian import CartesianLookupKernelState
-from .cartesian import lookup_xyz_cell_id_kernel
+from .cartesian import _lookup_xyz_cell_id_kernel
 from .spherical import SphericalLookupKernelState
-from .spherical import SphericalOctree
-from .spherical import lookup_rpa_cell_id_kernel
+from .spherical import _lookup_rpa_cell_id_kernel
+from .spherical import _xyz_to_rpa_components
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +231,7 @@ def _interp_batch_xyz(
                     zr = 1.0
                 polar = math.acos(zr)
             azimuth = math.atan2(y, x) % _TWO_PI
-            cid = lookup_rpa_cell_id_kernel(
+            cid = _lookup_rpa_cell_id_kernel(
                 r,
                 polar,
                 azimuth,
@@ -279,7 +279,7 @@ def _interp_batch_rpa(
             r = queries_rpa[i, 0]
             polar = queries_rpa[i, 1]
             azimuth = queries_rpa[i, 2] % _TWO_PI
-            cid = lookup_rpa_cell_id_kernel(
+            cid = _lookup_rpa_cell_id_kernel(
                 r,
                 polar,
                 azimuth,
@@ -327,7 +327,7 @@ def _interp_batch_xyz_cartesian(
             x = queries_xyz[i, 0]
             y = queries_xyz[i, 1]
             z = queries_xyz[i, 2]
-            cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, hint_cid)
+            cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, hint_cid)
             if cid < 0:
                 hint_cid = -1
                 continue
@@ -660,7 +660,7 @@ class OctreeInterpolator:
 
     def _warmup_rpa(self, q_xyz: np.ndarray, fill: np.ndarray) -> None:
         """Warm up spherical lookup/interpolation kernels."""
-        r, polar, azimuth = SphericalOctree.xyz_to_rpa(q_xyz[0])
+        r, polar, azimuth = _xyz_to_rpa_components(float(q_xyz[0, 0]), float(q_xyz[0, 1]), float(q_xyz[0, 2]))
         q_rpa = np.array([[r, polar, azimuth]], dtype=np.float64, order="C")
         _interp_batch_xyz(
             q_xyz,

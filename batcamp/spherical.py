@@ -21,7 +21,7 @@ _DEFAULT_LOOKUP_MAX_RADIUS = 2
 
 
 @njit(cache=True)
-def xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
+def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
     """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
     r = math.sqrt(x * x + y * y + z * z)
     if r == 0.0:
@@ -82,7 +82,7 @@ def _contains_rpa_cell(
 
 
 @njit(cache=True)
-def lookup_rpa_cell_id_kernel(
+def _lookup_rpa_cell_id_kernel(
     r: float,
     polar: float,
     azimuth: float,
@@ -516,9 +516,9 @@ class _SphericalCellLookup:
         q = np.array(point, dtype=float).reshape(3)
         resolved = str(coord)
         if resolved == "xyz":
-            return self.lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
+            return self._lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
         if resolved == "rpa":
-            return self.lookup_rpa_cell_id(float(q[0]), float(q[1]), float(q[2]))
+            return self._lookup_rpa_cell_id(float(q[0]), float(q[1]), float(q[2]))
         raise ValueError("coord must be 'xyz' or 'rpa'.")
 
     def contains_cell(
@@ -533,7 +533,7 @@ class _SphericalCellLookup:
         q = np.array(point, dtype=float).reshape(3)
         resolved = str(coord)
         if resolved == "xyz":
-            return self.contains_xyz_cell(
+            return self._contains_xyz_cell(
                 int(cell_id),
                 float(q[0]),
                 float(q[1]),
@@ -541,7 +541,7 @@ class _SphericalCellLookup:
                 tol=float(tol),
             )
         if resolved == "rpa":
-            return self.contains_rpa_cell(
+            return self._contains_rpa_cell(
                 int(cell_id),
                 float(q[0]),
                 float(q[1]),
@@ -550,10 +550,10 @@ class _SphericalCellLookup:
             )
         raise ValueError("coord must be 'xyz' or 'rpa'.")
 
-    def lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
+    def _lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
         """Return the containing spherical cell id, or `-1` when not found."""
         return int(
-            lookup_rpa_cell_id_kernel(
+            _lookup_rpa_cell_id_kernel(
                 float(r),
                 float(polar),
                 float(azimuth),
@@ -561,7 +561,7 @@ class _SphericalCellLookup:
             )
         )
 
-    def contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
+    def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
         """Return whether one spherical point lies inside one cell."""
         cid = int(cell_id)
         rr = float(r)
@@ -579,7 +579,7 @@ class _SphericalCellLookup:
             return True
         return dphi <= (width + t)
 
-    def contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
+    def _contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
         """Return whether one Cartesian point lies inside one cell."""
         r = float(math.sqrt(x * x + y * y + z * z))
         if r == 0.0:
@@ -587,7 +587,7 @@ class _SphericalCellLookup:
         else:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return self.contains_rpa_cell(int(cell_id), r, polar, azimuth, tol=float(tol))
+        return self._contains_rpa_cell(int(cell_id), r, polar, azimuth, tol=float(tol))
 
     def cell_step_hint(self, cell_id: int) -> float:
         """Return an initial step-size hint for Python ray tracing."""
@@ -598,7 +598,7 @@ class _SphericalCellLookup:
         length_scale = max(float(self._cell_r_max[cid]), 1.0)
         return float(max(r_span, length_scale * theta_span, length_scale * phi_span, 1e-6))
 
-    def lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
+    def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
         if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
             return -1
@@ -608,7 +608,7 @@ class _SphericalCellLookup:
         else:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return self.lookup_rpa_cell_id(r, polar, azimuth)
+        return self._lookup_rpa_cell_id(r, polar, azimuth)
 
     def hit_from_chosen(self, chosen: int, *, allow_invalid_depth: bool = False) -> LookupHit | None:
         """Build a `LookupHit` from an internal cell id."""
@@ -646,11 +646,6 @@ class SphericalOctree(_SphericalCellLookup, Octree):
     """Octree specialization for spherical `(r, polar, azimuth)` datasets."""
 
     TREE_COORD: ClassVar[str | None] = "rpa"
-
-    @staticmethod
-    def xyz_to_rpa(q: np.ndarray) -> tuple[float, float, float]:
-        """Convert one Cartesian point to `(r, polar, azimuth)`."""
-        return xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
 
     def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> "LookupHit | None":
         """Lookup in `xyz`, first trying cells near `near_cid` when provided."""
@@ -705,7 +700,7 @@ class SphericalOctree(_SphericalCellLookup, Octree):
 
             if candidate_arrays:
                 candidates = np.unique(np.concatenate(candidate_arrays))
-                r, polar, azimuth = self.xyz_to_rpa(q)
+                r, polar, azimuth = _xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
                 inside = lookup._contains_rpa(candidates, r, polar, azimuth)
                 if np.any(inside):
                     valid = candidates[inside]

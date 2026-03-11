@@ -15,10 +15,10 @@ import numpy as np
 
 from .octree import Octree
 from .cartesian import CartesianLookupKernelState
-from .cartesian import lookup_xyz_cell_id_kernel
+from .cartesian import _lookup_xyz_cell_id_kernel
 from .spherical import SphericalLookupKernelState
-from .spherical import lookup_rpa_cell_id_kernel
-from .spherical import xyz_to_rpa_components as _xyz_to_rpa_components
+from .spherical import _lookup_rpa_cell_id_kernel
+from .spherical import _xyz_to_rpa_components
 
 if TYPE_CHECKING:
     from .interpolator import OctreeInterpolator
@@ -123,7 +123,7 @@ def _trace_segments_xyz_kernel(
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
-    cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+    cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
     if cid < 0:
         return 0, cell_ids, enters, exits
 
@@ -137,7 +137,7 @@ def _trace_segments_xyz_kernel(
             break
 
         if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-            cid_near = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
+            cid_near = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
             if cid_near < 0:
                 break
             cid = cid_near
@@ -200,7 +200,7 @@ def _trace_segments_xyz_kernel(
         x_next = origin_xyz[0] + t_next * d0
         y_next = origin_xyz[1] + t_next * d1
         z_next = origin_xyz[2] + t_next * d2
-        cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+        cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
         if cid_next < 0:
             break
         if cid_next == cid and t_next < t_end:
@@ -210,7 +210,7 @@ def _trace_segments_xyz_kernel(
             x_next = origin_xyz[0] + t_next * d0
             y_next = origin_xyz[1] + t_next * d1
             z_next = origin_xyz[2] + t_next * d2
-            cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
 
@@ -248,7 +248,7 @@ def _trace_segments_rpa_kernel(
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cid = lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
+    cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
     if cid < 0:
         return 0, cell_ids, enters, exits
 
@@ -258,7 +258,7 @@ def _trace_segments_rpa_kernel(
             break
 
         if not _contains_rpa_from_components(cid, r, polar, azimuth, lookup_state):
-            cid_near = lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid)
+            cid_near = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid)
             if cid_near < 0:
                 break
             cid = cid_near
@@ -343,7 +343,7 @@ def _trace_segments_rpa_kernel(
         y_next = origin_xyz[1] + t_next * direction_xyz_unit[1]
         z_next = origin_xyz[2] + t_next * direction_xyz_unit[2]
         r_next, polar_next, azimuth_next = _xyz_to_rpa_components(x_next, y_next, z_next)
-        cid_next = lookup_rpa_cell_id_kernel(r_next, polar_next, azimuth_next, lookup_state, cid)
+        cid_next = _lookup_rpa_cell_id_kernel(r_next, polar_next, azimuth_next, lookup_state, cid)
         if cid_next < 0:
             break
         if cid_next == cid and t_next < t_end:
@@ -354,7 +354,7 @@ def _trace_segments_rpa_kernel(
             y_next = origin_xyz[1] + t_next * direction_xyz_unit[1]
             z_next = origin_xyz[2] + t_next * direction_xyz_unit[2]
             r_next, polar_next, azimuth_next = _xyz_to_rpa_components(x_next, y_next, z_next)
-            cid_next = lookup_rpa_cell_id_kernel(r_next, polar_next, azimuth_next, lookup_state, cid)
+            cid_next = _lookup_rpa_cell_id_kernel(r_next, polar_next, azimuth_next, lookup_state, cid)
             if cid_next < 0:
                 break
 
@@ -459,7 +459,7 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
-        cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
         if cid < 0:
             continue
 
@@ -469,7 +469,7 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
+                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
                 if cid < 0:
                     break
 
@@ -518,7 +518,7 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
-            cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
 
@@ -565,7 +565,7 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
-        cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
         if cid < 0:
             continue
 
@@ -575,7 +575,7 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
+                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
                 if cid < 0:
                     break
 
@@ -620,7 +620,7 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
-            cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
 
@@ -667,7 +667,7 @@ def _integrate_xyz_scalar_exact_kernel(
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
-        cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
         if cid < 0:
             continue
 
@@ -677,7 +677,7 @@ def _integrate_xyz_scalar_exact_kernel(
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
+                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
                 if cid < 0:
                     break
 
@@ -742,7 +742,7 @@ def _integrate_xyz_scalar_exact_kernel(
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
-            cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
             if cid_next == cid and t_next < t_end:
@@ -752,7 +752,7 @@ def _integrate_xyz_scalar_exact_kernel(
                 x_next = ox + t_next * d0
                 y_next = oy + t_next * d1
                 z_next = oz + t_next * d2
-                cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+                cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
                 if cid_next < 0:
                     break
 
@@ -799,7 +799,7 @@ def _integrate_xyz_scalar_midpoint_kernel(
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
-        cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
         if cid < 0:
             continue
 
@@ -809,7 +809,7 @@ def _integrate_xyz_scalar_midpoint_kernel(
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
+                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
                 if cid < 0:
                     break
 
@@ -874,7 +874,7 @@ def _integrate_xyz_scalar_midpoint_kernel(
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
-            cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
             if cid_next == cid and t_next < t_end:
@@ -884,7 +884,7 @@ def _integrate_xyz_scalar_midpoint_kernel(
                 x_next = ox + t_next * d0
                 y_next = oy + t_next * d1
                 z_next = oz + t_next * d2
-                cid_next = lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
+                cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
                 if cid_next < 0:
                     break
 

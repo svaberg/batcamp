@@ -6,7 +6,6 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
-from batcamp import SphericalOctree
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +35,16 @@ def _select_resolvable_center_near_radius(tree: Octree, *, target_r: float) -> n
     raise AssertionError("No resolvable center found near requested radius.")
 
 
+def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
+    """Private test helper: convert one xyz point to one rpa point."""
+    q = np.asarray(q_xyz, dtype=float).reshape(3)
+    r = float(np.linalg.norm(q))
+    zr = float(q[2] / max(r, float(np.finfo(float).tiny)))
+    polar = float(np.arccos(np.clip(zr, -1.0, 1.0)))
+    azimuth = float(np.mod(np.arctan2(q[1], q[0]), 2.0 * np.pi))
+    return np.array([r, polar, azimuth], dtype=float)
+
+
 @pytest.mark.slow
 def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
     """Many interior points should map to the same cell in xyz and rpa lookup coords."""
@@ -45,8 +54,7 @@ def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
     for q in queries:
         hit_xyz = tree.lookup_point(q, coord="xyz")
         assert hit_xyz is not None
-        r, polar, azimuth = SphericalOctree.xyz_to_rpa(q)
-        hit_rpa = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), coord="rpa")
+        hit_rpa = tree.lookup_point(_xyz_to_rpa_numpy(q), coord="rpa")
         assert hit_rpa is not None
         assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
 

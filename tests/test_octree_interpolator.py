@@ -5,7 +5,6 @@ import pytest
 
 from batcamp import Octree
 from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
-from batcamp import SphericalOctree
 from batcamp import format_histogram
 from batcamp import valid_cell_fraction
 
@@ -14,6 +13,16 @@ from batcamp import valid_cell_fraction
 def octree_context(difflevels_rpa_context: dict[str, object]) -> dict[str, object]:
     """Expose shared session-scoped difflevels context in this test module."""
     return difflevels_rpa_context
+
+
+def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
+    """Private test helper: convert one xyz point to one rpa point."""
+    q = np.asarray(q_xyz, dtype=float).reshape(3)
+    r = float(np.linalg.norm(q))
+    zr = float(q[2] / max(r, float(np.finfo(float).tiny)))
+    polar = float(np.arccos(np.clip(zr, -1.0, 1.0)))
+    azimuth = float(np.mod(np.arctan2(q[1], q[0]), 2.0 * np.pi))
+    return np.array([r, polar, azimuth], dtype=float)
 
 
 def test_compute_phi_levels_shapes(octree_context: dict[str, object]) -> None:
@@ -70,7 +79,7 @@ def test_lookup_xyz_and_rpa_agree(octree_context: dict[str, object]) -> None:
     hit_xyz = lookup.lookup_point(q_xyz, coord="xyz")
     assert hit_xyz is not None
 
-    hit_rpa = lookup.lookup_point(np.array(SphericalOctree.xyz_to_rpa(q_xyz), dtype=float), coord="rpa")
+    hit_rpa = lookup.lookup_point(_xyz_to_rpa_numpy(q_xyz), coord="rpa")
     assert hit_rpa is not None
     assert hit_xyz.cell_id == hit_rpa.cell_id
 

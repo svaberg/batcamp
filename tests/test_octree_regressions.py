@@ -7,7 +7,7 @@ from starwinds_readplt.dataset import Dataset
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
-from batcamp import SphericalOctree
+from batcamp.spherical import _xyz_to_rpa_components
 
 
 @pytest.fixture(scope="module")
@@ -16,10 +16,10 @@ def regression_context(difflevels_rpa_context: dict[str, object]) -> tuple[Datas
     return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
 
 
-def test_regression_xyz_to_rpa_is_stable_and_finite() -> None:
+def test_regression_xyz_to_rpa_components_is_stable_and_finite() -> None:
     """Regression: xyz->rpa conversion should be finite and non-recursive."""
     q = np.array([1.0, 0.0, 0.0], dtype=float)
-    r, polar, azimuth = SphericalOctree.xyz_to_rpa(q)
+    r, polar, azimuth = _xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
     assert np.isfinite(r)
     assert np.isfinite(polar)
     assert np.isfinite(azimuth)

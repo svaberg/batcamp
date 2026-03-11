@@ -61,7 +61,7 @@ def _contains_xyz_cell(
 
 
 @njit(cache=True)
-def lookup_xyz_cell_id_kernel(
+def _lookup_xyz_cell_id_kernel(
     x: float,
     y: float,
     z: float,
@@ -326,7 +326,7 @@ class _CartesianCellLookup:
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
         q = np.array(point, dtype=float).reshape(3)
-        return self.contains_xyz_cell(
+        return self._contains_xyz_cell(
             int(cell_id),
             float(q[0]),
             float(q[1]),
@@ -345,9 +345,9 @@ class _CartesianCellLookup:
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
         q = np.array(point, dtype=float).reshape(3)
-        return self.lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
+        return self._lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
 
-    def contains_xyz_cell(
+    def _contains_xyz_cell(
         self,
         cell_id: int,
         x: float,
@@ -373,10 +373,10 @@ class _CartesianCellLookup:
         cid = int(cell_id)
         return float(max(float(self._cell_dx[cid]), float(self._cell_dy[cid]), float(self._cell_dz[cid]), 1e-6))
 
-    def lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
+    def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
         return int(
-            lookup_xyz_cell_id_kernel(
+            _lookup_xyz_cell_id_kernel(
                 float(x),
                 float(y),
                 float(z),
