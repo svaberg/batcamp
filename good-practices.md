@@ -60,6 +60,7 @@ A short, practical guide for writing maintainable scientific/technical code.
 ## Project-specific ownership and debt logging
 - Keep ray-related implementation in `batcamp/ray.py` whenever possible.
 - Keep spherical-related implementation in `batcamp/spherical.py` whenever possible.
+- Do not expose spherical-specific methods on coord-agnostic/general classes; keep them on spherical classes/modules only.
 - If code cannot be placed in its owning module, record blocker and rationale in `DEBT.md`.
 - Remove dead paths and dead code whenever practical.
 - Do not create additional modules at this stage; simplify existing modules first.

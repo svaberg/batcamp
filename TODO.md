@@ -20,4 +20,5 @@
 - [x] Align lookup tuning constant naming between backends (cartesian uses inline literals where spherical uses named constants like `_LOOKUP_CONTAIN_TOL` / `_DEFAULT_LOOKUP_MAX_RADIUS`).
 - [x] Remove implicit coord fallback in `Octree.from_dataset(...)` (when coord is omitted and first build fails); make fallback an explicit opt-in policy instead of hidden behavior.
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
+- [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Remove private-state coupling between ray/interpolator/lookup (`_lookup_state`, `_interp_state_xyz`, `hasattr` guards) by introducing explicit public interfaces/contracts.
