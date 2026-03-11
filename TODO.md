@@ -21,4 +21,5 @@
 - [x] Remove implicit coord fallback in `Octree.from_dataset(...)` (when coord is omitted and first build fails); make fallback an explicit opt-in policy instead of hidden behavior.
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
+- [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
 - [ ] Remove private-state coupling between ray/interpolator/lookup (`_lookup_state`, `_interp_state_xyz`, `hasattr` guards) by introducing explicit public interfaces/contracts.
