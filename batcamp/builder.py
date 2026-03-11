@@ -127,14 +127,29 @@ class OctreeBuilder:
         *,
         tree_coord: TreeCoord = DEFAULT_TREE_COORD,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    ) -> Octree:
+        """Build and bind an octree from a dataset.
+
+        The returned tree is ready for lookup and ray methods.
+        """
+        return self._build_with_overrides(
+            ds,
+            tree_coord=tree_coord,
+            axis_rho_tol=axis_rho_tol,
+            cell_levels=None,
+            bind=True,
+        )
+
+    def _build_with_overrides(
+        self,
+        ds: Dataset,
+        *,
+        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
+        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
         cell_levels: np.ndarray | None = None,
         bind: bool = True,
     ) -> Octree:
-        """Build an octree from a dataset.
-
-        If `bind` is `True`, the returned tree is ready for
-        `lookup_point(...)` and ray tracing immediately.
-        """
+        """Internal build path with optional level and bind overrides."""
         if tree_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
                 f"Unsupported tree_coord '{tree_coord}'; "

@@ -389,7 +389,7 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
     delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
     all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        builder.build(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
+        builder._build_with_overrides(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
 
 
 def test_builder_handles_incompatible_blocks_aux_without_block_tree() -> None:
@@ -420,7 +420,7 @@ def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
     """Builder with `bind=False` should return unbound tree requiring explicit bind."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
-    tree = OctreeBuilder().build(
+    tree = OctreeBuilder()._build_with_overrides(
         ds,
         tree_coord="rpa",
         cell_levels=cell_levels,
@@ -436,7 +436,7 @@ def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
-    tree = OctreeBuilder().build(
+    tree = OctreeBuilder()._build_with_overrides(
         ds,
         tree_coord="xyz",
         cell_levels=cell_levels,
@@ -453,7 +453,7 @@ def test_builder_build_rejects_inconsistent_dataset_corners_for_spherical_infere
     ds.corners = np.array(corners_full[:2], copy=True)
 
     with pytest.raises(ValueError, match="Could not infer integer finest n_axis0"):
-        OctreeBuilder().build(
+        OctreeBuilder()._build_with_overrides(
             ds,
             tree_coord="rpa",
             cell_levels=None,
