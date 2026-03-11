@@ -281,6 +281,38 @@ class _CartesianCellLookup:
             out.append((i0 >> shift, i1 >> shift, i2 >> shift))
         return tuple(out)
 
+    def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+        cid = int(cell_id)
+        return (
+            np.array([self._cell_x_min[cid], self._cell_y_min[cid], self._cell_z_min[cid]], dtype=float),
+            np.array([self._cell_x_max[cid], self._cell_y_max[cid], self._cell_z_max[cid]], dtype=float),
+        )
+
+    def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+        cid = int(cell_id)
+        corners = np.asarray(self._corners[cid], dtype=np.int64)
+        pts = np.asarray(self._points[corners], dtype=float)
+        r = np.linalg.norm(pts, axis=1)
+        theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
+        phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
+        return (
+            np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
+            np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
+        )
+
+    def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
+        return np.asarray(self._xyz_min, dtype=float), np.asarray(self._xyz_max, dtype=float)
+
+    def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
+        pts = np.asarray(self._points, dtype=float)
+        r = np.linalg.norm(pts, axis=1)
+        theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
+        phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
+        return (
+            np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
+            np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
+        )
+
     def contains_cell(
         self,
         cell_id: int,

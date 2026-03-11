@@ -403,6 +403,33 @@ class _SphericalCellLookup:
             out.append((i0 >> shift, i1 >> shift, i2 >> shift))
         return tuple(out)
 
+    def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+        cid = int(cell_id)
+        corners = np.asarray(self._corners[cid], dtype=np.int64)
+        pts = np.asarray(self._points[corners], dtype=float)
+        return np.min(pts, axis=0), np.max(pts, axis=0)
+
+    def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+        cid = int(cell_id)
+        return (
+            np.array([self._cell_r_min[cid], self._cell_theta_min[cid], self._cell_phi_start[cid]], dtype=float),
+            np.array(
+                [
+                    self._cell_r_max[cid],
+                    self._cell_theta_max[cid],
+                    (self._cell_phi_start[cid] + self._cell_phi_width[cid]) % (2.0 * np.pi),
+                ],
+                dtype=float,
+            ),
+        )
+
+    def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
+        pts = np.asarray(self._points, dtype=float)
+        return np.min(pts, axis=0), np.max(pts, axis=0)
+
+    def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
+        return np.array([self._r_min, 0.0, 0.0], dtype=float), np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
+
     @staticmethod
     def _minimal_phi_interval(values: np.ndarray) -> tuple[float, float]:
         """Return the smallest wrapped azimuth interval covering the samples."""

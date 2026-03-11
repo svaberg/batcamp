@@ -239,6 +239,22 @@ class Octree:
         self._require_lookup()
         return np.asarray(self._cell_centers, dtype=float)
 
+    def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return one cell's Cartesian bounds for subclasses."""
+        raise NotImplementedError
+
+    def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return one cell's spherical bounds for subclasses."""
+        raise NotImplementedError
+
+    def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return global Cartesian bounds for subclasses."""
+        raise NotImplementedError
+
+    def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return global spherical bounds for subclasses."""
+        raise NotImplementedError
+
     def cell_bounds(
         self,
         cell_id: int,
@@ -259,46 +275,8 @@ class Octree:
             )
 
         if resolved_coord == "xyz":
-            if all(hasattr(self, name) for name in ("_cell_x_min", "_cell_y_min", "_cell_z_min")):
-                lo = np.array(
-                    [self._cell_x_min[cid], self._cell_y_min[cid], self._cell_z_min[cid]],
-                    dtype=float,
-                )
-                hi = np.array(
-                    [self._cell_x_max[cid], self._cell_y_max[cid], self._cell_z_max[cid]],
-                    dtype=float,
-                )
-                return lo, hi
-
-            corners = np.asarray(self._corners[cid], dtype=np.int64)
-            pts = np.asarray(self._points[corners], dtype=float)
-            return np.min(pts, axis=0), np.max(pts, axis=0)
-
-        # resolved_coord == "rpa"
-        if all(hasattr(self, name) for name in ("_cell_r_min", "_cell_theta_min", "_cell_phi_start")):
-            lo = np.array(
-                [self._cell_r_min[cid], self._cell_theta_min[cid], self._cell_phi_start[cid]],
-                dtype=float,
-            )
-            hi = np.array(
-                [
-                    self._cell_r_max[cid],
-                    self._cell_theta_max[cid],
-                    (self._cell_phi_start[cid] + self._cell_phi_width[cid]) % (2.0 * np.pi),
-                ],
-                dtype=float,
-            )
-            return lo, hi
-
-        corners = np.asarray(self._corners[cid], dtype=np.int64)
-        pts = np.asarray(self._points[corners], dtype=float)
-        r = np.linalg.norm(pts, axis=1)
-        theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
-        phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
-        return (
-            np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
-            np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
-        )
+            return self._cell_bounds_xyz(cid)
+        return self._cell_bounds_rpa(cid)
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
         """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
@@ -310,25 +288,8 @@ class Octree:
             )
 
         if resolved_coord == "xyz":
-            if all(hasattr(self, name) for name in ("_xyz_min", "_xyz_max")):
-                return np.asarray(self._xyz_min, dtype=float), np.asarray(self._xyz_max, dtype=float)
-            pts = np.asarray(self._points, dtype=float)
-            return np.min(pts, axis=0), np.max(pts, axis=0)
-
-        # resolved_coord == "rpa"
-        if all(hasattr(self, name) for name in ("_r_min", "_r_max")):
-            lo = np.array([self._r_min, 0.0, 0.0], dtype=float)
-            hi = np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
-            return lo, hi
-
-        pts = np.asarray(self._points, dtype=float)
-        r = np.linalg.norm(pts, axis=1)
-        theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
-        phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
-        return (
-            np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
-            np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
-        )
+            return self._domain_bounds_xyz()
+        return self._domain_bounds_rpa()
 
     def lookup_cell_id(
         self,
