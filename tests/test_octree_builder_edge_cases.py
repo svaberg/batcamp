@@ -10,7 +10,6 @@ from batcamp import CartesianOctree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import OctreeBuilder
-from batcamp import build_octree
 from batcamp.builder_spherical import SphericalOctreeBuilder
 
 
@@ -390,7 +389,7 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
     delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
     all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        builder.build_tree(ds, ds.corners, tree_coord="rpa", cell_levels=all_invalid)
+        builder.build(ds, tree_coord="rpa", corners=ds.corners, cell_levels=all_invalid, bind=False)
 
 
 def test_builder_handles_incompatible_blocks_aux_without_block_tree() -> None:
@@ -417,15 +416,16 @@ def test_octree_trace_ray_returns_empty_for_non_increasing_interval() -> None:
     assert OctreeRayTracer(tree).trace(origin, direction, 2.0, 1.0) == []
 
 
-def test_build_octree_helper_returns_unbound_tree_until_bind() -> None:
-    """`build_octree` helper should return unbound tree requiring explicit bind."""
+def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
+    """Builder with `bind=False` should return unbound tree requiring explicit bind."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
-    tree = build_octree(
+    tree = OctreeBuilder().build(
         ds,
-        ds.corners,
         tree_coord="rpa",
+        corners=ds.corners,
         cell_levels=cell_levels,
+        bind=False,
     )
     with pytest.raises(ValueError, match="not bound to a dataset"):
         tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
@@ -433,31 +433,33 @@ def test_build_octree_helper_returns_unbound_tree_until_bind() -> None:
     assert tree.ds is ds
 
 
-def test_build_octree_helper_stores_tree_coord_metadata() -> None:
-    """Helper should store requested coordinate-system metadata in the tree."""
+def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
+    """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder().compute_phi_levels(ds)
-    tree = build_octree(
+    tree = OctreeBuilder().build(
         ds,
-        ds.corners,
         tree_coord="xyz",
+        corners=ds.corners,
         cell_levels=cell_levels,
+        bind=False,
     )
     assert isinstance(tree, CartesianOctree)
     assert tree.tree_coord == "xyz"
 
 
-def test_build_octree_uses_explicit_corners_for_spherical_inference() -> None:
+def test_builder_build_uses_explicit_corners_for_spherical_inference() -> None:
     """Spherical build should infer levels from explicit `corners`, not `ds.corners`."""
     ds = _build_regular_dataset(nr=1, ntheta=2, nphi=2)
     corners_full = np.array(ds.corners, copy=True)
     ds.corners = np.array(corners_full[:2], copy=True)
 
-    tree = build_octree(
+    tree = OctreeBuilder().build(
         ds,
-        corners_full,
         tree_coord="rpa",
+        corners=corners_full,
         cell_levels=None,
+        bind=False,
     )
     assert tree.cell_levels is not None
     assert tree.cell_levels.shape[0] == corners_full.shape[0]

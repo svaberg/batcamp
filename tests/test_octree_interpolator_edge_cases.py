@@ -509,11 +509,12 @@ def test_invalid_level_cells_are_consistently_treated_as_misses() -> None:
     ds = _build_fake_cartesian_dataset()
     corners = np.asarray(ds.corners, dtype=np.int64)
     levels = np.array([-1, 0], dtype=np.int64)
-    tree = OctreeBuilder().build_tree(
+    tree = OctreeBuilder().build(
         ds,
-        corners,
         tree_coord="xyz",
+        corners=corners,
         cell_levels=levels,
+        bind=False,
     )
     tree.bind(ds)
 

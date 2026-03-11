@@ -1,7 +1,6 @@
 """Octree package exports."""
 
 from .builder import OctreeBuilder
-from .builder import build_octree
 from .builder import format_histogram
 from .builder import point_refinement_levels
 from .builder import valid_cell_fraction
@@ -22,7 +21,6 @@ from .spherical import SphericalOctree
 
 __all__ = [
     "OctreeBuilder",
-    "build_octree",
     "format_histogram",
     "point_refinement_levels",
     "valid_cell_fraction",
