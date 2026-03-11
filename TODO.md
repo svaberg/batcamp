@@ -18,3 +18,6 @@
 - [x] Align `_path(...)` parameter naming between backends (`i0/i1/i2` vs `ir/itheta/iphi`) with the same convention used for stored index fields.
 - [x] Align `hit_from_chosen` local index variable names between backends (`cell_i0/i1/i2` vs `cell_ir/cell_ipolar/cell_iazimuth`).
 - [x] Align lookup tuning constant naming between backends (cartesian uses inline literals where spherical uses named constants like `_LOOKUP_CONTAIN_TOL` / `_DEFAULT_LOOKUP_MAX_RADIUS`).
+- [ ] Remove implicit coord fallback in `Octree.from_dataset(...)` (when coord is omitted and first build fails); make fallback an explicit opt-in policy instead of hidden behavior.
+- [ ] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
+- [ ] Remove private-state coupling between ray/interpolator/lookup (`_lookup_state`, `_interp_state_xyz`, `hasattr` guards) by introducing explicit public interfaces/contracts.
