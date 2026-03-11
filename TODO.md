@@ -22,7 +22,6 @@
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
-- [ ] Fix README quick-start API mismatch: remove constructor-time `query_coord` usage and keep `query_coord` call-time only in examples.
 - [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
 - [ ] Replace `OctreeLookup` private-attribute probing (`getattr(..., \"_lookup_state\"/\"_points\"/\"_cell_phi_*\")`) with explicit backend contracts.
 - [ ] Collapse `OctreeLookup` pass-through wrappers where they only forward to `Octree` without adding behavior.
