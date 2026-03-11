@@ -12,7 +12,7 @@
 - [x] Unify tree auto-build fallback logic so there is one source of truth instead of split behavior paths.
 - [x] Reassess and eventually remove stale-module numba cache cleanup paths once legacy cache compatibility is no longer needed.
 - [x] Reduce complexity in oversized modules (`interpolator.py`, `ray.py`) in-place (no new modules for now).
-- [ ] Apply default-`xyz` naming consistently in interpolation internals: default path keeps base name, non-default path gets explicit suffix; rename `_trilinear_from_cell` / `_trilinear_from_cell_xyz` accordingly.
+- [x] Apply default-`xyz` naming consistently in interpolation internals: default path keeps base name, non-default path gets explicit suffix; rename `_trilinear_from_cell` / `_trilinear_from_cell_xyz` accordingly.
 - [ ] Align lookup-state type names between backends: `spherical.LookupKernelState` should mirror `cartesian.CartesianLookupKernelState` naming (for example `SphericalLookupKernelState`).
 - [ ] Align per-cell index field naming between backends (`_i0/_i1/_i2` in cartesian vs `_ir/_itheta/_iphi` in spherical) to one consistent convention.
 - [ ] Align `_path(...)` parameter naming between backends (`i0/i1/i2` vs `ir/itheta/iphi`) with the same convention used for stored index fields.

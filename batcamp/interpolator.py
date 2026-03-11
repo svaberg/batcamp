@@ -66,7 +66,7 @@ class CartesianInterpKernelState(NamedTuple):
 
 
 @njit(cache=True)
-def _trilinear_from_cell(
+def _trilinear_from_cell_rpa(
     out_row: np.ndarray,
     cell_id: int,
     r: float,
@@ -148,7 +148,7 @@ def _trilinear_from_cell(
 
 
 @njit(cache=True)
-def _trilinear_from_cell_xyz(
+def _trilinear_from_cell(
     out_row: np.ndarray,
     cell_id: int,
     x: float,
@@ -265,7 +265,7 @@ def _interp_batch_xyz(
                 continue
             cell_ids[i] = cid
             hint_cid = int(cid)
-            _trilinear_from_cell(
+            _trilinear_from_cell_rpa(
                 out[i],
                 cid,
                 r,
@@ -322,7 +322,7 @@ def _interp_batch_rpa(
                 continue
             cell_ids[i] = cid
             hint_cid = int(cid)
-            _trilinear_from_cell(
+            _trilinear_from_cell_rpa(
                 out[i],
                 cid,
                 r,
@@ -364,7 +364,7 @@ def _interp_batch_xyz_cartesian(
                 continue
             cell_ids[i] = cid
             hint_cid = int(cid)
-            _trilinear_from_cell_xyz(
+            _trilinear_from_cell(
                 out[i],
                 cid,
                 x,
