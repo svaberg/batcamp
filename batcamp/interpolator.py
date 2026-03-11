@@ -854,6 +854,27 @@ class OctreeInterpolator:
         """Return per-node interpolation values in original component shape."""
         return np.asarray(self._point_values)
 
+    def set_fields(
+        self,
+        values: list[str] | None,
+        *,
+        fill_value: float | np.ndarray | None = None,
+        warmup: bool = False,
+    ) -> None:
+        """Experimental: switch interpolated fields without rebuilding geometry.
+
+        This reuses the existing tree/lookup and only repacks value arrays and
+        interpolation kernel state.
+        """
+        if fill_value is not None:
+            self.fill_value = fill_value
+        self._point_values = self._coerce_point_values(values)
+        self.prepare_kernel_cache()
+        # Fail fast when a vector fill value no longer matches component count.
+        _ = self._fill_value_vector()
+        if warmup:
+            self.warmup_kernels()
+
     def __str__(self) -> str:
         """Return a compact human-readable interpolator description."""
         n_points = int(self._ds.points.shape[0]) if hasattr(self._ds, "points") else -1
