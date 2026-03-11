@@ -52,6 +52,11 @@ A short, practical guide for writing maintainable scientific/technical code.
 - Keep detailed tests on reusable logic; keep workflow tests lightweight.
 - Do not preserve poor design only to satisfy lock-in tests.
 
+## 11. Catch exceptions narrowly
+- Do not catch broad exceptions (for example `except Exception`) in core paths.
+- Catch only expected failure types and define explicit fallback behavior.
+- Let unexpected errors surface so defects are visible and fixable.
+
 ## Project-specific ownership and debt logging
 - Keep ray-related implementation in `batcamp/ray.py` whenever possible.
 - Keep spherical-related implementation in `batcamp/spherical.py` whenever possible.
