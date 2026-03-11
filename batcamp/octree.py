@@ -208,7 +208,18 @@ class Octree:
 
     def __str__(self) -> str:
         """Return human-readable summary text."""
-        return format_octree_summary(self)
+        leaf_levels = ", ".join(
+            f"L{level}:{count} (fine-equiv {expected})"
+            for level, count, expected in self.level_counts
+        )
+        shape_kind = "uniform" if self.is_uniform else "adaptive"
+        return (
+            f"Octree ({shape_kind}): "
+            f"tree_coord={self.tree_coord}, "
+            f"finest_leaf_grid={self.leaf_shape}, root_grid={self.root_shape}, "
+            f"depth={self.depth}, full={self.is_full}, "
+            f"levels={self.min_level}..{self.max_level}; leaf_levels[{leaf_levels}]"
+        )
 
     def build_lookup(
         self,
@@ -500,19 +511,3 @@ class LookupHit:
     i2: int
     path: GridPath
     center_xyz: tuple[float, float, float]
-
-def format_octree_summary(tree: Octree) -> str:
-    """Build one-line summary text for an octree."""
-    leaf_levels = ", ".join(
-        f"L{level}:{count} (fine-equiv {expected})"
-        for level, count, expected in tree.level_counts
-    )
-    shape_kind = "uniform" if tree.is_uniform else "adaptive"
-    out = (
-        f"Octree ({shape_kind}): "
-        f"tree_coord={tree.tree_coord}, "
-        f"finest_leaf_grid={tree.leaf_shape}, root_grid={tree.root_shape}, "
-        f"depth={tree.depth}, full={tree.is_full}, "
-        f"levels={tree.min_level}..{tree.max_level}; leaf_levels[{leaf_levels}]"
-    )
-    return out

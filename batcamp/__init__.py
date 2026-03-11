@@ -15,7 +15,6 @@ from .octree import DEFAULT_TREE_COORD
 from .octree import OCTREE_FILE_VERSION
 from .octree import LookupHit
 from .octree import Octree
-from .octree import format_octree_summary
 
 __all__ = [
     "OctreeBuilder",
@@ -35,7 +34,6 @@ __all__ = [
     "RaySegment",
     "OctreeRayTracer",
     "OctreeRayInterpolator",
-    "format_octree_summary",
 ]
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
