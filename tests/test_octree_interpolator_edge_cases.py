@@ -341,6 +341,38 @@ def test_cartesian_outside_start_inward_ray_traces_and_integrates() -> None:
     assert float(midpoint[0]) > 0.0
 
 
+def test_spherical_outside_start_inward_ray_traces_and_integrates() -> None:
+    """Outside-start inward rays should trace/integrate on spherical trees too."""
+    ds = _build_fake_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    ray = OctreeRayInterpolator(interp)
+
+    dmin, dmax = tree.domain_bounds(coord="xyz")
+    origin = np.array(
+        [
+            float(dmax[0]) + 1.0,
+            0.2,
+            -0.15,
+        ],
+        dtype=float,
+    )
+    direction = np.array([-1.0, 0.0, 0.0], dtype=float)
+    t0 = 0.0
+    t1 = float(dmax[0] - dmin[0]) + 3.0
+
+    segments = ray.ray_tracer.trace(origin, direction, t0, t1)
+    assert len(segments) > 0
+    assert float(segments[0].t_enter) > 0.0
+    assert all(int(seg.cell_id) >= 0 for seg in segments)
+
+    _t_vals, vals, cell_ids, _segments = ray.sample(origin, direction, t0, t1, 96)
+    cids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
+    v = np.asarray(vals, dtype=float).reshape(-1)
+    assert np.any(cids >= 0)
+    assert np.any(np.isfinite(v[cids >= 0]))
+
+
 def test_adaptive_midpoint_rule_outputs_consistent_offsets() -> None:
     """Adaptive midpoint packing should return monotone offsets and matching lengths."""
     ds = _build_fake_cartesian_dataset()
