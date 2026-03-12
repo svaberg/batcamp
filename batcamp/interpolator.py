@@ -772,6 +772,7 @@ class OctreeInterpolator:
         *args,
         query_coord: Literal["xyz", "rpa"] = "xyz",
         return_cell_ids: bool = False,
+        log_outside_domain: bool = True,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Evaluate interpolation at query points.
 
@@ -806,10 +807,11 @@ class OctreeInterpolator:
         t_after_kernel = perf_counter() if debug_timing else 0.0
 
         misses = int(np.count_nonzero(cell_ids < 0))
-        if misses == n and n > 0:
-            logger.warning("All query points were outside interpolation domain (%d/%d misses).", misses, n)
-        elif misses > 0:
-            logger.info("Some query points were outside interpolation domain (%d/%d misses).", misses, n)
+        if log_outside_domain:
+            if misses == n and n > 0:
+                logger.warning("All query points were outside interpolation domain (%d/%d misses).", misses, n)
+            elif misses > 0:
+                logger.info("Some query points were outside interpolation domain (%d/%d misses).", misses, n)
 
         out = out2d.reshape((n,) + trailing).reshape(shape + trailing)
         t_after_post = perf_counter() if debug_timing else 0.0

@@ -1135,7 +1135,7 @@ class OctreeRayTracer:
                     if n_seg == 0:
                         p0 = o + t0 * d
                         if self.tree.lookup_point(p0, coord="xyz") is None:
-                            logger.warning("Ray start point is outside interpolation domain.")
+                            logger.debug("Ray start point is outside interpolation domain.")
                     return [
                         RaySegment(
                             cell_id=int(cids[i]),
@@ -1181,7 +1181,7 @@ class OctreeRayTracer:
         p = o + t * d
         hit = self.tree.lookup_point(p, coord="xyz")
         if hit is None:
-            logger.warning("Ray start point is outside interpolation domain.")
+            logger.debug("Ray start point is outside interpolation domain.")
             return []
         segments: list[RaySegment] = []
         lookup = self.tree.lookup
@@ -1358,6 +1358,7 @@ class OctreeRayInterpolator:
             query_xyz,
             query_coord="xyz",
             return_cell_ids=True,
+            log_outside_domain=False,
         )
         return t_values, values, np.array(cell_ids, dtype=np.int64), segments
 
@@ -1514,6 +1515,7 @@ class OctreeRayInterpolator:
                 query_xyz,
                 query_coord="xyz",
                 return_cell_ids=True,
+                log_outside_domain=False,
             )
             value_arr = np.asarray(values, dtype=float)
             if value_arr.ndim == 1:
@@ -1678,6 +1680,7 @@ class OctreeRayInterpolator:
             mids,
             query_coord="xyz",
             return_cell_ids=True,
+            log_outside_domain=False,
         )
         value_arr = np.asarray(values, dtype=float)
         if value_arr.ndim == 1:
@@ -1802,6 +1805,7 @@ class OctreeRayInterpolator:
             query_xyz,
             query_coord="xyz",
             return_cell_ids=True,
+            log_outside_domain=False,
         )
         cid_arr = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
         if np.any(cid_arr < 0):
