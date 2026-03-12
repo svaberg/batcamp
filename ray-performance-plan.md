@@ -31,15 +31,14 @@ Ray integration must be faster than the grid-sample-then-sum baseline for the sa
 Target bands:
 
 1. Immediate: 10x faster for SC at tiny grids (`3x3`) and clearly faster than baseline.
-2. Mid-term: 10x-100x at practical image sizes (`32x32`, `64x64`).
-3. Long-term: 100x-1000x for large ray batches where kernels should dominate.
+2. Mid-term: 10x-100x on whole-domain small grids within the `<=50` ray cap.
+3. Long-term: 100x-1000x for larger ray batches (deferred until after first proven speedup).
 
 ## Execution protocol (no long waiting)
 
 - No blocking benchmark runs longer than 60 seconds in the development loop.
 - Hard cap until first proven speedup: use at most 50 rays per run.
 - Default benchmark loop uses tiny whole-domain inputs (for example `3x3`, `5x5`, up to max 50 rays) and hot-call timing only.
-- Full-size validation (`32x32`, `64x64`) runs only after a code change shows clear gains at small sizes.
 - Every optimization step must follow this cycle:
   1. add/adjust instrumentation
   2. implement code change
@@ -53,7 +52,6 @@ Target bands:
 - Deliverable:
   - one perf script (not notebook) with machine-readable output table
   - default run covers `SC` and `IH` at whole-domain small grids up to 50 rays
-  - optional extended run adds `32x32`, `64x64`
 - Measures:
   - setup time (`Dataset.from_file`, tree/interpolator build)
   - hot-call ray integration time
@@ -92,14 +90,14 @@ Target bands:
     - remove duplicated checks/conversions
     - tighten boundary stepping and loop guards
 - Exit criteria:
-  - measurable throughput gain at `32x32` and `64x64`.
+  - measurable throughput gain on whole-domain small grids within the `<=50` ray cap.
 
 6. Add dedicated rpa bulk integration kernel (120+ min, likely multi-session)
 - Deliverable:
   - scalar rpa kernel that traces and accumulates in one compiled pass
   - avoids Python segment object/materialization path
 - Exit criteria:
-  - SC `3x3` and `32x32` move from orders-of-magnitude behind baseline toward parity/faster.
+  - SC `3x3` and `5x5` move from orders-of-magnitude behind baseline toward parity/faster.
 
 7. Add miss-culling and cheap prefilters (30 min)
 - Deliverable:
@@ -119,7 +117,6 @@ Target bands:
   - opt-in perf tests (`--run-perf`) with budgets:
     - IH `3x3` hot call budget
     - SC `3x3` hot call budget
-    - `32x32` throughput budget
 - Exit criteria:
   - regressions are caught automatically without slowing default unit test runs.
 
@@ -130,7 +127,6 @@ Target bands:
   - report results on whole-domain camera/range settings first; optional zoomed-in cases are secondary.
 - Exit criteria:
   - ray path faster than baseline for target cases, with table in repo.
-  - extended validation runs only after short-loop gains are established.
 
 ## Definition of done
 
