@@ -1336,30 +1336,33 @@ class OctreeRayTracer:
                         float(boundary_tol),
                         lookup_state,
                     )
-                    if int(n_seg) == 0 and started_outside:
-                        t_seed = self._seed_trace_start_from_root_cells(
-                            o,
-                            d,
-                            t0,
-                            t1,
-                            boundary_tol=float(boundary_tol),
-                        )
-                        if t_seed is not None and t_seed < t1:
-                            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                    if int(n_seg) == 0:
+                        p_start = o + t0 * d
+                        start_hit = self.tree.lookup_point(p_start, coord="xyz")
+                        if started_outside or start_hit is None:
+                            t_seed = self._seed_trace_start_from_root_cells(
                                 o,
                                 d,
-                                float(t_seed),
+                                t0,
                                 t1,
-                                int(max_steps),
-                                int(bisect_iters),
-                                float(boundary_tol),
-                                lookup_state,
+                                boundary_tol=float(boundary_tol),
                             )
-                            if int(n_seg) == 0 and not self._logged_rpa_seed_anomaly:
-                                logger.warning(
-                                    "Unusual ray case: root-cell seed suggested overlap but rpa trace found no segments."
+                            if t_seed is not None and t_seed < t1:
+                                n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                                    o,
+                                    d,
+                                    float(t_seed),
+                                    t1,
+                                    int(max_steps),
+                                    int(bisect_iters),
+                                    float(boundary_tol),
+                                    lookup_state,
                                 )
-                                self._logged_rpa_seed_anomaly = True
+                                if int(n_seg) == 0 and not self._logged_rpa_seed_anomaly:
+                                    logger.warning(
+                                        "Unusual ray case: root-cell seed suggested overlap but rpa trace found no segments."
+                                    )
+                                    self._logged_rpa_seed_anomaly = True
                     return [
                         RaySegment(
                             cell_id=int(cids[i]),
