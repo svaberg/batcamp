@@ -1781,14 +1781,21 @@ class OctreeRayInterpolator:
                 e = int(endpoint_offsets[j + 1])
                 if e <= s:
                     continue
-                if np.any(cids[s:e] < 0):
-                    continue
                 v = value_arr_2d[s:e]
                 col = np.zeros(v.shape[1], dtype=float)
                 dts = seg_dt_list[j]
+                has_valid_segment = False
                 for si, dt in enumerate(dts):
+                    i_a = s + 2 * si
+                    i_b = i_a + 1
+                    if i_b >= e:
+                        break
+                    if int(cids[i_a]) < 0 or int(cids[i_b]) < 0:
+                        continue
                     col += 0.5 * (v[2 * si] + v[2 * si + 1]) * float(dt)
-                out_2d[i0 + j] = float(scale) * col
+                    has_valid_segment = True
+                if has_valid_segment:
+                    out_2d[i0 + j] = float(scale) * col
 
         if out_2d is None:
             # All rays missed the domain. Preserve scalar/vector behavior.
@@ -1942,11 +1949,15 @@ class OctreeRayInterpolator:
             e = int(offsets[i + 1])
             if e <= s:
                 continue
-            if np.any(cids[s:e] < 0):
+            valid_mask = cids[s:e] >= 0
+            if not np.any(valid_mask):
                 continue
             seg_vals = value_arr_2d[s:e]
-            seg_w = w[s:e].reshape(-1, 1)
-            out_2d[i] = float(scale) * np.sum(seg_vals * seg_w, axis=0)
+            seg_w = w[s:e]
+            out_2d[i] = float(scale) * np.sum(
+                seg_vals[valid_mask] * seg_w[valid_mask].reshape(-1, 1),
+                axis=0,
+            )
 
         if out_2d.shape[1] == 1:
             return out_2d[:, 0]
