@@ -294,8 +294,8 @@ def test_cartesian_boundary_start_outward_ray_has_no_long_interior_path() -> Non
     t0 = 0.0
     t1 = float(dmax[0] - dmin[0])
 
-    segments = ray.ray_tracer.trace(origin, direction, t0, t1)
-    total_length = sum(float(seg.t_exit) - float(seg.t_enter) for seg in segments)
+    segments = ray.linear_pieces(origin, direction, t0, t1)
+    total_length = sum(float(seg.t_end) - float(seg.t_start) for seg in segments)
     assert total_length <= 1.0e-6
 
     origins = origin.reshape(1, 3)
@@ -327,9 +327,9 @@ def test_cartesian_outside_start_inward_ray_traces_and_integrates() -> None:
     t0 = 0.0
     t1 = float(dmax[0] - dmin[0]) + 2.0
 
-    segments = ray.ray_tracer.trace(origin, direction, t0, t1)
+    segments = ray.linear_pieces(origin, direction, t0, t1)
     assert len(segments) > 0
-    assert float(segments[0].t_enter) > 0.0
+    assert float(segments[0].t_start) > 0.0
     assert all(int(seg.cell_id) >= 0 for seg in segments)
 
     origins = origin.reshape(1, 3)
@@ -361,9 +361,9 @@ def test_spherical_outside_start_inward_ray_traces_and_integrates() -> None:
     t0 = 0.0
     t1 = float(dmax[0] - dmin[0]) + 3.0
 
-    segments = ray.ray_tracer.trace(origin, direction, t0, t1)
+    segments = ray.linear_pieces(origin, direction, t0, t1)
     assert len(segments) > 0
-    assert float(segments[0].t_enter) > 0.0
+    assert float(segments[0].t_start) > 0.0
     assert all(int(seg.cell_id) >= 0 for seg in segments)
 
     _t_vals, vals, cell_ids, _segments = ray.sample(origin, direction, t0, t1, 96)
