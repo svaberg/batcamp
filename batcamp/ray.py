@@ -1150,6 +1150,68 @@ class OctreeRayTracer:
         dmin, dmax = self.tree.domain_bounds(coord="xyz")
         self._domain_xyz_min = np.asarray(dmin, dtype=float).reshape(3)
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
+        levels = np.asarray(self.tree.cell_levels, dtype=np.int64).reshape(-1)
+        if levels.size > 0:
+            root_level = int(np.min(levels))
+            self._root_cell_ids = np.where(levels == root_level)[0].astype(np.int64)
+        else:
+            self._root_cell_ids = np.empty((0,), dtype=np.int64)
+        self._root_cell_bounds_min = np.empty((self._root_cell_ids.size, 3), dtype=float)
+        self._root_cell_bounds_max = np.empty((self._root_cell_ids.size, 3), dtype=float)
+        for i, cid in enumerate(self._root_cell_ids):
+            bmin, bmax = self.tree.cell_bounds(int(cid), coord="xyz")
+            self._root_cell_bounds_min[i] = np.asarray(bmin, dtype=float).reshape(3)
+            self._root_cell_bounds_max[i] = np.asarray(bmax, dtype=float).reshape(3)
+        self._logged_rpa_seed_anomaly = False
+
+    def _seed_trace_start_from_root_cells(
+        self,
+        origin_xyz: np.ndarray,
+        direction_xyz_unit: np.ndarray,
+        t_start: float,
+        t_end: float,
+        *,
+        boundary_tol: float,
+    ) -> float | None:
+        """Find one interior trace start from root-cell AABB overlap candidates.
+
+        This is a rare fallback for rays that start outside and where a direct
+        start-at-entry lookup fails. It scans root-cell boxes, picks the earliest
+        overlap interval, then probes a few points for a valid lookup hit.
+        """
+        if self._root_cell_ids.size == 0:
+            return None
+        best_enter: float | None = None
+        best_exit = float(t_end)
+        for i in range(self._root_cell_ids.size):
+            hit, ta, tb = _clip_ray_interval_to_aabb(
+                origin_xyz,
+                direction_xyz_unit,
+                float(t_start),
+                float(t_end),
+                self._root_cell_bounds_min[i],
+                self._root_cell_bounds_max[i],
+                float(boundary_tol),
+            )
+            if not hit or tb <= ta:
+                continue
+            if best_enter is None or ta < best_enter:
+                best_enter = float(ta)
+                best_exit = float(tb)
+        if best_enter is None:
+            return None
+        abs_eps = max(float(boundary_tol) * (1.0 + abs(best_exit - best_enter)), 1e-12)
+        probe_fracs = (0.0, 0.125, 0.25, 0.5, 0.75, 1.0)
+        for frac in probe_fracs:
+            t_probe = best_enter + frac * (best_exit - best_enter)
+            if t_probe <= t_start:
+                t_probe = min(best_exit, t_start + abs_eps)
+            if t_probe > best_exit:
+                continue
+            p_probe = origin_xyz + t_probe * direction_xyz_unit
+            if self.tree.lookup_point(p_probe, coord="xyz") is not None:
+                return float(t_probe)
+        return None
 
     def trace(
         self,
@@ -1220,6 +1282,7 @@ class OctreeRayTracer:
         if not clipped or t1_clip <= t0_clip:
             return []
         abs_eps = max(float(boundary_tol) * (1.0 + abs(t1_clip - t0_clip)), 1e-12)
+        started_outside = bool(t0_clip > (float(t_start) + abs_eps))
         t0 = t0_clip
         if t0_clip > float(t_start):
             t0 = min(t1_clip, t0_clip + abs_eps)
@@ -1273,6 +1336,30 @@ class OctreeRayTracer:
                         float(boundary_tol),
                         lookup_state,
                     )
+                    if int(n_seg) == 0 and started_outside:
+                        t_seed = self._seed_trace_start_from_root_cells(
+                            o,
+                            d,
+                            t0,
+                            t1,
+                            boundary_tol=float(boundary_tol),
+                        )
+                        if t_seed is not None and t_seed < t1:
+                            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                                o,
+                                d,
+                                float(t_seed),
+                                t1,
+                                int(max_steps),
+                                int(bisect_iters),
+                                float(boundary_tol),
+                                lookup_state,
+                            )
+                            if int(n_seg) == 0 and not self._logged_rpa_seed_anomaly:
+                                logger.warning(
+                                    "Unusual ray case: root-cell seed suggested overlap but rpa trace found no segments."
+                                )
+                                self._logged_rpa_seed_anomaly = True
                     return [
                         RaySegment(
                             cell_id=int(cids[i]),
@@ -1318,7 +1405,20 @@ class OctreeRayTracer:
         p = o + t * d
         hit = self.tree.lookup_point(p, coord="xyz")
         if hit is None:
-            return []
+            t_seed = self._seed_trace_start_from_root_cells(
+                o,
+                d,
+                t,
+                float(t_end),
+                boundary_tol=float(boundary_tol),
+            )
+            if t_seed is None:
+                return []
+            t = float(t_seed)
+            p = o + t * d
+            hit = self.tree.lookup_point(p, coord="xyz")
+            if hit is None:
+                return []
         segments: list[RaySegment] = []
         lookup = self.tree.lookup
         for _ in range(max_steps):
