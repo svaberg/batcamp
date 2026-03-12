@@ -27,6 +27,7 @@
 - [ ] Expand `[project.optional-dependencies].tests` to include non-pytest test imports (at least `pooch`) and verify tests run in a clean `. [tests]` environment.
 - [ ] Investigate and suppress/resolve intermittent runtime warning: `OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.`
 - [ ] Investigate and suppress/resolve notebook warning from `tqdm.auto`: `TqdmWarning: IProgress not found. Please update jupyter and ipywidgets.`
+- [ ] Investigate if `RaySegment` and `RayLinearPiece` should be NumPy arrays (for performance reasons).
 - [ ] Fix `examples/octree.ipynb` for current builder API: replace removed `OctreeBuilder.compute_phi_levels(...)` usage with `SphericalOctreeBuilder.compute_delta_phi_and_levels(...)` (or equivalent current public API) so executed notebook tests pass.
 - [ ] Audit polar/azimuth plotting across examples: use angular grids/ticks that divide 180 cleanly and orient polar-angle axes so minimum polar is not shown at the top.
 - [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
