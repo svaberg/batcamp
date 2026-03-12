@@ -1132,10 +1132,6 @@ class OctreeRayTracer:
                         float(boundary_tol),
                         lookup_state,
                     )
-                    if n_seg == 0:
-                        p0 = o + t0 * d
-                        if self.tree.lookup_point(p0, coord="xyz") is None:
-                            logger.debug("Ray start point is outside interpolation domain.")
                     return [
                         RaySegment(
                             cell_id=int(cids[i]),
@@ -1181,7 +1177,6 @@ class OctreeRayTracer:
         p = o + t * d
         hit = self.tree.lookup_point(p, coord="xyz")
         if hit is None:
-            logger.debug("Ray start point is outside interpolation domain.")
             return []
         segments: list[RaySegment] = []
         lookup = self.tree.lookup
@@ -1353,6 +1348,17 @@ class OctreeRayInterpolator:
         t_values = np.linspace(float(t_start), float(t_end), int(n_samples))
 
         segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
+        if not segments:
+            # Rays that do not enter any cell are common in image-plane scans.
+            # Avoid a full interpolation pass for obviously-missed samples.
+            n = int(n_samples)
+            fill = self.interpolator._fill_value_vector()
+            trailing = self.interpolator._point_values.shape[1:]
+            values = np.tile(fill, (n, 1)).reshape((n,) + trailing)
+            if trailing == ():
+                values = values.reshape(n)
+            return t_values, values, np.full(n, -1, dtype=np.int64), segments
+
         query_xyz = o[None, :] + t_values[:, None] * d[None, :]
         values, cell_ids = self.interpolator(
             query_xyz,
