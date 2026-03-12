@@ -6,19 +6,22 @@ Using `examples/ray_fast_two_pooch.ipynb` style workload at `3x3` rays:
 
 - SC (`tree_coord=rpa`)
   - `OctreeInterpolator` build: ~7.9s
-  - `integrate_field_along_rays` (`exact`): ~2.6s
+  - `integrate_field_along_rays` (`exact`): ~1.3s (after outer-sphere clipping)
   - Baseline (`interp` on `nx=256` grid + sum): ~0.001s
-  - Ray is ~3440x slower than baseline
+  - Ray is still ~1600x slower than baseline
 - IH (`tree_coord=xyz`)
   - `OctreeInterpolator` build: ~14.6s
-  - `integrate_field_along_rays` (`exact`): ~4.8s
-  - Baseline (`interp` on `nx=256` grid + sum): ~3.7s
+  - `integrate_field_along_rays` (`exact`): ~4.6s
+  - Baseline (`interp` on `nx=256` grid + sum): ~3.6s
   - Ray is ~1.3x slower than baseline
 
 Additional checks:
 
 - IH fast-path eligibility is true (`can_xyz_scalar_kernel=True`), so this is not just “wrong path selection.”
 - One-ray tracer hot path is fast (IH: ~0.0004s after warm-up), so the bottleneck is in integration path, not plain tracing.
+- Historical regression check (commit `926196c`) shows this is not a new slowdown:
+  - SC was ~3.33s there (now ~1.3s)
+  - IH was ~8.59s there (now ~4.6s)
 - Tests are mixed:
   - many unit/edge ray tests are fast (`<1s` range)
   - notebook-contract ray test is slow (`~14s`)
