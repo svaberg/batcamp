@@ -160,6 +160,51 @@ def _clip_ray_interval_to_aabb(
 
 
 @njit(cache=True)
+def _clip_ray_interval_to_sphere(
+    origin_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    radius: float,
+    tol: float,
+) -> tuple[bool, float, float]:
+    """Clip ray interval `[t_start, t_end]` to one sphere centered at origin."""
+    if radius <= 0.0:
+        return False, t_start, t_start
+
+    ox = origin_xyz[0]
+    oy = origin_xyz[1]
+    oz = origin_xyz[2]
+    dx = direction_xyz_unit[0]
+    dy = direction_xyz_unit[1]
+    dz = direction_xyz_unit[2]
+
+    b = ox * dx + oy * dy + oz * dz
+    c = (ox * ox + oy * oy + oz * oz) - radius * radius
+    disc = b * b - c
+    if disc < 0.0:
+        return False, t_start, t_start
+
+    s = math.sqrt(max(0.0, disc))
+    ta = -b - s
+    tb = -b + s
+    if ta > tb:
+        tmp = ta
+        ta = tb
+        tb = tmp
+
+    t_near = t_start
+    t_far = t_end
+    if (ta - tol) > t_near:
+        t_near = ta - tol
+    if (tb + tol) < t_far:
+        t_far = tb + tol
+    if t_far <= t_near:
+        return False, t_near, t_far
+    return True, t_near, t_far
+
+
+@njit(cache=True)
 def _trace_segments_xyz_kernel(
     origin_xyz: np.ndarray,
     direction_xyz_unit: np.ndarray,
@@ -1150,6 +1195,8 @@ class OctreeRayTracer:
         dmin, dmax = self.tree.domain_bounds(coord="xyz")
         self._domain_xyz_min = np.asarray(dmin, dtype=float).reshape(3)
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
+        _r_lo, r_hi = self.tree.domain_bounds(coord="rpa")
+        self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
         levels = np.asarray(self.tree.cell_levels, dtype=np.int64).reshape(-1)
         if levels.size > 0:
             root_level = int(np.min(levels))
@@ -1270,6 +1317,7 @@ class OctreeRayTracer:
         t1 = float(t_end)
         if t1 <= t0:
             return []
+        tree_coord = str(self.tree.tree_coord)
         clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
             o,
             d,
@@ -1281,6 +1329,19 @@ class OctreeRayTracer:
         )
         if not clipped or t1_clip <= t0_clip:
             return []
+        if tree_coord == "rpa":
+            clipped_sphere, t0_sphere, t1_sphere = _clip_ray_interval_to_sphere(
+                o,
+                d,
+                t0_clip,
+                t1_clip,
+                float(self._domain_r_max),
+                float(boundary_tol),
+            )
+            if not clipped_sphere or t1_sphere <= t0_sphere:
+                return []
+            t0_clip = t0_sphere
+            t1_clip = t1_sphere
         abs_eps = max(float(boundary_tol) * (1.0 + abs(t1_clip - t0_clip)), 1e-12)
         started_outside = bool(t0_clip > (float(t_start) + abs_eps))
         t0 = t0_clip
@@ -1295,7 +1356,6 @@ class OctreeRayTracer:
             lookup_state = lookup.lookup_state
         except ValueError:
             lookup_state = None
-        tree_coord = str(self.tree.tree_coord)
         if tree_coord == "xyz":
             if isinstance(lookup_state, CartesianLookupKernelState):
                 try:
