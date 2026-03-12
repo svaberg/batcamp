@@ -5,7 +5,7 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import OctreeRayInterpolator
+from batcamp import OctreeRayTracer
 
 
 @pytest.fixture(scope="module")
@@ -62,33 +62,32 @@ def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
 @pytest.mark.slow
 def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> None:
     """Ray traversal segments must be monotone and contain their midpoint sample."""
-    ds, tree = advanced_context
+    _ds, tree = advanced_context
     origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
     direction = np.array([1.0, 0.32, 0.11], dtype=float)
     t_start = 0.0
     t_end = 6.5
 
-    ray = OctreeRayInterpolator(OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree))
-    pieces = ray.linear_pieces(origin, direction, t_start, t_end)
-    assert pieces, "Expected at least one traversed segment."
+    segments = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
+    assert segments, "Expected at least one traversed segment."
 
     ray_dir = direction / np.linalg.norm(direction)
     prev_exit = float(t_start)
-    for seg in pieces:
-        assert float(seg.t_end) >= float(seg.t_start)
-        assert float(seg.t_start) >= prev_exit - 1e-6
-        prev_exit = float(seg.t_end)
-        mid_t = 0.5 * (float(seg.t_start) + float(seg.t_end))
+    for seg in segments:
+        assert float(seg.t_exit) >= float(seg.t_enter)
+        assert float(seg.t_enter) >= prev_exit - 1e-6
+        prev_exit = float(seg.t_exit)
+        mid_t = 0.5 * (float(seg.t_enter) + float(seg.t_exit))
         p_mid = origin + mid_t * ray_dir
         assert tree.contains_cell(int(seg.cell_id), p_mid, coord="xyz", tol=1e-6)
-    assert float(pieces[0].t_start) >= float(t_start) - 1e-8
-    assert float(pieces[-1].t_end) <= float(t_end) + 1e-6
+    assert float(segments[0].t_enter) >= float(t_start) - 1e-8
+    assert float(segments[-1].t_exit) <= float(t_end) + 1e-6
 
 
 @pytest.mark.slow
 def test_loaded_tree_matches_original_ray_walk(advanced_context, tmp_path) -> None:
     """Persisted/reloaded tree should produce equivalent ray traversal segments."""
-    ds, tree = advanced_context
+    _ds, tree = advanced_context
     path = tmp_path / "advanced_ray_tree.npz"
     tree.save(path)
     loaded = Octree.load(path, ds=tree.ds)
@@ -98,15 +97,13 @@ def test_loaded_tree_matches_original_ray_walk(advanced_context, tmp_path) -> No
     t_start = 0.0
     t_end = 6.5
 
-    ray_a = OctreeRayInterpolator(OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree))
-    ray_b = OctreeRayInterpolator(OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=loaded))
-    seg_a = ray_a.linear_pieces(origin, direction, t_start, t_end)
-    seg_b = ray_b.linear_pieces(origin, direction, t_start, t_end)
+    seg_a = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
+    seg_b = OctreeRayTracer(loaded).trace(origin, direction, t_start, t_end)
     assert len(seg_a) == len(seg_b)
     for a, b in zip(seg_a, seg_b):
         assert int(a.cell_id) == int(b.cell_id)
-        assert np.isclose(float(a.t_start), float(b.t_start), atol=1e-8, rtol=0.0)
-        assert np.isclose(float(a.t_end), float(b.t_end), atol=1e-8, rtol=0.0)
+        assert np.isclose(float(a.t_enter), float(b.t_enter), atol=1e-8, rtol=0.0)
+        assert np.isclose(float(a.t_exit), float(b.t_exit), atol=1e-8, rtol=0.0)
 
 
 @pytest.mark.slow
