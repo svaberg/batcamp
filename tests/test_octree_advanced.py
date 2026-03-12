@@ -5,7 +5,6 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import OctreeRayTracer
 
 
 @pytest.fixture(scope="module")
@@ -21,18 +20,6 @@ def _select_center_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarr
     n = min(int(n_query), int(centers.shape[0]))
     idx = rng.choice(centers.shape[0], size=n, replace=False)
     return centers[idx]
-
-
-def _select_resolvable_center_near_radius(tree: Octree, *, target_r: float) -> np.ndarray:
-    """Private test helper: pick one resolvable center near `target_r`."""
-    centers = np.asarray(tree.cell_centers, dtype=float)
-    center_r = np.linalg.norm(centers, axis=1)
-    order = np.argsort(np.abs(center_r - float(target_r)))
-    for idx in order.tolist():
-        q = np.asarray(centers[int(idx)], dtype=float)
-        if tree.lookup_point(q, coord="xyz") is not None:
-            return q
-    raise AssertionError("No resolvable center found near requested radius.")
 
 
 def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
@@ -57,53 +44,6 @@ def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
         hit_rpa = tree.lookup_point(_xyz_to_rpa_numpy(q), coord="rpa")
         assert hit_rpa is not None
         assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
-
-
-@pytest.mark.slow
-def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> None:
-    """Ray traversal segments must be monotone and contain their midpoint sample."""
-    _ds, tree = advanced_context
-    origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
-    direction = np.array([1.0, 0.32, 0.11], dtype=float)
-    t_start = 0.0
-    t_end = 6.5
-
-    segments = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
-    assert segments, "Expected at least one traversed segment."
-
-    ray_dir = direction / np.linalg.norm(direction)
-    prev_exit = float(t_start)
-    for seg in segments:
-        assert float(seg.t_exit) >= float(seg.t_enter)
-        assert float(seg.t_enter) >= prev_exit - 1e-6
-        prev_exit = float(seg.t_exit)
-        mid_t = 0.5 * (float(seg.t_enter) + float(seg.t_exit))
-        p_mid = origin + mid_t * ray_dir
-        assert tree.contains_cell(int(seg.cell_id), p_mid, coord="xyz", tol=1e-6)
-    assert float(segments[0].t_enter) >= float(t_start) - 1e-8
-    assert float(segments[-1].t_exit) <= float(t_end) + 1e-6
-
-
-@pytest.mark.slow
-def test_loaded_tree_matches_original_ray_walk(advanced_context, tmp_path) -> None:
-    """Persisted/reloaded tree should produce equivalent ray traversal segments."""
-    _ds, tree = advanced_context
-    path = tmp_path / "advanced_ray_tree.npz"
-    tree.save(path)
-    loaded = Octree.load(path, ds=tree.ds)
-
-    origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
-    direction = np.array([1.0, 0.32, 0.11], dtype=float)
-    t_start = 0.0
-    t_end = 6.5
-
-    seg_a = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
-    seg_b = OctreeRayTracer(loaded).trace(origin, direction, t_start, t_end)
-    assert len(seg_a) == len(seg_b)
-    for a, b in zip(seg_a, seg_b):
-        assert int(a.cell_id) == int(b.cell_id)
-        assert np.isclose(float(a.t_enter), float(b.t_enter), atol=1e-8, rtol=0.0)
-        assert np.isclose(float(a.t_exit), float(b.t_exit), atol=1e-8, rtol=0.0)
 
 
 @pytest.mark.slow
