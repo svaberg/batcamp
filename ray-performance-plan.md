@@ -34,79 +34,83 @@ Target bands:
 2. Mid-term: 10x-100x at practical image sizes (`32x32`, `64x64`).
 3. Long-term: 100x-1000x for large ray batches where kernels should dominate.
 
-## Step-by-step plan
+## Step-by-step plan (execution order)
 
-1. Lock down a reproducible benchmark harness
-- Add one dedicated perf script (not notebook) that reports:
+1. Build reproducible benchmark harness (30 min)
+- Deliverable:
+  - one perf script (not notebook) with machine-readable output table
+  - runs `SC` and `IH` for `3x3`, `32x32`, `64x64`
+- Measures:
   - setup time (`Dataset.from_file`, tree/interpolator build)
-  - hot-call integration time (after warm-up)
-  - baseline grid-sum time
-- Evaluate both files (`SC`, `IH`) at `3x3`, `32x32`, `64x64`.
-- Output CSV/markdown table for before/after comparisons.
+  - hot-call ray integration time
+  - baseline grid-sample+sum time
+- Exit criteria:
+  - baseline table checked in and rerunnable in `batcamp` env.
 
-2. Separate setup cost from algorithm cost everywhere
-- Keep notebook setup cached and never rebuild for benchmark/render cells.
-- Ensure benchmark cells never include `Dataset.from_file` or `OctreeInterpolator(...)`.
-- Keep method selection explicit (no default 2x2 benchmark loops in notebook).
+2. Add runtime path diagnostics (20 min)
+- Deliverable:
+  - one explicit per-run path summary (`xyz axis`, `xyz general`, `rpa`, fallback)
+- Exit criteria:
+  - no ambiguity about whether numba kernel paths were used.
 
-3. Add explicit runtime-path diagnostics (once per run)
-- Print selected path for each run:
-  - `xyz axis-aligned kernel`
-  - `xyz general kernel`
-  - `rpa kernel`
-  - fallback path
-- This removes guesswork about whether numba kernels were used.
+3. Keep setup and benchmarking separated everywhere (20 min)
+- Deliverable:
+  - notebook and perf script never rebuild setup inside benchmark loops
+  - method selection explicit by default; benchmark loops opt-in only
+- Exit criteria:
+  - `3x3` debug flow does not include hidden repeated setup/timing loops.
 
-4. Fix tiny-ray performance for xyz kernels
-- Add serial (`parallel=False`) versions of xyz scalar kernels.
-- Dispatch rule:
-  - small `n_rays` -> serial kernel
-  - large `n_rays` -> parallel kernel
-- Rationale: current `prange` path is expensive for tiny workloads.
-- Acceptance: IH `3x3` should drop from multi-second to sub-second.
+4. Fix tiny-ray xyz path with serial kernel dispatch (40 min)
+- Deliverable:
+  - serial (`parallel=False`) xyz scalar integration kernels
+  - runtime dispatch rule: small `n_rays` -> serial, otherwise parallel
+- Why:
+  - current `prange` overhead is too large for tiny workloads.
+- Exit criteria:
+  - IH `3x3` hot call drops from multi-second toward sub-second.
 
-5. Add true bulk integration kernel for rpa path
-- Current rpa integration still behaves like generic tracing/integration flow.
-- Implement dedicated numba kernel for spherical tree integration (scalar first):
-  - trace + accumulate in one compiled pass
-  - avoid Python segment materialization and per-ray Python loops
-- Acceptance: SC `3x3` and `32x32` move from orders-of-magnitude behind baseline to at least parity, then faster.
+5. Optimize xyz hot-loop overhead (60 min)
+- Deliverable:
+  - reduced per-step overhead in xyz kernels:
+    - remove duplicated checks/conversions
+    - tighten boundary stepping and loop guards
+- Exit criteria:
+  - measurable throughput gain at `32x32` and `64x64`.
 
-6. Remove avoidable overhead in integration kernels
-- Eliminate duplicate per-step work in hot loops:
-  - repeated conversions
-  - repeated lookup fallback checks
-- Tighten stepping logic with clear convergence guards to avoid pathological tiny-step loops.
-- Replace large fixed `max_steps` constants with data-driven bounds where safe.
+6. Add dedicated rpa bulk integration kernel (120+ min, likely multi-session)
+- Deliverable:
+  - scalar rpa kernel that traces and accumulates in one compiled pass
+  - avoids Python segment object/materialization path
+- Exit criteria:
+  - SC `3x3` and `32x32` move from orders-of-magnitude behind baseline toward parity/faster.
 
-7. Improve data-locality for value evaluation
-- For xyz scalar path, precompute cell-local interpolation coefficients if cheaper than repeated corner gathers.
-- Avoid repeatedly rebuilding index maps inside tight loops.
+7. Add miss-culling and cheap prefilters (30 min)
+- Deliverable:
+  - cheap domain/radial culling before expensive tracing for both coord families
+- Exit criteria:
+  - rays that cannot hit are rejected early with measurable time reduction.
 
-8. Add fast miss culling before tracing
-- For both coord systems, skip rays that cannot intersect domain with cheap tests.
-- For spherical domain workloads, use radial intersection prefilter before heavy traversal.
+8. Improve interpolation data locality (45 min)
+- Deliverable:
+  - reduced repeated corner/index map work in tight loops
+  - optional precomputed local coefficients where beneficial
+- Exit criteria:
+  - additional speedup visible in perf harness for both files.
 
-9. Rework notebook defaults for speed-first behavior
-- Default method map fixed to known-fast choices.
-- Benchmark cell explicitly optional and single-label by default.
-- Keep low-res debug mode (`3x3`) but ensure it is actually fast.
+9. Add perf guardrails (45 min)
+- Deliverable:
+  - opt-in perf tests (`--run-perf`) with budgets:
+    - IH `3x3` hot call budget
+    - SC `3x3` hot call budget
+    - `32x32` throughput budget
+- Exit criteria:
+  - regressions are caught automatically without slowing default unit test runs.
 
-10. Performance guardrails in tests/CI
-- Add opt-in perf tests (`--run-perf`) with wall-time budgets:
-  - IH `3x3` hot call budget
-  - SC `3x3` hot call budget
-  - `32x32` throughput budget
-- Keep them separate from unit-fast default runs.
-
-## Execution order (highest ROI first)
-
-1. Step 4 (serial dispatch for tiny xyz workloads)
-2. Step 3 (path diagnostics)
-3. Step 2 + Step 9 (notebook/setup hygiene)
-4. Step 5 (dedicated rpa bulk kernel)
-5. Step 6 + Step 7 + Step 8 (kernel-level optimization pass)
-6. Step 10 (perf CI guardrails)
+10. Final target validation (20 min)
+- Deliverable:
+  - before/after comparison against baseline grid-sum approach
+- Exit criteria:
+  - ray path faster than baseline for target cases, with table in repo.
 
 ## Definition of done
 
