@@ -37,7 +37,8 @@ Target bands:
 ## Execution protocol (no long waiting)
 
 - No blocking benchmark runs longer than 60 seconds in the development loop.
-- Default benchmark loop uses tiny inputs (`3x3`, then `8x8`) and hot-call timing only.
+- Hard cap until first proven speedup: use at most 50 rays per run.
+- Default benchmark loop uses tiny whole-domain inputs (for example `3x3`, `5x5`, up to max 50 rays) and hot-call timing only.
 - Full-size validation (`32x32`, `64x64`) runs only after a code change shows clear gains at small sizes.
 - Every optimization step must follow this cycle:
   1. add/adjust instrumentation
@@ -51,7 +52,7 @@ Target bands:
 1. Build reproducible microbenchmark harness (30 min)
 - Deliverable:
   - one perf script (not notebook) with machine-readable output table
-  - default run covers `SC` and `IH` at `3x3` and `8x8`
+  - default run covers `SC` and `IH` at whole-domain small grids up to 50 rays
   - optional extended run adds `32x32`, `64x64`
 - Measures:
   - setup time (`Dataset.from_file`, tree/interpolator build)
