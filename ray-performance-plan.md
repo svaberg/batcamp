@@ -44,6 +44,8 @@ Target bands:
   - setup time (`Dataset.from_file`, tree/interpolator build)
   - hot-call ray integration time
   - baseline grid-sample+sum time
+- Coverage rule:
+  - choose ray ranges/camera planes that span approximately the full dataset domain (whole-object view), not a local blowup region.
 - Exit criteria:
   - baseline table checked in and rerunnable in `batcamp` env.
 
@@ -109,6 +111,8 @@ Target bands:
 10. Final target validation (20 min)
 - Deliverable:
   - before/after comparison against baseline grid-sum approach
+- Validation rule:
+  - report results on whole-domain camera/range settings first; optional zoomed-in cases are secondary.
 - Exit criteria:
   - ray path faster than baseline for target cases, with table in repo.
 
