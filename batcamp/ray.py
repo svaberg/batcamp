@@ -122,6 +122,44 @@ def _forward_face_exit_dt(
 
 
 @njit(cache=True)
+def _clip_ray_interval_to_aabb(
+    origin_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    box_min_xyz: np.ndarray,
+    box_max_xyz: np.ndarray,
+    tol: float,
+) -> tuple[bool, float, float]:
+    """Clip ray interval `[t_start, t_end]` to one axis-aligned bounding box."""
+    t_near = t_start
+    t_far = t_end
+    dir_eps = 1e-15
+    for axis in range(3):
+        o = origin_xyz[axis]
+        d = direction_xyz_unit[axis]
+        bmin = box_min_xyz[axis] - tol
+        bmax = box_max_xyz[axis] + tol
+        if abs(d) <= dir_eps:
+            if o < bmin or o > bmax:
+                return False, t_start, t_start
+            continue
+        t0 = (bmin - o) / d
+        t1 = (bmax - o) / d
+        if t0 > t1:
+            tmp = t0
+            t0 = t1
+            t1 = tmp
+        if t0 > t_near:
+            t_near = t0
+        if t1 < t_far:
+            t_far = t1
+        if t_far <= t_near:
+            return False, t_near, t_far
+    return True, t_near, t_far
+
+
+@njit(cache=True)
 def _trace_segments_xyz_kernel(
     origin_xyz: np.ndarray,
     direction_xyz_unit: np.ndarray,
@@ -145,8 +183,26 @@ def _trace_segments_xyz_kernel(
     if t_end <= t_start or max_steps <= 0:
         return 0, cell_ids, enters, exits
 
-    abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-    t = t_start
+    clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+        origin_xyz,
+        direction_xyz_unit,
+        t_start,
+        t_end,
+        lookup_state.xyz_min,
+        lookup_state.xyz_max,
+        boundary_tol,
+    )
+    if not clipped or t1_clip <= t0_clip:
+        return 0, cell_ids, enters, exits
+
+    abs_eps = max(boundary_tol * (1.0 + abs(t1_clip - t0_clip)), 1e-12)
+    t = t0_clip
+    if t0_clip > t_start:
+        t = min(t1_clip, t0_clip + abs_eps)
+    if t >= t1_clip:
+        return 0, cell_ids, enters, exits
+
+    t_end = t1_clip
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
@@ -486,7 +542,23 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
         ox = origins_xyz[i, 0]
         oy = origins_xyz[i, 1]
         oz = origins_xyz[i, 2]
-        t = t_start
+        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            lookup_state.xyz_min,
+            lookup_state.xyz_max,
+            boundary_tol,
+        )
+        if not clipped or t1_clip <= t0_clip:
+            continue
+        t = t0_clip
+        if t0_clip > t_start:
+            t = min(t1_clip, t0_clip + abs_eps)
+        if t >= t1_clip:
+            continue
+        t_limit = t1_clip
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
@@ -496,7 +568,7 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
 
         col = 0.0
         for _ in range(max_steps):
-            if t >= (t_end - abs_eps):
+            if t >= (t_limit - abs_eps):
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
@@ -522,12 +594,12 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
 
             if not math.isfinite(t_exit):
                 break
-            if t_exit > t_end:
-                t_exit = t_end
+            if t_exit > t_limit:
+                t_exit = t_limit
             if t_exit <= t + abs_eps * 0.25:
                 t_exit = t + abs_eps
-                if t_exit > t_end:
-                    t_exit = t_end
+                if t_exit > t_limit:
+                    t_exit = t_limit
 
             x1 = ox + t_exit * d0
             y1 = oy + t_exit * d1
@@ -536,7 +608,7 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
             v1 = _trilinear_scalar_from_cell_xyz_state(cid, x1, y1, z1, interp_state)
             col += 0.5 * (v0 + v1) * (t_exit - t)
 
-            if t_exit >= (t_end - abs_eps):
+            if t_exit >= (t_limit - abs_eps):
                 t = t_exit
                 x = x1
                 y = y1
@@ -544,8 +616,8 @@ def _integrate_axis_aligned_xyz_scalar_kernel(
                 break
 
             t_next = t_exit + abs_eps
-            if t_next > t_end:
-                t_next = t_end
+            if t_next > t_limit:
+                t_next = t_limit
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
@@ -592,7 +664,23 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
         ox = origins_xyz[i, 0]
         oy = origins_xyz[i, 1]
         oz = origins_xyz[i, 2]
-        t = t_start
+        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            lookup_state.xyz_min,
+            lookup_state.xyz_max,
+            boundary_tol,
+        )
+        if not clipped or t1_clip <= t0_clip:
+            continue
+        t = t0_clip
+        if t0_clip > t_start:
+            t = min(t1_clip, t0_clip + abs_eps)
+        if t >= t1_clip:
+            continue
+        t_limit = t1_clip
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
@@ -602,7 +690,7 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
 
         col = 0.0
         for _ in range(max_steps):
-            if t >= (t_end - abs_eps):
+            if t >= (t_limit - abs_eps):
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
@@ -628,12 +716,12 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
 
             if not math.isfinite(t_exit):
                 break
-            if t_exit > t_end:
-                t_exit = t_end
+            if t_exit > t_limit:
+                t_exit = t_limit
             if t_exit <= t + abs_eps * 0.25:
                 t_exit = t + abs_eps
-                if t_exit > t_end:
-                    t_exit = t_end
+                if t_exit > t_limit:
+                    t_exit = t_limit
 
             tm = 0.5 * (t + t_exit)
             xm = ox + tm * d0
@@ -642,12 +730,12 @@ def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
             vm = _trilinear_scalar_from_cell_xyz_state(cid, xm, ym, zm, interp_state)
             col += vm * (t_exit - t)
 
-            if t_exit >= (t_end - abs_eps):
+            if t_exit >= (t_limit - abs_eps):
                 break
 
             t_next = t_exit + abs_eps
-            if t_next > t_end:
-                t_next = t_end
+            if t_next > t_limit:
+                t_next = t_limit
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
@@ -694,7 +782,23 @@ def _integrate_xyz_scalar_exact_kernel(
         ox = origins_xyz[i, 0]
         oy = origins_xyz[i, 1]
         oz = origins_xyz[i, 2]
-        t = t_start
+        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            lookup_state.xyz_min,
+            lookup_state.xyz_max,
+            boundary_tol,
+        )
+        if not clipped or t1_clip <= t0_clip:
+            continue
+        t = t0_clip
+        if t0_clip > t_start:
+            t = min(t1_clip, t0_clip + abs_eps)
+        if t >= t1_clip:
+            continue
+        t_limit = t1_clip
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
@@ -704,7 +808,7 @@ def _integrate_xyz_scalar_exact_kernel(
 
         col = 0.0
         for _ in range(max_steps):
-            if t >= (t_end - abs_eps):
+            if t >= (t_limit - abs_eps):
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
@@ -743,13 +847,13 @@ def _integrate_xyz_scalar_exact_kernel(
             if tz < dt_exit:
                 dt_exit = tz
             if not math.isfinite(dt_exit):
-                dt_exit = t_end - t
+                dt_exit = t_limit - t
             if dt_exit <= abs_eps:
                 dt_exit = abs_eps
 
             t_exit = t + dt_exit
-            if t_exit > t_end:
-                t_exit = t_end
+            if t_exit > t_limit:
+                t_exit = t_limit
             if t_exit < t:
                 t_exit = t
 
@@ -760,26 +864,26 @@ def _integrate_xyz_scalar_exact_kernel(
             v1 = _trilinear_scalar_from_cell_xyz_state(cid, x1, y1, z1, interp_state)
             col += 0.5 * (v0 + v1) * (t_exit - t)
 
-            if t_exit >= (t_end - abs_eps):
+            if t_exit >= (t_limit - abs_eps):
                 break
 
             t_next = t_exit + abs_eps
-            if t_next > t_end:
-                t_next = t_end
+            if t_next > t_limit:
+                t_next = t_limit
             if t_next <= t + abs_eps * 0.25:
                 t_next = t + abs_eps
-                if t_next > t_end:
-                    t_next = t_end
+                if t_next > t_limit:
+                    t_next = t_limit
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
             cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
-            if cid_next == cid and t_next < t_end:
+            if cid_next == cid and t_next < t_limit:
                 t_next = t_next + 4.0 * abs_eps
-                if t_next > t_end:
-                    t_next = t_end
+                if t_next > t_limit:
+                    t_next = t_limit
                 x_next = ox + t_next * d0
                 y_next = oy + t_next * d1
                 z_next = oz + t_next * d2
@@ -826,7 +930,23 @@ def _integrate_xyz_scalar_midpoint_kernel(
         ox = origins_xyz[i, 0]
         oy = origins_xyz[i, 1]
         oz = origins_xyz[i, 2]
-        t = t_start
+        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            lookup_state.xyz_min,
+            lookup_state.xyz_max,
+            boundary_tol,
+        )
+        if not clipped or t1_clip <= t0_clip:
+            continue
+        t = t0_clip
+        if t0_clip > t_start:
+            t = min(t1_clip, t0_clip + abs_eps)
+        if t >= t1_clip:
+            continue
+        t_limit = t1_clip
         x = ox + t * d0
         y = oy + t * d1
         z = oz + t * d2
@@ -836,7 +956,7 @@ def _integrate_xyz_scalar_midpoint_kernel(
 
         col = 0.0
         for _ in range(max_steps):
-            if t >= (t_end - abs_eps):
+            if t >= (t_limit - abs_eps):
                 break
 
             if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
@@ -875,13 +995,13 @@ def _integrate_xyz_scalar_midpoint_kernel(
             if tz < dt_exit:
                 dt_exit = tz
             if not math.isfinite(dt_exit):
-                dt_exit = t_end - t
+                dt_exit = t_limit - t
             if dt_exit <= abs_eps:
                 dt_exit = abs_eps
 
             t_exit = t + dt_exit
-            if t_exit > t_end:
-                t_exit = t_end
+            if t_exit > t_limit:
+                t_exit = t_limit
             if t_exit < t:
                 t_exit = t
 
@@ -892,26 +1012,26 @@ def _integrate_xyz_scalar_midpoint_kernel(
             vm = _trilinear_scalar_from_cell_xyz_state(cid, xm, ym, zm, interp_state)
             col += vm * (t_exit - t)
 
-            if t_exit >= (t_end - abs_eps):
+            if t_exit >= (t_limit - abs_eps):
                 break
 
             t_next = t_exit + abs_eps
-            if t_next > t_end:
-                t_next = t_end
+            if t_next > t_limit:
+                t_next = t_limit
             if t_next <= t + abs_eps * 0.25:
                 t_next = t + abs_eps
-                if t_next > t_end:
-                    t_next = t_end
+                if t_next > t_limit:
+                    t_next = t_limit
             x_next = ox + t_next * d0
             y_next = oy + t_next * d1
             z_next = oz + t_next * d2
             cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
             if cid_next < 0:
                 break
-            if cid_next == cid and t_next < t_end:
+            if cid_next == cid and t_next < t_limit:
                 t_next = t_next + 4.0 * abs_eps
-                if t_next > t_end:
-                    t_next = t_end
+                if t_next > t_limit:
+                    t_next = t_limit
                 x_next = ox + t_next * d0
                 y_next = oy + t_next * d1
                 z_next = oz + t_next * d2
@@ -1027,6 +1147,9 @@ class OctreeRayTracer:
     def __init__(self, tree: Octree) -> None:
         """Store the tree used for cell-segment tracing."""
         self.tree = tree
+        dmin, dmax = self.tree.domain_bounds(coord="xyz")
+        self._domain_xyz_min = np.asarray(dmin, dtype=float).reshape(3)
+        self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
 
     def trace(
         self,
@@ -1083,6 +1206,24 @@ class OctreeRayTracer:
         d = direction_xyz_unit
         t0 = float(t_start)
         t1 = float(t_end)
+        if t1 <= t0:
+            return []
+        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+            o,
+            d,
+            t0,
+            t1,
+            self._domain_xyz_min,
+            self._domain_xyz_max,
+            float(boundary_tol),
+        )
+        if not clipped or t1_clip <= t0_clip:
+            return []
+        abs_eps = max(float(boundary_tol) * (1.0 + abs(t1_clip - t0_clip)), 1e-12)
+        t0 = t0_clip
+        if t0_clip > float(t_start):
+            t0 = min(t1_clip, t0_clip + abs_eps)
+        t1 = t1_clip
         if t1 <= t0:
             return []
 
