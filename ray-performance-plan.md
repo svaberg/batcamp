@@ -34,12 +34,25 @@ Target bands:
 2. Mid-term: 10x-100x at practical image sizes (`32x32`, `64x64`).
 3. Long-term: 100x-1000x for large ray batches where kernels should dominate.
 
+## Execution protocol (no long waiting)
+
+- No blocking benchmark runs longer than 60 seconds in the development loop.
+- Default benchmark loop uses tiny inputs (`3x3`, then `8x8`) and hot-call timing only.
+- Full-size validation (`32x32`, `64x64`) runs only after a code change shows clear gains at small sizes.
+- Every optimization step must follow this cycle:
+  1. add/adjust instrumentation
+  2. implement code change
+  3. run short benchmark
+  4. keep or revert based on measured delta
+- If a command exceeds the time budget, stop it and switch to smaller benchmark size or narrower scope.
+
 ## Step-by-step plan (execution order)
 
-1. Build reproducible benchmark harness (30 min)
+1. Build reproducible microbenchmark harness (30 min)
 - Deliverable:
   - one perf script (not notebook) with machine-readable output table
-  - runs `SC` and `IH` for `3x3`, `32x32`, `64x64`
+  - default run covers `SC` and `IH` at `3x3` and `8x8`
+  - optional extended run adds `32x32`, `64x64`
 - Measures:
   - setup time (`Dataset.from_file`, tree/interpolator build)
   - hot-call ray integration time
@@ -48,6 +61,7 @@ Target bands:
   - choose ray ranges/camera planes that span approximately the full dataset domain (whole-object view), not a local blowup region.
 - Exit criteria:
   - baseline table checked in and rerunnable in `batcamp` env.
+  - default run completes well under 60 seconds.
 
 2. Add runtime path diagnostics (20 min)
 - Deliverable:
@@ -115,6 +129,7 @@ Target bands:
   - report results on whole-domain camera/range settings first; optional zoomed-in cases are secondary.
 - Exit criteria:
   - ray path faster than baseline for target cases, with table in repo.
+  - extended validation runs only after short-loop gains are established.
 
 ## Definition of done
 
