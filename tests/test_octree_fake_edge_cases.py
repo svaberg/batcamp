@@ -7,7 +7,7 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import OctreeRayInterpolator
+from batcamp import OctreeRayTracer
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
@@ -82,17 +82,15 @@ def test_fake_lookup_rejects_invalid_queries() -> None:
 
 
 def test_fake_trace_ray_zero_direction_raises() -> None:
-    """Ray interpolation should reject zero-length direction vectors."""
+    """Ray trace should reject zero-length direction vectors."""
     ds = _build_regular_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
     with pytest.raises(ValueError, match="direction_xyz must be finite and non-zero"):
-        OctreeRayInterpolator(interp).sample(
+        OctreeRayTracer(tree).trace(
             origin_xyz=np.array([1.0, 0.0, 0.0]),
             direction_xyz=np.array([0.0, 0.0, 0.0]),
             t_start=0.0,
             t_end=1.0,
-            n_samples=16,
         )
 
 
