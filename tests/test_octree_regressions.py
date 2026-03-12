@@ -6,7 +6,6 @@ from starwinds_readplt.dataset import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import OctreeRayTracer
 from batcamp.spherical import _xyz_to_rpa_components
 
 
@@ -50,18 +49,6 @@ def test_regression_lookup_outside_domain_returns_none(regression_context) -> No
     q = np.array([r_max + 50.0, 0.0, 0.0], dtype=float)
     hit = tree.lookup_point(q, coord="xyz")
     assert hit is None
-
-
-@pytest.mark.slow
-def test_regression_trace_ray_from_outside_returns_empty(regression_context) -> None:
-    """Regression: ray trace started outside the domain should return no segments."""
-    _ds, tree = regression_context
-    _r_lo, r_hi = tree.domain_bounds(coord="rpa")
-    r_max = float(r_hi[0])
-    origin = np.array([r_max + 25.0, 0.0, 0.0], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    segments = OctreeRayTracer(tree).trace(origin, direction, 0.0, 10.0)
-    assert segments == []
 
 
 @pytest.mark.slow

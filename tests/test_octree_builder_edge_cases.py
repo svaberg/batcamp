@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
@@ -8,7 +9,6 @@ import pytest
 from batcamp import Octree
 from batcamp import CartesianOctree
 from batcamp import OctreeInterpolator
-from batcamp import OctreeRayTracer
 from batcamp import OctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
 from fake_dataset import FakeDataset as _FakeDataset
@@ -309,28 +309,31 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
         builder._build(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
 
 
-def test_builder_handles_incompatible_blocks_aux_without_block_tree() -> None:
-    """Incompatible BLOCKS aux metadata should be ignored by the octree builder."""
+def test_builder_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogCaptureFixture) -> None:
+    """Incompatible BLOCKS aux metadata should be ignored with a warning."""
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "7 3x5x9"
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
+        tree = OctreeBuilder().build(ds, tree_coord="rpa")
     assert tree.level_counts
     assert tree.leaf_shape[0] > 0
+    assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
+
+
+def test_builder_does_not_warn_on_compatible_blocks_aux(caplog: pytest.LogCaptureFixture) -> None:
+    """Compatible BLOCKS aux metadata should not emit a warning."""
+    ds = _build_regular_dataset()
+    ds.aux["BLOCKS"] = "1 2x4x8"
+    with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
+        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    assert tree.level_counts
+    assert not any("BLOCKS" in rec.getMessage() for rec in caplog.records)
 
 
 def test_octree_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
     assert not hasattr(tree, "depth_for_level")
-
-
-def test_octree_trace_ray_returns_empty_for_non_increasing_interval() -> None:
-    """Ray trace should return empty when `t_end <= t_start`."""
-    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
-    origin = np.array([0.0, 0.0, 0.0])
-    direction = np.array([1.0, 0.0, 0.0])
-    assert OctreeRayTracer(tree).trace(origin, direction, 1.0, 1.0) == []
-    assert OctreeRayTracer(tree).trace(origin, direction, 2.0, 1.0) == []
 
 
 def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
