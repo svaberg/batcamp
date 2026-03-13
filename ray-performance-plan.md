@@ -24,7 +24,7 @@ Additional checks:
   - IH was ~8.59s there (now ~4.6s)
 - Tests are mixed:
   - many unit/edge ray tests are fast (`<1s` range)
-  - notebook-contract ray test is slow (`~14s`)
+  - ray-contract test setup is slow (`~14s`)
   - slow-marked ray tracer module run is `~14s`
 
 ## Goal

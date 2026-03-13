@@ -15,7 +15,7 @@ def regression_context(difflevels_rpa_context: dict[str, object]) -> tuple[Datas
     return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
 
 
-def test_regression_xyz_to_rpa_components_is_stable_and_finite() -> None:
+def test_xyz_to_rpa_components_stable_and_finite() -> None:
     """Regression: xyz->rpa conversion should be finite and non-recursive."""
     q = np.array([1.0, 0.0, 0.0], dtype=float)
     r, polar, azimuth = _xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
@@ -28,7 +28,7 @@ def test_regression_xyz_to_rpa_components_is_stable_and_finite() -> None:
 
 
 @pytest.mark.slow
-def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
+def test_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
     """No-tree interpolator should recover from invalid xyz reconstruction on spherical data."""
     ds, _tree = regression_context
     interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=None)
@@ -41,7 +41,7 @@ def test_regression_interpolator_without_tree_falls_back_to_rpa(regression_conte
 
 
 @pytest.mark.slow
-def test_regression_lookup_outside_domain_returns_none(regression_context) -> None:
+def test_lookup_outside_domain_returns_none(regression_context) -> None:
     """Regression: lookup outside radial domain should not snap to nearest cell."""
     _ds, tree = regression_context
     _r_lo, r_hi = tree.domain_bounds(coord="rpa")
@@ -52,7 +52,7 @@ def test_regression_lookup_outside_domain_returns_none(regression_context) -> No
 
 
 @pytest.mark.slow
-def test_regression_load_uses_dataset_corners(tmp_path, regression_context) -> None:
+def test_load_uses_dataset_corners(tmp_path, regression_context) -> None:
     """Regression: loaded trees should resolve lookups from bound dataset corners."""
     ds, tree = regression_context
     path = tmp_path / "tree_regression.npz"

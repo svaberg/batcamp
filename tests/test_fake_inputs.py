@@ -61,14 +61,14 @@ def _build_axis_only_fake_dataset() -> _FakeDataset:
     )
 
 
-def test_fake_axis_only_dataset_is_rejected() -> None:
+def test_axis_only_dataset_rejected() -> None:
     """Axis-only cells should fail octree build because no valid phi levels exist."""
     ds = _build_axis_only_fake_dataset()
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels"):
         Octree.from_dataset(ds, tree_coord="rpa")
 
 
-def test_fake_lookup_rejects_invalid_queries() -> None:
+def test_lookup_rejects_invalid_queries() -> None:
     """Lookup should return None for non-finite or invalid-angle queries."""
     ds = _build_regular_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
@@ -80,7 +80,7 @@ def test_fake_lookup_rejects_invalid_queries() -> None:
     assert tree.lookup_point(np.array([float("nan"), 1.0, 0.0], dtype=float), coord="rpa") is None
 
 
-def test_fake_interpolator_fill_for_invalid_points() -> None:
+def test_interpolator_fill_for_invalid_points() -> None:
     """Interpolator should emit fill value and cell_id=-1 for invalid queries."""
     ds = _build_regular_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
@@ -100,7 +100,7 @@ def test_fake_interpolator_fill_for_invalid_points() -> None:
     assert np.allclose(vals, -123.0, atol=0.0, rtol=0.0)
 
 
-def test_fake_bind_without_corners_is_rejected() -> None:
+def test_bind_without_corners_rejected() -> None:
     """Binding a tree to a dataset with missing corners should fail clearly."""
     ds = _build_regular_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")

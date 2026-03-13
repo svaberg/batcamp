@@ -178,7 +178,7 @@ def cartesian_octree_context() -> tuple[_FakeDataset, CartesianOctree, OctreeInt
     return ds, tree, interp
 
 
-def test_cartesian_fixture_builds_xyz_tree(cartesian_octree_context) -> None:
+def test_xyz_fixture_builds_tree(cartesian_octree_context) -> None:
     """Fixture should provide a bound Cartesian tree and xyz interpolator."""
     _ds, tree, interp = cartesian_octree_context
     assert isinstance(tree, CartesianOctree)
@@ -186,7 +186,7 @@ def test_cartesian_fixture_builds_xyz_tree(cartesian_octree_context) -> None:
     assert interp.tree is tree
 
 
-def test_cartesian_lookup_hits_cell_centers(cartesian_octree_context) -> None:
+def test_xyz_lookup_hits_cell_centers(cartesian_octree_context) -> None:
     """Cartesian lookup should resolve each cell center to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
     centers = np.array(tree.cell_centers, dtype=float)
@@ -197,7 +197,7 @@ def test_cartesian_lookup_hits_cell_centers(cartesian_octree_context) -> None:
         assert int(hit.cell_id) == int(cid)
 
 
-def test_cartesian_interpolation_matches_linear_xyz_field(cartesian_octree_context) -> None:
+def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
     """Cartesian trilinear interpolation should reconstruct the synthetic linear xyz field."""
     _ds, tree, interp = cartesian_octree_context
     rng = np.random.default_rng(42)
@@ -220,7 +220,7 @@ def test_cartesian_interpolation_matches_linear_xyz_field(cartesian_octree_conte
     assert np.allclose(np.array(values, dtype=float), expected, atol=1e-12, rtol=0.0)
 
 
-def test_builder_build_rejects_missing_corners() -> None:
+def test_build_rejects_missing_corners() -> None:
     """Builder should fail fast when dataset has no corners."""
     points = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 2.0]])
     ds = _FakeDataset(
@@ -232,14 +232,14 @@ def test_builder_build_rejects_missing_corners() -> None:
         OctreeBuilder().build(ds)
 
 
-def test_builder_build_rejects_unknown_tree_coord() -> None:
+def test_build_rejects_unknown_tree_coord() -> None:
     """Builder should reject unsupported coordinate-system identifiers."""
     ds = _build_regular_dataset()
     with pytest.raises(ValueError, match="Unsupported tree_coord"):
         OctreeBuilder().build(ds, tree_coord="foo")
 
 
-def test_builder_build_xyz_returns_cartesian_octree() -> None:
+def test_build_xyz_returns_cartesian_tree() -> None:
     """Builder should construct Cartesian octree when tree_coord='xyz'."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
@@ -247,14 +247,14 @@ def test_builder_build_xyz_returns_cartesian_octree() -> None:
     assert tree.tree_coord == "xyz"
 
 
-def test_builder_build_default_returns_cartesian_octree_subclass() -> None:
+def test_build_default_returns_cartesian_tree() -> None:
     """Default build path should return the Cartesian octree specialization."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds)
     assert isinstance(tree, CartesianOctree)
 
 
-def test_builder_compute_phi_levels_rejects_missing_phi_source() -> None:
+def test_compute_phi_levels_rejects_missing_phi_source() -> None:
     """Phi-level computation should reject datasets lacking phi source fields."""
     points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
     corners = np.array([[0, 1, 2]], dtype=np.int64)
@@ -267,7 +267,7 @@ def test_builder_compute_phi_levels_rejects_missing_phi_source() -> None:
         SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
 
 
-def test_builder_compute_phi_levels_rejects_bad_corner_rank() -> None:
+def test_compute_phi_levels_rejects_bad_corner_rank() -> None:
     """Phi-level computation should reject non-2D corner arrays."""
     points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
     corners = np.array([0, 1, 2], dtype=np.int64)
@@ -280,7 +280,7 @@ def test_builder_compute_phi_levels_rejects_bad_corner_rank() -> None:
         SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
 
 
-def test_builder_compute_phi_levels_rejects_too_few_corners_per_cell() -> None:
+def test_compute_phi_levels_rejects_too_few_corners() -> None:
     """Phi-level computation should reject cells with fewer than 3 corners."""
     points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
     corners = np.array([[0, 1]], dtype=np.int64)
@@ -293,13 +293,13 @@ def test_builder_compute_phi_levels_rejects_too_few_corners_per_cell() -> None:
         SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
 
 
-def test_builder_infer_levels_marks_non_dyadic_span_invalid() -> None:
+def test_infer_levels_marks_non_dyadic_span_invalid() -> None:
     """Non-dyadic delta-phi spans should map to level -1."""
     levels = SphericalOctreeBuilder.infer_levels_from_span(np.array([1.0, 0.5, 0.3]))
     assert np.array_equal(levels, np.array([0, 1, -1], dtype=np.int64))
 
 
-def test_builder_build_tree_rejects_all_invalid_levels() -> None:
+def test_build_tree_rejects_all_invalid_levels() -> None:
     """Tree construction should fail when all provided levels are invalid."""
     ds = _build_regular_dataset()
     builder = OctreeBuilder()
@@ -309,7 +309,7 @@ def test_builder_build_tree_rejects_all_invalid_levels() -> None:
         builder._build(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
 
 
-def test_builder_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogCaptureFixture) -> None:
+def test_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogCaptureFixture) -> None:
     """Incompatible BLOCKS aux metadata should be ignored with a warning."""
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "7 3x5x9"
@@ -320,7 +320,7 @@ def test_builder_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pyt
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
 
 
-def test_builder_does_not_warn_on_compatible_blocks_aux(caplog: pytest.LogCaptureFixture) -> None:
+def test_no_warning_on_compatible_blocks_aux(caplog: pytest.LogCaptureFixture) -> None:
     """Compatible BLOCKS aux metadata should not emit a warning."""
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "1 2x4x8"
@@ -330,13 +330,33 @@ def test_builder_does_not_warn_on_compatible_blocks_aux(caplog: pytest.LogCaptur
     assert not any("BLOCKS" in rec.getMessage() for rec in caplog.records)
 
 
-def test_octree_no_public_depth_for_level_helper() -> None:
+def test_warns_on_blocks_count_mismatch(caplog: pytest.LogCaptureFixture) -> None:
+    """BLOCKS count mismatch should emit a warning."""
+    ds = _build_regular_dataset()
+    ds.aux["BLOCKS"] = "5 1x1x1"
+    with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
+        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    assert tree.level_counts
+    assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
+
+
+def test_warns_on_impossible_blocks_count(caplog: pytest.LogCaptureFixture) -> None:
+    """Impossible BLOCKS counts should emit a mismatch warning."""
+    ds = _build_regular_dataset()
+    ds.aux["BLOCKS"] = "1000 1x1x1"
+    with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
+        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    assert tree.level_counts
+    assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
+
+
+def test_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
     assert not hasattr(tree, "depth_for_level")
 
 
-def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
+def test_build_bind_false_returns_unbound_until_bind() -> None:
     """Builder with `bind=False` should return unbound tree requiring explicit bind."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
@@ -352,7 +372,7 @@ def test_builder_build_bind_false_returns_unbound_tree_until_bind() -> None:
     assert tree.ds is ds
 
 
-def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
+def test_build_bind_false_stores_tree_coord() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
@@ -366,7 +386,7 @@ def test_builder_build_bind_false_stores_tree_coord_metadata() -> None:
     assert tree.tree_coord == "xyz"
 
 
-def test_builder_build_rejects_inconsistent_dataset_corners_for_spherical_inference() -> None:
+def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
     """Spherical build should fail when `ds.corners` is internally inconsistent."""
     ds = _build_regular_dataset(nr=1, ntheta=2, nphi=2)
     corners_full = np.array(ds.corners, copy=True)
@@ -381,7 +401,7 @@ def test_builder_build_rejects_inconsistent_dataset_corners_for_spherical_infere
         )
 
 
-def test_lookup_runs_for_xyz_tree_coord() -> None:
+def test_lookup_runs_for_xyz() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
@@ -390,7 +410,7 @@ def test_lookup_runs_for_xyz_tree_coord() -> None:
     assert not hasattr(tree, "lookup_rpa")
 
 
-def test_lookup_gap_returns_none_for_disjoint_cartesian_cells() -> None:
+def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
     """Cartesian lookup should return miss for points in an uncovered bbox gap."""
     ds = _build_disjoint_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
@@ -399,7 +419,7 @@ def test_lookup_gap_returns_none_for_disjoint_cartesian_cells() -> None:
     assert hit is None
 
 
-def test_lookup_gap_returns_none_for_disjoint_spherical_shells() -> None:
+def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:
     """Spherical lookup should return miss for points in a radial gap."""
     ds = _build_disjoint_spherical_shell_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")

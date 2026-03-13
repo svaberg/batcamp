@@ -33,7 +33,7 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.slow
-def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
+def test_lookup_xyz_rpa_consistency(advanced_context) -> None:
     """Many interior points should map to the same cell in xyz and rpa lookup coords."""
     _ds, tree = advanced_context
     queries = _select_center_queries(tree, n_query=64, seed=1)
@@ -47,7 +47,7 @@ def test_lookup_xyz_rpa_consistency_many_points(advanced_context) -> None:
 
 
 @pytest.mark.slow
-def test_interpolator_matches_when_using_loaded_tree(advanced_context, tmp_path) -> None:
+def test_loaded_tree_interpolator_match(advanced_context, tmp_path) -> None:
     """Interpolator outputs should be equal when using original vs loaded tree."""
     ds, tree = advanced_context
     path = tmp_path / "advanced_interp_tree.npz"

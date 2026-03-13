@@ -65,7 +65,7 @@ def _build_regular_fake_dataset(
 
 
 @pytest.mark.slow
-def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> None:
+def test_segments_ordered_and_inside_cells(advanced_context) -> None:
     """Ray traversal segments must be monotone and contain their midpoint sample."""
     _ds, tree = advanced_context
     origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
@@ -90,7 +90,7 @@ def test_trace_ray_segments_are_ordered_and_inside_cells(advanced_context) -> No
 
 
 @pytest.mark.slow
-def test_loaded_tree_matches_original_ray_walk(advanced_context, tmp_path) -> None:
+def test_loaded_tree_matches_original_walk(advanced_context, tmp_path) -> None:
     """Persisted/reloaded tree should produce equivalent ray traversal segments."""
     _ds, tree = advanced_context
     path = tmp_path / "advanced_ray_tree.npz"
@@ -112,7 +112,7 @@ def test_loaded_tree_matches_original_ray_walk(advanced_context, tmp_path) -> No
 
 
 @pytest.mark.slow
-def test_regression_trace_ray_from_outside_returns_empty(regression_context) -> None:
+def test_outside_outward_ray_returns_empty(regression_context) -> None:
     """Outside-start outward rays should traverse no segments."""
     _ds, tree = regression_context
     _r_lo, r_hi = tree.domain_bounds(coord="rpa")
@@ -123,7 +123,7 @@ def test_regression_trace_ray_from_outside_returns_empty(regression_context) -> 
     assert segments == []
 
 
-def test_trace_ray_returns_empty_for_non_increasing_interval(regression_context) -> None:
+def test_non_increasing_interval_returns_empty(regression_context) -> None:
     """Ray trace should return empty when `t_end <= t_start`."""
     _ds, tree = regression_context
     origin = np.array([0.0, 0.0, 0.0])
@@ -132,7 +132,7 @@ def test_trace_ray_returns_empty_for_non_increasing_interval(regression_context)
     assert OctreeRayTracer(tree).trace(origin, direction, 2.0, 1.0) == []
 
 
-def test_fake_trace_ray_zero_direction_raises() -> None:
+def test_zero_direction_raises() -> None:
     """Ray trace should reject zero-length direction vectors."""
     ds = _build_regular_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")

@@ -20,9 +20,9 @@ pytestmark = [
 ]
 
 
-def test_octree_build_and_query_runtime_on_mixed_level_3d_file() -> None:
+def test_build_and_query_runtime_guardrail() -> None:
     """Performance guardrail for octree interpolator build/query on representative data."""
-    input_file = data_file("difflevels-3d__var_1_n00000000.dat")
+    input_file = data_file("3d__var_4_n00005000.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
 
     ds = Dataset.from_file(str(input_file))
