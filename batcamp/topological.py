@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from numba import njit
 import numpy as np
@@ -12,6 +13,15 @@ from .octree import Octree
 
 FACE_COUNT = 6
 _NEG_POS = np.array([-1, 1], dtype=np.int64)
+
+
+class TopologicalKernelState(NamedTuple):
+    """Arrays consumed directly by numba traversal kernels."""
+
+    face_offsets: np.ndarray
+    face_neighbors: np.ndarray
+    node_cell_ids: np.ndarray
+    cell_to_node_id: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,7 @@ class TopologicalNeighborhood:
     face_offsets: np.ndarray
     face_neighbors: np.ndarray
     node_cell_ids: np.ndarray
+    cell_to_node_id: np.ndarray
     min_level: int
     max_level: int
     periodic_i2: bool
@@ -47,6 +58,16 @@ class TopologicalNeighborhood:
         start = int(self.face_offsets[slot])
         end = int(self.face_offsets[slot + 1])
         return self.face_neighbors[start:end]
+
+    @property
+    def kernel_state(self) -> TopologicalKernelState:
+        """Return compact topology arrays for numba kernels."""
+        return TopologicalKernelState(
+            face_offsets=np.asarray(self.face_offsets, dtype=np.int64),
+            face_neighbors=np.asarray(self.face_neighbors, dtype=np.int64),
+            node_cell_ids=np.asarray(self.node_cell_ids, dtype=np.int64),
+            cell_to_node_id=np.asarray(self.cell_to_node_id, dtype=np.int64),
+        )
 
 
 @njit(cache=True)
@@ -397,16 +418,18 @@ def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarra
     unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
 
     node_cell_ids = np.full(unique_keys.shape[0], -1, dtype=np.int64)
+    cell_to_node_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
     for row, node_id in enumerate(inverse):
         nid = int(node_id)
         if node_cell_ids[nid] < 0:
             node_cell_ids[nid] = int(cell_ids[row])
+        cell_to_node_id[int(cell_ids[row])] = nid
 
     levels = np.asarray(unique_keys[:, 0], dtype=np.int64)
     i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
     i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
     i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
-    return levels, i0, i1, i2, node_cell_ids
+    return levels, i0, i1, i2, node_cell_ids, cell_to_node_id
 
 
 def build_topological_neighborhood(tree: Octree, *, max_level: int | None = None) -> TopologicalNeighborhood:
@@ -426,7 +449,7 @@ def build_topological_neighborhood(tree: Octree, *, max_level: int | None = None
             f"max_level={target_max_level} is outside [{min_tree_level}, {max_tree_level}] for this tree."
         )
 
-    levels, i0, i1, i2, node_cell_ids = _frontier_nodes_from_octree(tree, target_max_level)
+    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = _frontier_nodes_from_octree(tree, target_max_level)
     min_level = int(np.min(levels))
     level_shapes = _level_shapes_for_cutoff(tree, min_level, target_max_level)
     periodic_i2 = str(tree.tree_coord) == "rpa"
@@ -450,6 +473,7 @@ def build_topological_neighborhood(tree: Octree, *, max_level: int | None = None
         face_offsets=face_offsets,
         face_neighbors=face_neighbors,
         node_cell_ids=node_cell_ids,
+        cell_to_node_id=cell_to_node_id,
         min_level=min_level,
         max_level=target_max_level,
         periodic_i2=periodic_i2,
