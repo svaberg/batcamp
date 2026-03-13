@@ -17,7 +17,7 @@ from .octree import Octree
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
-_DEFAULT_LOOKUP_MAX_RADIUS = 2
+_DEFAULT_LOOKUP_MAX_RADIUS = 8
 
 
 @njit(cache=True)
@@ -170,32 +170,6 @@ def _lookup_rpa_cell_id_kernel(
 
             if inside_best >= 0:
                 return inside_best
-
-    n_cells = lookup_state.cell_centers.shape[0]
-    pool_inside_best = -1
-    pool_inside_best_d2 = np.inf
-    for cid in range(n_cells):
-        if (
-            r < (lookup_state.cell_r_min[cid] - _LOOKUP_CONTAIN_TOL)
-            or r > (lookup_state.cell_r_max[cid] + _LOOKUP_CONTAIN_TOL)
-        ):
-            continue
-        dx = lookup_state.cell_centers[cid, 0] - qx
-        dy = lookup_state.cell_centers[cid, 1] - qy
-        dz = lookup_state.cell_centers[cid, 2] - qz
-        d2 = dx * dx + dy * dy + dz * dz
-        if _contains_rpa_cell(
-            cid,
-            r,
-            polar,
-            azimuth,
-            lookup_state,
-        ) and d2 < pool_inside_best_d2:
-            pool_inside_best_d2 = d2
-            pool_inside_best = cid
-
-    if pool_inside_best >= 0:
-        return pool_inside_best
     return -1
 
 class _SphericalCellLookup:

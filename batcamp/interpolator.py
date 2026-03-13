@@ -537,7 +537,7 @@ class OctreeInterpolator:
         """Build per-cell corner mappings for Cartesian trilinear interpolation.
 
         The Cartesian backend maps query/corner positions through per-cell
-        axis-aligned min/max bounds (AABB normalization).
+        axis-aligned min/max bounds (slab normalization).
         """
         corners = self._corners
         pts = np.array(self.lookup.points, dtype=float)
