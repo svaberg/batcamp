@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from starwinds_readplt.dataset import Dataset
 
 from batcamp import Octree
 from batcamp.topological import build_topological_neighborhood
@@ -9,6 +10,7 @@ from batcamp.topological import TopologicalNeighborhood
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from sample_data_helper import data_file
 
 
 def _build_cartesian_uniform_tree() -> Octree:
@@ -189,3 +191,39 @@ def test_max_level_cutoff_reduces_frontier_size() -> None:
     assert np.all(topo_full.face_counts <= 4)
     assert np.all(topo_coarse.face_counts <= 1)
     assert np.all(topo_full.face_counts.sum(axis=1) <= 24)
+
+
+_TOPOLOGY_SAMPLE_CASES = [
+    pytest.param(
+        "3d__var_1_n00000000.plt",
+        "rpa",
+        id="provided_example_file",
+    ),
+    pytest.param(
+        "3d__var_4_n00044000.plt",
+        "rpa",
+        id="pooch_sc",
+        marks=[pytest.mark.pooch, pytest.mark.slow],
+    ),
+    pytest.param(
+        "3d__var_4_n00005000.plt",
+        "xyz",
+        id="pooch_ih",
+        marks=[pytest.mark.pooch, pytest.mark.slow],
+    ),
+]
+
+
+@pytest.mark.parametrize("file_name,tree_coord", _TOPOLOGY_SAMPLE_CASES)
+def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: str) -> None:
+    ds = Dataset.from_file(str(data_file(file_name)))
+    tree = Octree.from_dataset(ds, tree_coord=tree_coord)
+    topo = build_topological_neighborhood(tree)
+
+    _assert_basic_topology_invariants(topo)
+    assert topo.node_count == int(tree.cell_count)
+    assert topo.max_level == int(tree.max_level)
+    assert topo.periodic_i2 == (tree_coord == "rpa")
+
+    # Real meshes should have at least some connected faces.
+    assert int(topo.face_neighbors.size) > 0
