@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pytest
 from starwinds_readplt.dataset import Dataset
@@ -123,21 +125,47 @@ def _assert_basic_topology_invariants(topo: TopologicalNeighborhood) -> None:
             assert np.unique(neighbors).size == neighbors.size
 
 
+def _build_topology_timed(
+    tree: Octree,
+    *,
+    label: str,
+    max_level: int | None = None,
+) -> tuple[TopologicalNeighborhood, float]:
+    """Private test helper: build topology and emit a small timing line."""
+    t0 = time.perf_counter()
+    topo = build_topological_neighborhood(tree, max_level=max_level)
+    elapsed_s = time.perf_counter() - t0
+    print(
+        f"topology {label}: {elapsed_s * 1.0e3:.2f} ms, "
+        f"nodes={topo.node_count}, face_refs={int(topo.face_neighbors.size)}"
+    )
+    return topo, elapsed_s
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _warm_topology_numba() -> None:
+    """Private test helper: compile topology kernels before timing assertions/prints."""
+    build_topological_neighborhood(_build_cartesian_uniform_tree())
+    build_topological_neighborhood(_build_spherical_uniform_tree())
+
+
 @pytest.mark.parametrize(
     "tree_builder",
     [_build_cartesian_uniform_tree, _build_spherical_uniform_tree],
     ids=["cartesian_uniform", "spherical_uniform"],
 )
-def test_uniform_topology_basic_invariants(tree_builder) -> None:
+def test_uniform_topology_basic_invariants(tree_builder, record_property) -> None:
     tree = tree_builder()
-    topo = build_topological_neighborhood(tree)
+    topo, elapsed_s = _build_topology_timed(tree, label=tree.tree_coord)
+    record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
     _assert_basic_topology_invariants(topo)
     assert np.all(topo.face_counts <= 1)
 
 
-def test_cartesian_uniform_topology_neighbors_are_bidirectional() -> None:
+def test_cartesian_uniform_topology_neighbors_are_bidirectional(record_property) -> None:
     tree = _build_cartesian_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo, elapsed_s = _build_topology_timed(tree, label="cartesian_bidirectional")
+    record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
 
     assert topo.node_count == int(tree.cell_count)
     np.testing.assert_array_equal(
@@ -154,9 +182,10 @@ def test_cartesian_uniform_topology_neighbors_are_bidirectional() -> None:
                 assert np.any(back == node_id)
 
 
-def test_spherical_uniform_topology_wraps_azimuth_faces() -> None:
+def test_spherical_uniform_topology_wraps_azimuth_faces(record_property) -> None:
     tree = _build_spherical_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo, elapsed_s = _build_topology_timed(tree, label="spherical_wrap")
+    record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
 
     assert topo.periodic_i2
     np.testing.assert_array_equal(
@@ -173,11 +202,13 @@ def test_spherical_uniform_topology_wraps_azimuth_faces() -> None:
         assert int(topo.i2[int(left[0])]) == i2_max
 
 
-def test_max_level_cutoff_reduces_frontier_size() -> None:
+def test_max_level_cutoff_reduces_frontier_size(record_property) -> None:
     tree = _build_two_level_topology_tree()
 
-    topo_full = build_topological_neighborhood(tree, max_level=1)
-    topo_coarse = build_topological_neighborhood(tree, max_level=0)
+    topo_full, elapsed_full_s = _build_topology_timed(tree, label="cutoff_full", max_level=1)
+    topo_coarse, elapsed_coarse_s = _build_topology_timed(tree, label="cutoff_coarse", max_level=0)
+    record_property("build_topology_full_ms", round(elapsed_full_s * 1.0e3, 3))
+    record_property("build_topology_coarse_ms", round(elapsed_coarse_s * 1.0e3, 3))
 
     assert topo_full.max_level == 1
     assert topo_coarse.max_level == 0
@@ -215,10 +246,11 @@ _TOPOLOGY_SAMPLE_CASES = [
 
 
 @pytest.mark.parametrize("file_name,tree_coord", _TOPOLOGY_SAMPLE_CASES)
-def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: str) -> None:
+def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: str, record_property) -> None:
     ds = Dataset.from_file(str(data_file(file_name)))
     tree = Octree.from_dataset(ds, tree_coord=tree_coord)
-    topo = build_topological_neighborhood(tree)
+    topo, elapsed_s = _build_topology_timed(tree, label=file_name)
+    record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
 
     _assert_basic_topology_invariants(topo)
     assert topo.node_count == int(tree.cell_count)
