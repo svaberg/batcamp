@@ -350,8 +350,8 @@ def test_midpoint_integral_finds_shell_after_outside_start() -> None:
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
     t0, t1 = 0.0, 3.0
 
-    segments = OctreeRayTracer(tree).trace(origin, direction, t0, t1)
-    assert len(segments) > 0
+    cell_ids, _t_enter, _t_exit = OctreeRayTracer(tree).trace(origin, direction, t0, t1)
+    assert cell_ids.size > 0
 
     ray_int = float(ray.integrate_field_along_rays_midpoint(origin[None, :], direction, t0, t1)[0])
     t = np.linspace(t0, t1, 512, dtype=float)

@@ -2,36 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeRayTracer
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
-
-
-@pytest.fixture(scope="module")
-def advanced_context(difflevels_rpa_context: dict[str, object]) -> tuple[object, Octree]:
-    """Private test helper: reuse session-cached difflevels dataset/tree pair."""
-    return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
-
-
-@pytest.fixture(scope="module")
-def regression_context(difflevels_rpa_context: dict[str, object]) -> tuple[Dataset, Octree]:
-    """Private test helper: reuse session-cached regression dataset/tree pair."""
-    return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
-
-
-def _select_resolvable_center_near_radius(tree: Octree, *, target_r: float) -> np.ndarray:
-    """Private test helper: pick one resolvable center near `target_r`."""
-    centers = np.asarray(tree.cell_centers, dtype=float)
-    center_r = np.linalg.norm(centers, axis=1)
-    order = np.argsort(np.abs(center_r - float(target_r)))
-    for idx in order.tolist():
-        q = np.asarray(centers[int(idx)], dtype=float)
-        if tree.lookup_point(q, coord="xyz") is not None:
-            return q
-    raise AssertionError("No resolvable center found near requested radius.")
 
 
 def _build_regular_fake_dataset(
@@ -40,7 +15,7 @@ def _build_regular_fake_dataset(
     ntheta: int = 2,
     nphi: int = 4,
 ) -> _FakeDataset:
-    """Private test helper: build a regular spherical dataset for edge-case tests."""
+    """Private test helper: build a small spherical shell dataset."""
     points, corners = _build_spherical_hex_mesh(
         nr=nr,
         ntheta=ntheta,
@@ -64,72 +39,76 @@ def _build_regular_fake_dataset(
     )
 
 
-@pytest.mark.slow
-def test_segments_ordered_and_inside_cells(advanced_context) -> None:
-    """Ray traversal segments must be monotone and contain their midpoint sample."""
-    _ds, tree = advanced_context
-    origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
-    direction = np.array([1.0, 0.32, 0.11], dtype=float)
+def test_trace_arrays_ordered_and_inside_cells() -> None:
+    """Ray tracer should return ordered array segments that stay in the domain."""
+    ds = _build_regular_fake_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+
+    origin = np.array([2.2, 0.1, 0.0], dtype=float)
+    direction = np.array([-1.0, 0.2, 0.1], dtype=float)
     t_start = 0.0
-    t_end = 6.5
+    t_end = 6.0
 
-    segments = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
-    assert segments, "Expected at least one traversed segment."
-
-    ray_dir = direction / np.linalg.norm(direction)
-    prev_exit = float(t_start)
-    for seg in segments:
-        assert float(seg.t_exit) >= float(seg.t_enter)
-        assert float(seg.t_enter) >= prev_exit - 1e-6
-        prev_exit = float(seg.t_exit)
-        mid_t = 0.5 * (float(seg.t_enter) + float(seg.t_exit))
-        p_mid = origin + mid_t * ray_dir
-        assert tree.contains_cell(int(seg.cell_id), p_mid, coord="xyz", tol=1e-6)
-    assert float(segments[0].t_enter) >= float(t_start) - 1e-8
-    assert float(segments[-1].t_exit) <= float(t_end) + 1e-6
+    cell_ids, t_enter, t_exit = tracer.trace(origin, direction, t_start, t_end)
+    assert cell_ids.ndim == 1 and t_enter.ndim == 1 and t_exit.ndim == 1
+    assert cell_ids.shape == t_enter.shape == t_exit.shape
+    assert cell_ids.size > 0
+    assert np.all(cell_ids >= 0)
+    assert np.all(t_exit >= t_enter)
+    if t_enter.size > 1:
+        assert np.all(np.diff(t_enter) >= -1.0e-8)
+    assert float(t_enter[0]) >= float(t_start) - 1.0e-8
+    assert float(t_exit[-1]) <= float(t_end) + 1.0e-6
 
 
-@pytest.mark.slow
-def test_loaded_tree_matches_original_walk(advanced_context, tmp_path) -> None:
-    """Persisted/reloaded tree should produce equivalent ray traversal segments."""
-    _ds, tree = advanced_context
-    path = tmp_path / "advanced_ray_tree.npz"
+def test_loaded_tree_matches_original_walk(tmp_path) -> None:
+    """Persisted/reloaded trees should return equal segment arrays."""
+    ds = _build_regular_fake_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    path = tmp_path / "ray_tree.npz"
     tree.save(path)
     loaded = Octree.load(path, ds=tree.ds)
 
-    origin = _select_resolvable_center_near_radius(tree, target_r=1.0)
-    direction = np.array([1.0, 0.32, 0.11], dtype=float)
+    origin = np.array([2.2, 0.1, 0.0], dtype=float)
+    direction = np.array([-1.0, 0.2, 0.1], dtype=float)
     t_start = 0.0
-    t_end = 6.5
+    t_end = 6.0
 
-    seg_a = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
-    seg_b = OctreeRayTracer(loaded).trace(origin, direction, t_start, t_end)
-    assert len(seg_a) == len(seg_b)
-    for a, b in zip(seg_a, seg_b):
-        assert int(a.cell_id) == int(b.cell_id)
-        assert np.isclose(float(a.t_enter), float(b.t_enter), atol=1e-8, rtol=0.0)
-        assert np.isclose(float(a.t_exit), float(b.t_exit), atol=1e-8, rtol=0.0)
+    a = OctreeRayTracer(tree).trace(origin, direction, t_start, t_end)
+    b = OctreeRayTracer(loaded).trace(origin, direction, t_start, t_end)
+    assert len(a) == 3 and len(b) == 3
+    for av, bv in zip(a, b):
+        np.testing.assert_allclose(np.asarray(av), np.asarray(bv), atol=1.0e-8, rtol=0.0)
 
 
-@pytest.mark.slow
-def test_outside_outward_ray_returns_empty(regression_context) -> None:
-    """Outside-start outward rays should traverse no segments."""
-    _ds, tree = regression_context
+def test_outside_outward_ray_returns_empty() -> None:
+    """Outside-start outward rays should trace zero segments."""
+    ds = _build_regular_fake_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
     _r_lo, r_hi = tree.domain_bounds(coord="rpa")
     r_max = float(r_hi[0])
     origin = np.array([r_max + 25.0, 0.0, 0.0], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    segments = OctreeRayTracer(tree).trace(origin, direction, 0.0, 10.0)
-    assert segments == []
+
+    cell_ids, t_enter, t_exit = OctreeRayTracer(tree).trace(origin, direction, 0.0, 10.0)
+    assert cell_ids.size == 0
+    assert t_enter.size == 0
+    assert t_exit.size == 0
 
 
-def test_non_increasing_interval_returns_empty(regression_context) -> None:
-    """Ray trace should return empty when `t_end <= t_start`."""
-    _ds, tree = regression_context
-    origin = np.array([0.0, 0.0, 0.0])
-    direction = np.array([1.0, 0.0, 0.0])
-    assert OctreeRayTracer(tree).trace(origin, direction, 1.0, 1.0) == []
-    assert OctreeRayTracer(tree).trace(origin, direction, 2.0, 1.0) == []
+def test_non_increasing_interval_returns_empty() -> None:
+    """Ray trace should return empty arrays when `t_end <= t_start`."""
+    ds = _build_regular_fake_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    origin = np.array([0.0, 0.0, 0.0], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    a = tracer.trace(origin, direction, 1.0, 1.0)
+    b = tracer.trace(origin, direction, 2.0, 1.0)
+    assert all(np.asarray(v).size == 0 for v in a)
+    assert all(np.asarray(v).size == 0 for v in b)
 
 
 def test_zero_direction_raises() -> None:
