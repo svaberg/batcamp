@@ -2,7 +2,7 @@
 """Cartesian octree and Cartesian lookup implementation.
 
 Important modeling assumption for ``tree_coord="xyz"``:
-leaf cells are treated as axis-aligned Cartesian boxes (AABBs) from
+leaf cells are treated as axis-aligned Cartesian slabs from
 per-cell corner min/max values. Lookup/ray/interpolation kernels in the
 Cartesian backend are exact under this axis-aligned representation.
 """
@@ -22,11 +22,11 @@ from .octree import LookupHit
 from .octree import Octree
 
 _LOOKUP_CONTAIN_TOL = 1e-10
-_DEFAULT_LOOKUP_MAX_RADIUS = 2
+_DEFAULT_LOOKUP_MAX_RADIUS = 8
 
 
 class CartesianLookupKernelState(NamedTuple):
-    """Arrays used by compiled Cartesian lookup code under an AABB cell model."""
+    """Arrays used by compiled Cartesian lookup code under a slab cell model."""
 
     cell_centers: np.ndarray
     cell_x_min: np.ndarray
@@ -54,7 +54,7 @@ def _contains_xyz_cell(
     lookup_state: CartesianLookupKernelState,
     tol: float = _LOOKUP_CONTAIN_TOL,
 ) -> bool:
-    """Check one Cartesian query against one cell AABB bounds."""
+    """Check one Cartesian query against one cell slab bounds."""
     if not lookup_state.cell_valid[cid]:
         return False
     if x < (lookup_state.cell_x_min[cid] - tol) or x > (lookup_state.cell_x_max[cid] + tol):
@@ -74,7 +74,7 @@ def _lookup_xyz_cell_id_kernel(
     lookup_state: CartesianLookupKernelState,
     prev_cid: int = -1,
 ) -> int:
-    """Resolve one Cartesian query to a cell id using AABB bin neighborhoods.
+    """Resolve one Cartesian query to a cell id using slab bin neighborhoods.
 
     This lookup uses axis-aligned min/max bounds per cell and does not model
     skewed/non-axis-aligned cell faces.
@@ -144,20 +144,6 @@ def _lookup_xyz_cell_id_kernel(
                             inside_best = cid
         if inside_best >= 0:
             return int(inside_best)
-
-    n_cells = int(lookup_state.cell_centers.shape[0])
-    all_inside_best = -1
-    all_inside_best_d2 = np.inf
-    for cid in range(n_cells):
-        cx = lookup_state.cell_centers[cid, 0]
-        cy = lookup_state.cell_centers[cid, 1]
-        cz = lookup_state.cell_centers[cid, 2]
-        d2 = (cx - x) * (cx - x) + (cy - y) * (cy - y) + (cz - z) * (cz - z)
-        if _contains_xyz_cell(cid, x, y, z, lookup_state) and d2 < all_inside_best_d2:
-            all_inside_best_d2 = d2
-            all_inside_best = cid
-    if all_inside_best >= 0:
-        return int(all_inside_best)
     return -1
 
 
@@ -170,7 +156,7 @@ class _CartesianCellLookup:
     def _init_lookup_state(self, tree: Octree) -> None:
         """Build per-cell lookup arrays from a bound Cartesian tree.
 
-        Cell geometry is reduced to per-axis min/max bounds (AABBs).
+        Cell geometry is reduced to per-axis min/max slab bounds.
         """
         if tree.ds is None or tree.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
@@ -337,7 +323,7 @@ class _CartesianCellLookup:
         coord: str,
         tol: float = _LOOKUP_CONTAIN_TOL,
     ) -> bool:
-        """Return whether one point lies inside one Cartesian cell AABB."""
+        """Return whether one point lies inside one Cartesian cell slab."""
         resolved = str(coord)
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")

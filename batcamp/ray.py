@@ -4,18 +4,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 import math
 from typing import TYPE_CHECKING
 
 from numba import njit
-from numba import prange
-from numba.core.errors import NumbaError
 import numpy as np
 
-from .octree import Octree
 from .cartesian import CartesianLookupKernelState
 from .cartesian import _lookup_xyz_cell_id_kernel
+from .octree import Octree
 from .spherical import SphericalLookupKernelState
 from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
@@ -23,7 +20,6 @@ from .spherical import _xyz_to_rpa_components
 if TYPE_CHECKING:
     from .interpolator import OctreeInterpolator
 
-logger = logging.getLogger(__name__)
 
 HEX_TETS_INDEX = np.array(
     (
@@ -47,10 +43,7 @@ TET_FACES_INDEX = np.array(
 )
 
 _TRACE_CONTAIN_TOL = 1e-8
-_KERNEL_FALLBACK_EXCEPTIONS = (NumbaError, RuntimeError, TypeError, ValueError)
 _DEFAULT_TRACE_BOUNDARY_TOL = 1e-9
-_DEFAULT_TRACE_MAX_STEPS = 16_384
-_FAST_KERNEL_TRACE_MAX_STEPS = 200_000
 _AXIS_ALIGNED_DIR_TOL = 1e-12
 _TET_EPS_ABS = 1e-12
 _TET_EPS_REL = 1e-9
@@ -105,11 +98,7 @@ def _forward_face_exit_dt(
     abs_eps: float,
     dir_eps: float,
 ) -> float:
-    """Return forward time to hit one Cartesian face along one axis.
-
-    Near-zero forward exits are kept as `0.0` so boundary-start outward rays
-    do not get reclassified as long interior segments.
-    """
+    """Return forward time to hit one Cartesian face along one axis."""
     if abs(direction_component) <= dir_eps:
         return np.inf
     if direction_component > 0.0:
@@ -122,24 +111,24 @@ def _forward_face_exit_dt(
 
 
 @njit(cache=True)
-def _clip_ray_interval_to_aabb(
+def _clip_ray_interval_to_slab(
     origin_xyz: np.ndarray,
     direction_xyz_unit: np.ndarray,
     t_start: float,
     t_end: float,
-    box_min_xyz: np.ndarray,
-    box_max_xyz: np.ndarray,
+    slab_min_xyz: np.ndarray,
+    slab_max_xyz: np.ndarray,
     tol: float,
 ) -> tuple[bool, float, float]:
-    """Clip ray interval `[t_start, t_end]` to one axis-aligned bounding box."""
+    """Clip ray interval `[t_start, t_end]` to one slab box."""
     t_near = t_start
     t_far = t_end
     dir_eps = 1e-15
     for axis in range(3):
         o = origin_xyz[axis]
         d = direction_xyz_unit[axis]
-        bmin = box_min_xyz[axis] - tol
-        bmax = box_max_xyz[axis] + tol
+        bmin = slab_min_xyz[axis] - tol
+        bmax = slab_max_xyz[axis] + tol
         if abs(d) <= dir_eps:
             if o < bmin or o > bmax:
                 return False, t_start, t_start
@@ -205,6 +194,161 @@ def _clip_ray_interval_to_sphere(
 
 
 @njit(cache=True)
+def _seek_first_cell_xyz(
+    origin_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    abs_eps: float,
+    lookup_state: CartesianLookupKernelState,
+) -> tuple[bool, float, int, float, float, float]:
+    """Seek the first `t` where the ray point resolves to a Cartesian cell."""
+    t = t_start
+    x = origin_xyz[0] + t * direction_xyz_unit[0]
+    y = origin_xyz[1] + t * direction_xyz_unit[1]
+    z = origin_xyz[2] + t * direction_xyz_unit[2]
+    cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+    if cid >= 0:
+        return True, t, cid, x, y, z
+
+    lo = t
+    hi = t
+    dt = max(abs_eps, 1e-6 * (1.0 + abs(t_end - t_start)))
+    cid_hi = -1
+    while hi < t_end:
+        hi = hi + dt
+        if hi > t_end:
+            hi = t_end
+        xh = origin_xyz[0] + hi * direction_xyz_unit[0]
+        yh = origin_xyz[1] + hi * direction_xyz_unit[1]
+        zh = origin_xyz[2] + hi * direction_xyz_unit[2]
+        cid_hi = _lookup_xyz_cell_id_kernel(xh, yh, zh, lookup_state, -1)
+        if cid_hi >= 0:
+            break
+        if hi >= t_end:
+            return False, t_start, -1, x, y, z
+        dt = dt * 2.0
+    if cid_hi < 0:
+        return False, t_start, -1, x, y, z
+
+    lo_out = lo
+    hi_in = hi
+    cid_in = cid_hi
+    for _ in range(48):
+        mid = 0.5 * (lo_out + hi_in)
+        xm = origin_xyz[0] + mid * direction_xyz_unit[0]
+        ym = origin_xyz[1] + mid * direction_xyz_unit[1]
+        zm = origin_xyz[2] + mid * direction_xyz_unit[2]
+        cid_mid = _lookup_xyz_cell_id_kernel(xm, ym, zm, lookup_state, cid_in)
+        if cid_mid >= 0:
+            hi_in = mid
+            cid_in = cid_mid
+        else:
+            lo_out = mid
+        if (hi_in - lo_out) <= abs_eps:
+            break
+
+    t = hi_in
+    if t < t_end:
+        t = t + abs_eps
+        if t > t_end:
+            t = t_end
+    x = origin_xyz[0] + t * direction_xyz_unit[0]
+    y = origin_xyz[1] + t * direction_xyz_unit[1]
+    z = origin_xyz[2] + t * direction_xyz_unit[2]
+    cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid_in)
+    if cid < 0:
+        t = hi_in
+        x = origin_xyz[0] + t * direction_xyz_unit[0]
+        y = origin_xyz[1] + t * direction_xyz_unit[1]
+        z = origin_xyz[2] + t * direction_xyz_unit[2]
+        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid_in)
+    if cid < 0:
+        return False, t_start, -1, x, y, z
+    return True, t, cid, x, y, z
+
+
+@njit(cache=True)
+def _seek_first_cell_rpa(
+    origin_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    abs_eps: float,
+    lookup_state: SphericalLookupKernelState,
+) -> tuple[bool, float, int, float, float, float, float, float, float]:
+    """Seek the first `t` where the ray point resolves to a spherical cell."""
+    t = t_start
+    x = origin_xyz[0] + t * direction_xyz_unit[0]
+    y = origin_xyz[1] + t * direction_xyz_unit[1]
+    z = origin_xyz[2] + t * direction_xyz_unit[2]
+    r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+    cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
+    if cid >= 0:
+        return True, t, cid, x, y, z, r, polar, azimuth
+
+    lo = t
+    hi = t
+    dt = max(abs_eps, 1e-6 * (1.0 + abs(t_end - t_start)))
+    cid_hi = -1
+    while hi < t_end:
+        hi = hi + dt
+        if hi > t_end:
+            hi = t_end
+        xh = origin_xyz[0] + hi * direction_xyz_unit[0]
+        yh = origin_xyz[1] + hi * direction_xyz_unit[1]
+        zh = origin_xyz[2] + hi * direction_xyz_unit[2]
+        r_hi, polar_hi, azimuth_hi = _xyz_to_rpa_components(xh, yh, zh)
+        cid_hi = _lookup_rpa_cell_id_kernel(r_hi, polar_hi, azimuth_hi, lookup_state, -1)
+        if cid_hi >= 0:
+            break
+        if hi >= t_end:
+            return False, t_start, -1, x, y, z, r, polar, azimuth
+        dt = dt * 2.0
+    if cid_hi < 0:
+        return False, t_start, -1, x, y, z, r, polar, azimuth
+
+    lo_out = lo
+    hi_in = hi
+    cid_in = cid_hi
+    for _ in range(48):
+        mid = 0.5 * (lo_out + hi_in)
+        xm = origin_xyz[0] + mid * direction_xyz_unit[0]
+        ym = origin_xyz[1] + mid * direction_xyz_unit[1]
+        zm = origin_xyz[2] + mid * direction_xyz_unit[2]
+        r_mid, polar_mid, azimuth_mid = _xyz_to_rpa_components(xm, ym, zm)
+        cid_mid = _lookup_rpa_cell_id_kernel(r_mid, polar_mid, azimuth_mid, lookup_state, cid_in)
+        if cid_mid >= 0:
+            hi_in = mid
+            cid_in = cid_mid
+        else:
+            lo_out = mid
+        if (hi_in - lo_out) <= abs_eps:
+            break
+
+    t = hi_in
+    if t < t_end:
+        t = t + abs_eps
+        if t > t_end:
+            t = t_end
+    x = origin_xyz[0] + t * direction_xyz_unit[0]
+    y = origin_xyz[1] + t * direction_xyz_unit[1]
+    z = origin_xyz[2] + t * direction_xyz_unit[2]
+    r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+    cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
+    if cid < 0:
+        t = hi_in
+        x = origin_xyz[0] + t * direction_xyz_unit[0]
+        y = origin_xyz[1] + t * direction_xyz_unit[1]
+        z = origin_xyz[2] + t * direction_xyz_unit[2]
+        r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+        cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
+    if cid < 0:
+        return False, t_start, -1, x, y, z, r, polar, azimuth
+    return True, t, cid, x, y, z, r, polar, azimuth
+
+
+@njit(cache=True)
 def _trace_segments_xyz_kernel(
     origin_xyz: np.ndarray,
     direction_xyz_unit: np.ndarray,
@@ -214,13 +358,7 @@ def _trace_segments_xyz_kernel(
     boundary_tol: float,
     lookup_state: CartesianLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace Cartesian ray segments with exact per-cell boundary walk.
-
-    This kernel computes the next boundary crossing analytically from the
-    current point and direction, avoiding expand-and-bisect stepping.
-    It assumes Cartesian cells are axis-aligned boxes with faces at constant
-    `x`, `y`, and `z` (from per-cell min/max bounds).
-    """
+    """Trace Cartesian ray segments with exact per-cell boundary walk."""
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
     exits = np.empty(max_steps, dtype=np.float64)
@@ -228,7 +366,7 @@ def _trace_segments_xyz_kernel(
     if t_end <= t_start or max_steps <= 0:
         return 0, cell_ids, enters, exits
 
-    clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+    clipped, t0_clip, t1_clip = _clip_ray_interval_to_slab(
         origin_xyz,
         direction_xyz_unit,
         t_start,
@@ -248,11 +386,15 @@ def _trace_segments_xyz_kernel(
         return 0, cell_ids, enters, exits
 
     t_end = t1_clip
-    x = origin_xyz[0] + t * direction_xyz_unit[0]
-    y = origin_xyz[1] + t * direction_xyz_unit[1]
-    z = origin_xyz[2] + t * direction_xyz_unit[2]
-    cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
-    if cid < 0:
+    found, t, cid, x, y, z = _seek_first_cell_xyz(
+        origin_xyz,
+        direction_xyz_unit,
+        t,
+        t_end,
+        abs_eps,
+        lookup_state,
+    )
+    if not found or cid < 0:
         return 0, cell_ids, enters, exits
 
     d0 = direction_xyz_unit[0]
@@ -309,6 +451,7 @@ def _trace_segments_xyz_kernel(
             t_exit = t_end
         if t_exit < t:
             t_exit = t
+
         cell_ids[n_seg] = cid
         enters[n_seg] = t
         exits[n_seg] = t_exit
@@ -325,6 +468,7 @@ def _trace_segments_xyz_kernel(
             t_next = t + abs_eps
             if t_next > t_end:
                 t_next = t_end
+
         x_next = origin_xyz[0] + t_next * d0
         y_next = origin_xyz[1] + t_next * d1
         z_next = origin_xyz[2] + t_next * d2
@@ -362,11 +506,7 @@ def _trace_segments_rpa_kernel(
     boundary_tol: float,
     lookup_state: SphericalLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace straight Cartesian rays on spherical trees using compiled kernels.
-
-    Cell transitions are found with spherical containment checks and
-    bracket+bisection in `t` (not Cartesian plane-crossing formulas).
-    """
+    """Trace straight Cartesian rays on spherical trees using compiled kernels."""
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
     exits = np.empty(max_steps, dtype=np.float64)
@@ -375,13 +515,15 @@ def _trace_segments_rpa_kernel(
         return 0, cell_ids, enters, exits
 
     abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-    t = t_start
-    x = origin_xyz[0] + t * direction_xyz_unit[0]
-    y = origin_xyz[1] + t * direction_xyz_unit[1]
-    z = origin_xyz[2] + t * direction_xyz_unit[2]
-    r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
-    if cid < 0:
+    found, t, cid, x, y, z, r, polar, azimuth = _seek_first_cell_rpa(
+        origin_xyz,
+        direction_xyz_unit,
+        t_start,
+        t_end,
+        abs_eps,
+        lookup_state,
+    )
+    if not found or cid < 0:
         return 0, cell_ids, enters, exits
 
     n_seg = 0
@@ -397,14 +539,15 @@ def _trace_segments_rpa_kernel(
 
         r_span = lookup_state.cell_r_max[cid] - lookup_state.cell_r_min[cid]
         theta_span = lookup_state.cell_theta_max[cid] - lookup_state.cell_theta_min[cid]
-        phi_width = lookup_state.cell_phi_width[cid]
-        phi_span = phi_width
+        phi_span = lookup_state.cell_phi_width[cid]
         two_pi = 2.0 * math.pi
         if phi_span > two_pi:
             phi_span = two_pi
+
         length_scale = lookup_state.cell_r_max[cid]
         if length_scale < 1.0:
             length_scale = 1.0
+
         dt = r_span
         t_theta = length_scale * theta_span
         if t_theta > dt:
@@ -418,6 +561,7 @@ def _trace_segments_rpa_kernel(
         t_hi = t + dt
         if t_hi > t_end:
             t_hi = t_end
+
         x_hi = origin_xyz[0] + t_hi * direction_xyz_unit[0]
         y_hi = origin_xyz[1] + t_hi * direction_xyz_unit[1]
         z_hi = origin_xyz[2] + t_hi * direction_xyz_unit[2]
@@ -471,6 +615,7 @@ def _trace_segments_rpa_kernel(
             t_next = t + abs_eps
             if t_next > t_end:
                 t_next = t_end
+
         x_next = origin_xyz[0] + t_next * direction_xyz_unit[0]
         y_next = origin_xyz[1] + t_next * direction_xyz_unit[1]
         z_next = origin_xyz[2] + t_next * direction_xyz_unit[2]
@@ -502,606 +647,13 @@ def _trace_segments_rpa_kernel(
     return n_seg, cell_ids, enters, exits
 
 
-@njit(cache=True)
-def _trilinear_scalar_from_cell_xyz_state(
-    cell_id: int,
-    x: float,
-    y: float,
-    z: float,
-    interp_state,
-) -> float:
-    """Evaluate scalar trilinear interpolation (component 0) in one Cartesian cell."""
-    cid = int(cell_id)
-    u = (x - interp_state.cell_x0[cid]) / interp_state.cell_xden[cid]
-    if u < 0.0:
-        u = 0.0
-    elif u > 1.0:
-        u = 1.0
-    v = (y - interp_state.cell_y0[cid]) / interp_state.cell_yden[cid]
-    if v < 0.0:
-        v = 0.0
-    elif v > 1.0:
-        v = 1.0
-    w = (z - interp_state.cell_z0[cid]) / interp_state.cell_zden[cid]
-    if w < 0.0:
-        w = 0.0
-    elif w > 1.0:
-        w = 1.0
-
-    w0 = (1.0 - u) * (1.0 - v) * (1.0 - w)
-    w1 = u * (1.0 - v) * (1.0 - w)
-    w2 = (1.0 - u) * v * (1.0 - w)
-    w3 = u * v * (1.0 - w)
-    w4 = (1.0 - u) * (1.0 - v) * w
-    w5 = u * (1.0 - v) * w
-    w6 = (1.0 - u) * v * w
-    w7 = u * v * w
-
-    local = interp_state.corners[cid]
-    map_row = interp_state.bin_to_corner[cid]
-    c0 = int(local[int(map_row[0])])
-    c1 = int(local[int(map_row[1])])
-    c2 = int(local[int(map_row[2])])
-    c3 = int(local[int(map_row[3])])
-    c4 = int(local[int(map_row[4])])
-    c5 = int(local[int(map_row[5])])
-    c6 = int(local[int(map_row[6])])
-    c7 = int(local[int(map_row[7])])
-    return (
-        w0 * interp_state.point_values_2d[c0, 0]
-        + w1 * interp_state.point_values_2d[c1, 0]
-        + w2 * interp_state.point_values_2d[c2, 0]
-        + w3 * interp_state.point_values_2d[c3, 0]
-        + w4 * interp_state.point_values_2d[c4, 0]
-        + w5 * interp_state.point_values_2d[c5, 0]
-        + w6 * interp_state.point_values_2d[c6, 0]
-        + w7 * interp_state.point_values_2d[c7, 0]
-    )
-
-
-@njit(cache=True, parallel=True)
-def _integrate_axis_aligned_xyz_scalar_kernel(
-    origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
-    t_start: float,
-    t_end: float,
-    axis: int,
-    scale: float,
-    max_steps: int,
-    boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
-    interp_state,
-) -> np.ndarray:
-    """Integrate scalar field along many axis-aligned Cartesian rays."""
-    n_rays = int(origins_xyz.shape[0])
-    out = np.full(n_rays, np.nan, dtype=np.float64)
-    if t_end <= t_start or n_rays == 0:
-        return out
-
-    d0 = direction_xyz_unit[0]
-    d1 = direction_xyz_unit[1]
-    d2 = direction_xyz_unit[2]
-    abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-
-    for i in prange(n_rays):
-        ox = origins_xyz[i, 0]
-        oy = origins_xyz[i, 1]
-        oz = origins_xyz[i, 2]
-        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            lookup_state.xyz_min,
-            lookup_state.xyz_max,
-            boundary_tol,
-        )
-        if not clipped or t1_clip <= t0_clip:
-            continue
-        t = t0_clip
-        if t0_clip > t_start:
-            t = min(t1_clip, t0_clip + abs_eps)
-        if t >= t1_clip:
-            continue
-        t_limit = t1_clip
-        x = ox + t * d0
-        y = oy + t * d1
-        z = oz + t * d2
-        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
-        if cid < 0:
-            continue
-
-        col = 0.0
-        for _ in range(max_steps):
-            if t >= (t_limit - abs_eps):
-                break
-
-            if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
-                if cid < 0:
-                    break
-
-            if axis == 0:
-                if d0 > 0.0:
-                    t_exit = (lookup_state.cell_x_max[cid] - ox) / d0
-                else:
-                    t_exit = (lookup_state.cell_x_min[cid] - ox) / d0
-            elif axis == 1:
-                if d1 > 0.0:
-                    t_exit = (lookup_state.cell_y_max[cid] - oy) / d1
-                else:
-                    t_exit = (lookup_state.cell_y_min[cid] - oy) / d1
-            else:
-                if d2 > 0.0:
-                    t_exit = (lookup_state.cell_z_max[cid] - oz) / d2
-                else:
-                    t_exit = (lookup_state.cell_z_min[cid] - oz) / d2
-
-            if not math.isfinite(t_exit):
-                break
-            if t_exit > t_limit:
-                t_exit = t_limit
-            if t_exit <= t + abs_eps * 0.25:
-                t_exit = t + abs_eps
-                if t_exit > t_limit:
-                    t_exit = t_limit
-
-            x1 = ox + t_exit * d0
-            y1 = oy + t_exit * d1
-            z1 = oz + t_exit * d2
-            v0 = _trilinear_scalar_from_cell_xyz_state(cid, x, y, z, interp_state)
-            v1 = _trilinear_scalar_from_cell_xyz_state(cid, x1, y1, z1, interp_state)
-            col += 0.5 * (v0 + v1) * (t_exit - t)
-
-            if t_exit >= (t_limit - abs_eps):
-                t = t_exit
-                x = x1
-                y = y1
-                z = z1
-                break
-
-            t_next = t_exit + abs_eps
-            if t_next > t_limit:
-                t_next = t_limit
-            x_next = ox + t_next * d0
-            y_next = oy + t_next * d1
-            z_next = oz + t_next * d2
-            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
-            if cid_next < 0:
-                break
-
-            t = t_next
-            x = x_next
-            y = y_next
-            z = z_next
-            cid = cid_next
-
-        out[i] = scale * col
-
-    return out
-
-
-@njit(cache=True, parallel=True)
-def _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
-    origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
-    t_start: float,
-    t_end: float,
-    axis: int,
-    scale: float,
-    max_steps: int,
-    boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
-    interp_state,
-) -> np.ndarray:
-    """Integrate scalar field along many axis-aligned rays with midpoint rule."""
-    n_rays = int(origins_xyz.shape[0])
-    out = np.full(n_rays, np.nan, dtype=np.float64)
-    if t_end <= t_start or n_rays == 0:
-        return out
-
-    d0 = direction_xyz_unit[0]
-    d1 = direction_xyz_unit[1]
-    d2 = direction_xyz_unit[2]
-    abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-
-    for i in prange(n_rays):
-        ox = origins_xyz[i, 0]
-        oy = origins_xyz[i, 1]
-        oz = origins_xyz[i, 2]
-        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            lookup_state.xyz_min,
-            lookup_state.xyz_max,
-            boundary_tol,
-        )
-        if not clipped or t1_clip <= t0_clip:
-            continue
-        t = t0_clip
-        if t0_clip > t_start:
-            t = min(t1_clip, t0_clip + abs_eps)
-        if t >= t1_clip:
-            continue
-        t_limit = t1_clip
-        x = ox + t * d0
-        y = oy + t * d1
-        z = oz + t * d2
-        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
-        if cid < 0:
-            continue
-
-        col = 0.0
-        for _ in range(max_steps):
-            if t >= (t_limit - abs_eps):
-                break
-
-            if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
-                if cid < 0:
-                    break
-
-            if axis == 0:
-                if d0 > 0.0:
-                    t_exit = (lookup_state.cell_x_max[cid] - ox) / d0
-                else:
-                    t_exit = (lookup_state.cell_x_min[cid] - ox) / d0
-            elif axis == 1:
-                if d1 > 0.0:
-                    t_exit = (lookup_state.cell_y_max[cid] - oy) / d1
-                else:
-                    t_exit = (lookup_state.cell_y_min[cid] - oy) / d1
-            else:
-                if d2 > 0.0:
-                    t_exit = (lookup_state.cell_z_max[cid] - oz) / d2
-                else:
-                    t_exit = (lookup_state.cell_z_min[cid] - oz) / d2
-
-            if not math.isfinite(t_exit):
-                break
-            if t_exit > t_limit:
-                t_exit = t_limit
-            if t_exit <= t + abs_eps * 0.25:
-                t_exit = t + abs_eps
-                if t_exit > t_limit:
-                    t_exit = t_limit
-
-            tm = 0.5 * (t + t_exit)
-            xm = ox + tm * d0
-            ym = oy + tm * d1
-            zm = oz + tm * d2
-            vm = _trilinear_scalar_from_cell_xyz_state(cid, xm, ym, zm, interp_state)
-            col += vm * (t_exit - t)
-
-            if t_exit >= (t_limit - abs_eps):
-                break
-
-            t_next = t_exit + abs_eps
-            if t_next > t_limit:
-                t_next = t_limit
-            x_next = ox + t_next * d0
-            y_next = oy + t_next * d1
-            z_next = oz + t_next * d2
-            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
-            if cid_next < 0:
-                break
-
-            t = t_next
-            x = x_next
-            y = y_next
-            z = z_next
-            cid = cid_next
-
-        out[i] = scale * col
-
-    return out
-
-
-@njit(cache=True, parallel=True)
-def _integrate_xyz_scalar_exact_kernel(
-    origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
-    t_start: float,
-    t_end: float,
-    scale: float,
-    max_steps: int,
-    boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
-    interp_state,
-) -> np.ndarray:
-    """Integrate scalar field along many Cartesian rays (arbitrary direction, exact per-cell linear integral)."""
-    n_rays = int(origins_xyz.shape[0])
-    out = np.full(n_rays, np.nan, dtype=np.float64)
-    if t_end <= t_start or n_rays == 0:
-        return out
-
-    d0 = direction_xyz_unit[0]
-    d1 = direction_xyz_unit[1]
-    d2 = direction_xyz_unit[2]
-    abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-    dir_eps = 1e-15
-
-    for i in prange(n_rays):
-        ox = origins_xyz[i, 0]
-        oy = origins_xyz[i, 1]
-        oz = origins_xyz[i, 2]
-        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            lookup_state.xyz_min,
-            lookup_state.xyz_max,
-            boundary_tol,
-        )
-        if not clipped or t1_clip <= t0_clip:
-            continue
-        t = t0_clip
-        if t0_clip > t_start:
-            t = min(t1_clip, t0_clip + abs_eps)
-        if t >= t1_clip:
-            continue
-        t_limit = t1_clip
-        x = ox + t * d0
-        y = oy + t * d1
-        z = oz + t * d2
-        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
-        if cid < 0:
-            continue
-
-        col = 0.0
-        for _ in range(max_steps):
-            if t >= (t_limit - abs_eps):
-                break
-
-            if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
-                if cid < 0:
-                    break
-
-            tx = _forward_face_exit_dt(
-                x,
-                d0,
-                lookup_state.cell_x_min[cid],
-                lookup_state.cell_x_max[cid],
-                abs_eps,
-                dir_eps,
-            )
-            ty = _forward_face_exit_dt(
-                y,
-                d1,
-                lookup_state.cell_y_min[cid],
-                lookup_state.cell_y_max[cid],
-                abs_eps,
-                dir_eps,
-            )
-            tz = _forward_face_exit_dt(
-                z,
-                d2,
-                lookup_state.cell_z_min[cid],
-                lookup_state.cell_z_max[cid],
-                abs_eps,
-                dir_eps,
-            )
-
-            dt_exit = tx
-            if ty < dt_exit:
-                dt_exit = ty
-            if tz < dt_exit:
-                dt_exit = tz
-            if not math.isfinite(dt_exit):
-                dt_exit = t_limit - t
-            if dt_exit <= abs_eps:
-                dt_exit = abs_eps
-
-            t_exit = t + dt_exit
-            if t_exit > t_limit:
-                t_exit = t_limit
-            if t_exit < t:
-                t_exit = t
-
-            x1 = ox + t_exit * d0
-            y1 = oy + t_exit * d1
-            z1 = oz + t_exit * d2
-            v0 = _trilinear_scalar_from_cell_xyz_state(cid, x, y, z, interp_state)
-            v1 = _trilinear_scalar_from_cell_xyz_state(cid, x1, y1, z1, interp_state)
-            col += 0.5 * (v0 + v1) * (t_exit - t)
-
-            if t_exit >= (t_limit - abs_eps):
-                break
-
-            t_next = t_exit + abs_eps
-            if t_next > t_limit:
-                t_next = t_limit
-            if t_next <= t + abs_eps * 0.25:
-                t_next = t + abs_eps
-                if t_next > t_limit:
-                    t_next = t_limit
-            x_next = ox + t_next * d0
-            y_next = oy + t_next * d1
-            z_next = oz + t_next * d2
-            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
-            if cid_next < 0:
-                break
-            if cid_next == cid and t_next < t_limit:
-                t_next = t_next + 4.0 * abs_eps
-                if t_next > t_limit:
-                    t_next = t_limit
-                x_next = ox + t_next * d0
-                y_next = oy + t_next * d1
-                z_next = oz + t_next * d2
-                cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
-                if cid_next < 0:
-                    break
-
-            t = t_next
-            x = x_next
-            y = y_next
-            z = z_next
-            cid = cid_next
-
-        out[i] = scale * col
-
-    return out
-
-
-@njit(cache=True, parallel=True)
-def _integrate_xyz_scalar_midpoint_kernel(
-    origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
-    t_start: float,
-    t_end: float,
-    scale: float,
-    max_steps: int,
-    boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
-    interp_state,
-) -> np.ndarray:
-    """Integrate scalar field along many Cartesian rays (arbitrary direction, midpoint rule)."""
-    n_rays = int(origins_xyz.shape[0])
-    out = np.full(n_rays, np.nan, dtype=np.float64)
-    if t_end <= t_start or n_rays == 0:
-        return out
-
-    d0 = direction_xyz_unit[0]
-    d1 = direction_xyz_unit[1]
-    d2 = direction_xyz_unit[2]
-    abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-    dir_eps = 1e-15
-
-    for i in prange(n_rays):
-        ox = origins_xyz[i, 0]
-        oy = origins_xyz[i, 1]
-        oz = origins_xyz[i, 2]
-        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            lookup_state.xyz_min,
-            lookup_state.xyz_max,
-            boundary_tol,
-        )
-        if not clipped or t1_clip <= t0_clip:
-            continue
-        t = t0_clip
-        if t0_clip > t_start:
-            t = min(t1_clip, t0_clip + abs_eps)
-        if t >= t1_clip:
-            continue
-        t_limit = t1_clip
-        x = ox + t * d0
-        y = oy + t * d1
-        z = oz + t * d2
-        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
-        if cid < 0:
-            continue
-
-        col = 0.0
-        for _ in range(max_steps):
-            if t >= (t_limit - abs_eps):
-                break
-
-            if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
-                cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid)
-                if cid < 0:
-                    break
-
-            tx = _forward_face_exit_dt(
-                x,
-                d0,
-                lookup_state.cell_x_min[cid],
-                lookup_state.cell_x_max[cid],
-                abs_eps,
-                dir_eps,
-            )
-            ty = _forward_face_exit_dt(
-                y,
-                d1,
-                lookup_state.cell_y_min[cid],
-                lookup_state.cell_y_max[cid],
-                abs_eps,
-                dir_eps,
-            )
-            tz = _forward_face_exit_dt(
-                z,
-                d2,
-                lookup_state.cell_z_min[cid],
-                lookup_state.cell_z_max[cid],
-                abs_eps,
-                dir_eps,
-            )
-
-            dt_exit = tx
-            if ty < dt_exit:
-                dt_exit = ty
-            if tz < dt_exit:
-                dt_exit = tz
-            if not math.isfinite(dt_exit):
-                dt_exit = t_limit - t
-            if dt_exit <= abs_eps:
-                dt_exit = abs_eps
-
-            t_exit = t + dt_exit
-            if t_exit > t_limit:
-                t_exit = t_limit
-            if t_exit < t:
-                t_exit = t
-
-            tm = 0.5 * (t + t_exit)
-            xm = ox + tm * d0
-            ym = oy + tm * d1
-            zm = oz + tm * d2
-            vm = _trilinear_scalar_from_cell_xyz_state(cid, xm, ym, zm, interp_state)
-            col += vm * (t_exit - t)
-
-            if t_exit >= (t_limit - abs_eps):
-                break
-
-            t_next = t_exit + abs_eps
-            if t_next > t_limit:
-                t_next = t_limit
-            if t_next <= t + abs_eps * 0.25:
-                t_next = t + abs_eps
-                if t_next > t_limit:
-                    t_next = t_limit
-            x_next = ox + t_next * d0
-            y_next = oy + t_next * d1
-            z_next = oz + t_next * d2
-            cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
-            if cid_next < 0:
-                break
-            if cid_next == cid and t_next < t_limit:
-                t_next = t_next + 4.0 * abs_eps
-                if t_next > t_limit:
-                    t_next = t_limit
-                x_next = ox + t_next * d0
-                y_next = oy + t_next * d1
-                z_next = oz + t_next * d2
-                cid_next = _lookup_xyz_cell_id_kernel(x_next, y_next, z_next, lookup_state, cid)
-                if cid_next < 0:
-                    break
-
-            t = t_next
-            x = x_next
-            y = y_next
-            z = z_next
-            cid = cid_next
-
-        out[i] = scale * col
-
-    return out
-
-
 def _normalize_direction(direction_xyz: np.ndarray) -> np.ndarray:
     """Normalize one Cartesian ray direction."""
     d = np.asarray(direction_xyz, dtype=float).reshape(3)
-    dn = float(np.linalg.norm(d))
-    if not math.isfinite(dn) or dn == 0.0:
+    norm = float(np.linalg.norm(d))
+    if not np.isfinite(norm) or norm <= 0.0:
         raise ValueError("direction_xyz must be finite and non-zero.")
-    return d / dn
+    return d / norm
 
 
 def _as_xyz(point_xyz: np.ndarray) -> np.ndarray:
@@ -1113,7 +665,7 @@ def _coerce_origins_xyz(origins_xyz: np.ndarray) -> np.ndarray:
     """Validate and normalize ray origins to shape `(n_rays, 3)`."""
     origins = np.asarray(origins_xyz, dtype=float)
     if origins.ndim == 1:
-        if origins.shape[0] != 3:
+        if origins.size != 3:
             raise ValueError("origins_xyz must have shape (n_rays, 3) or (3,).")
         origins = origins.reshape(1, 3)
     if origins.ndim != 2 or origins.shape[1] != 3:
@@ -1138,28 +690,6 @@ def _coerce_positive_chunk_size(chunk_size: int) -> int:
     return chunk
 
 
-def _axis_alignment(direction_xyz_unit: np.ndarray) -> tuple[bool, int]:
-    """Return `(is_axis_aligned, axis_index)` for a normalized direction."""
-    abs_d = np.abs(direction_xyz_unit)
-    axis = int(np.argmax(abs_d))
-    is_axis_aligned = bool(
-        abs_d[axis] >= (1.0 - _AXIS_ALIGNED_DIR_TOL)
-        and abs_d[(axis + 1) % 3] <= _AXIS_ALIGNED_DIR_TOL
-        and abs_d[(axis + 2) % 3] <= _AXIS_ALIGNED_DIR_TOL
-    )
-    return is_axis_aligned, axis
-
-
-def _has_xyz_lookup_kernel(tree: Octree) -> bool:
-    """Return whether Cartesian compiled lookup state is available on the tree."""
-    if str(tree.tree_coord) != "xyz":
-        return False
-    try:
-        return isinstance(tree.lookup.lookup_state, CartesianLookupKernelState)
-    except ValueError:
-        return False
-
-
 @dataclass(frozen=True)
 class RaySegment:
     """Ray interval `[t_enter, t_exit]` that remains inside one leaf cell."""
@@ -1182,12 +712,7 @@ class RayLinearPiece:
 
 
 class OctreeRayTracer:
-    """Ray tracer operating on an already-built and bound `Octree`.
-
-    Rays are always straight in Cartesian space.
-    For `tree_coord="xyz"`, fast kernels assume axis-aligned Cartesian cells.
-    For `tree_coord="rpa"`, tracing uses spherical containment on straight rays.
-    """
+    """Ray tracer operating on an already-built and bound `Octree`."""
 
     def __init__(self, tree: Octree) -> None:
         """Store the tree used for cell-segment tracing."""
@@ -1197,68 +722,6 @@ class OctreeRayTracer:
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
         _r_lo, r_hi = self.tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
-        levels = np.asarray(self.tree.cell_levels, dtype=np.int64).reshape(-1)
-        if levels.size > 0:
-            root_level = int(np.min(levels))
-            self._root_cell_ids = np.where(levels == root_level)[0].astype(np.int64)
-        else:
-            self._root_cell_ids = np.empty((0,), dtype=np.int64)
-        self._root_cell_bounds_min = np.empty((self._root_cell_ids.size, 3), dtype=float)
-        self._root_cell_bounds_max = np.empty((self._root_cell_ids.size, 3), dtype=float)
-        for i, cid in enumerate(self._root_cell_ids):
-            bmin, bmax = self.tree.cell_bounds(int(cid), coord="xyz")
-            self._root_cell_bounds_min[i] = np.asarray(bmin, dtype=float).reshape(3)
-            self._root_cell_bounds_max[i] = np.asarray(bmax, dtype=float).reshape(3)
-        self._logged_rpa_seed_anomaly = False
-
-    def _seed_trace_start_from_root_cells(
-        self,
-        origin_xyz: np.ndarray,
-        direction_xyz_unit: np.ndarray,
-        t_start: float,
-        t_end: float,
-        *,
-        boundary_tol: float,
-    ) -> float | None:
-        """Find one interior trace start from root-cell AABB overlap candidates.
-
-        This is a rare fallback for rays that start outside and where a direct
-        start-at-entry lookup fails. It scans root-cell boxes, picks the earliest
-        overlap interval, then probes a few points for a valid lookup hit.
-        """
-        if self._root_cell_ids.size == 0:
-            return None
-        best_enter: float | None = None
-        best_exit = float(t_end)
-        for i in range(self._root_cell_ids.size):
-            hit, ta, tb = _clip_ray_interval_to_aabb(
-                origin_xyz,
-                direction_xyz_unit,
-                float(t_start),
-                float(t_end),
-                self._root_cell_bounds_min[i],
-                self._root_cell_bounds_max[i],
-                float(boundary_tol),
-            )
-            if not hit or tb <= ta:
-                continue
-            if best_enter is None or ta < best_enter:
-                best_enter = float(ta)
-                best_exit = float(tb)
-        if best_enter is None:
-            return None
-        abs_eps = max(float(boundary_tol) * (1.0 + abs(best_exit - best_enter)), 1e-12)
-        probe_fracs = (0.0, 0.125, 0.25, 0.5, 0.75, 1.0)
-        for frac in probe_fracs:
-            t_probe = best_enter + frac * (best_exit - best_enter)
-            if t_probe <= t_start:
-                t_probe = min(best_exit, t_start + abs_eps)
-            if t_probe > best_exit:
-                continue
-            p_probe = origin_xyz + t_probe * direction_xyz_unit
-            if self.tree.lookup_point(p_probe, coord="xyz") is not None:
-                return float(t_probe)
-        return None
 
     def trace(
         self,
@@ -1271,18 +734,7 @@ class OctreeRayTracer:
         bisect_iters: int = 48,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> list[RaySegment]:
-        """Trace a Cartesian ray into contiguous per-cell segments.
-
-        Algorithm:
-        - Start from the containing cell at `t_start`.
-        - Expand a trial step size until leaving the current cell.
-        - Bisect the exit point for a tight `t_exit`.
-        - Step slightly forward and re-resolve near the previous cell.
-        Returns ordered `RaySegment` intervals.
-
-        Note:
-        - On `xyz` trees, exact kernel boundary math assumes axis-aligned cells.
-        """
+        """Trace a Cartesian ray into contiguous per-cell segments."""
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
         return self.trace_prepared(
@@ -1306,19 +758,16 @@ class OctreeRayTracer:
         bisect_iters: int = 48,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> list[RaySegment]:
-        """Trace ray segments for pre-normalized inputs.
-
-        Uses compiled traversal code when lookup data supports it;
-        falls back to the Python path otherwise.
-        """
+        """Trace ray segments for pre-normalized inputs using compiled kernels."""
         o = origin_xyz
         d = direction_xyz_unit
         t0 = float(t_start)
         t1 = float(t_end)
         if t1 <= t0:
             return []
+
         tree_coord = str(self.tree.tree_coord)
-        clipped, t0_clip, t1_clip = _clip_ray_interval_to_aabb(
+        clipped, t0_clip, t1_clip = _clip_ray_interval_to_slab(
             o,
             d,
             t0,
@@ -1329,6 +778,7 @@ class OctreeRayTracer:
         )
         if not clipped or t1_clip <= t0_clip:
             return []
+
         if tree_coord == "rpa":
             clipped_sphere, t0_sphere, t1_sphere = _clip_ray_interval_to_sphere(
                 o,
@@ -1342,8 +792,8 @@ class OctreeRayTracer:
                 return []
             t0_clip = t0_sphere
             t1_clip = t1_sphere
+
         abs_eps = max(float(boundary_tol) * (1.0 + abs(t1_clip - t0_clip)), 1e-12)
-        started_outside = bool(t0_clip > (float(t_start) + abs_eps))
         t0 = t0_clip
         if t0_clip > float(t_start):
             t0 = min(t1_clip, t0_clip + abs_eps)
@@ -1351,198 +801,49 @@ class OctreeRayTracer:
         if t1 <= t0:
             return []
 
-        lookup = self.tree.lookup
-        try:
-            lookup_state = lookup.lookup_state
-        except ValueError:
-            lookup_state = None
+        lookup_state = self.tree.lookup.lookup_state
         if tree_coord == "xyz":
-            if isinstance(lookup_state, CartesianLookupKernelState):
-                try:
-                    n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
-                        o,
-                        d,
-                        t0,
-                        t1,
-                        int(max_steps),
-                        float(boundary_tol),
-                        lookup_state,
-                    )
-                    return [
-                        RaySegment(
-                            cell_id=int(cids[i]),
-                            t_enter=float(enters[i]),
-                            t_exit=float(exits[i]),
-                        )
-                        for i in range(int(n_seg))
-                    ]
-                except _KERNEL_FALLBACK_EXCEPTIONS:
-                    logger.debug("Falling back to Python ray tracer path for xyz tree.", exc_info=True)
-            else:
-                logger.debug(
-                    "Skipping xyz ray kernel due to missing/incompatible lookup state: %s",
-                    type(lookup_state).__name__,
+            if not isinstance(lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState; "
+                    f"got {type(lookup_state).__name__}."
                 )
-        elif tree_coord == "rpa":
-            if isinstance(lookup_state, SphericalLookupKernelState):
-                try:
-                    n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
-                        o,
-                        d,
-                        t0,
-                        t1,
-                        int(max_steps),
-                        int(bisect_iters),
-                        float(boundary_tol),
-                        lookup_state,
-                    )
-                    if int(n_seg) == 0:
-                        p_start = o + t0 * d
-                        start_hit = self.tree.lookup_point(p_start, coord="xyz")
-                        if started_outside or start_hit is None:
-                            t_seed = self._seed_trace_start_from_root_cells(
-                                o,
-                                d,
-                                t0,
-                                t1,
-                                boundary_tol=float(boundary_tol),
-                            )
-                            if t_seed is not None and t_seed < t1:
-                                n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
-                                    o,
-                                    d,
-                                    float(t_seed),
-                                    t1,
-                                    int(max_steps),
-                                    int(bisect_iters),
-                                    float(boundary_tol),
-                                    lookup_state,
-                                )
-                                if int(n_seg) == 0 and not self._logged_rpa_seed_anomaly:
-                                    logger.warning(
-                                        "Unusual ray case: root-cell seed suggested overlap but rpa trace found no segments."
-                                    )
-                                    self._logged_rpa_seed_anomaly = True
-                    return [
-                        RaySegment(
-                            cell_id=int(cids[i]),
-                            t_enter=float(enters[i]),
-                            t_exit=float(exits[i]),
-                        )
-                        for i in range(int(n_seg))
-                    ]
-                except _KERNEL_FALLBACK_EXCEPTIONS:
-                    logger.debug("Falling back to Python ray tracer path for rpa tree.", exc_info=True)
-            else:
-                logger.debug(
-                    "Skipping rpa ray kernel due to missing/incompatible lookup state: %s",
-                    type(lookup_state).__name__,
-                )
-
-        return self._trace_prepared_python(
-            o,
-            d,
-            t0,
-            t1,
-            max_steps=max_steps,
-            bisect_iters=bisect_iters,
-            boundary_tol=boundary_tol,
-        )
-
-    def _trace_prepared_python(
-        self,
-        origin_xyz: np.ndarray,
-        direction_xyz_unit: np.ndarray,
-        t_start: float,
-        t_end: float,
-        *,
-        max_steps: int = 100000,
-        bisect_iters: int = 48,
-        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
-    ) -> list[RaySegment]:
-        """Python fallback implementation of ray tracing."""
-        o = origin_xyz
-        d = direction_xyz_unit
-        abs_eps = max(float(boundary_tol) * (1.0 + abs(t_end - t_start)), 1e-12)
-        t = float(t_start)
-        p = o + t * d
-        hit = self.tree.lookup_point(p, coord="xyz")
-        if hit is None:
-            t_seed = self._seed_trace_start_from_root_cells(
+            n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
                 o,
                 d,
-                t,
-                float(t_end),
-                boundary_tol=float(boundary_tol),
+                t0,
+                t1,
+                int(max_steps),
+                float(boundary_tol),
+                lookup_state,
             )
-            if t_seed is None:
-                return []
-            t = float(t_seed)
-            p = o + t * d
-            hit = self.tree.lookup_point(p, coord="xyz")
-            if hit is None:
-                return []
-        segments: list[RaySegment] = []
-        lookup = self.tree.lookup
-        for _ in range(max_steps):
-            if t >= (t_end - abs_eps):
-                break
-            cid = int(hit.cell_id)
+        elif tree_coord == "rpa":
+            if not isinstance(lookup_state, SphericalLookupKernelState):
+                raise TypeError(
+                    "Spherical ray tracing requires SphericalLookupKernelState; "
+                    f"got {type(lookup_state).__name__}."
+                )
+            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                o,
+                d,
+                t0,
+                t1,
+                int(max_steps),
+                int(bisect_iters),
+                float(boundary_tol),
+                lookup_state,
+            )
+        else:
+            raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
 
-            if not self.tree.contains_cell(cid, p, coord="xyz", tol=1e-8):
-                near_hit = self.tree.lookup_local(p, cid)
-                if near_hit is None:
-                    break
-                hit = near_hit
-                cid = int(hit.cell_id)
-
-            dt = float(lookup.cell_step_hint(cid))
-
-            t_lo = t
-            t_hi = min(t_end, t + dt)
-            p_hi = o + t_hi * d
-            while t_hi < t_end and self.tree.contains_cell(cid, p_hi, coord="xyz", tol=1e-8):
-                dt *= 2.0
-                t_hi = min(t_end, t + dt)
-                p_hi = o + t_hi * d
-
-            if self.tree.contains_cell(cid, p_hi, coord="xyz", tol=1e-8):
-                segments.append(RaySegment(cell_id=cid, t_enter=t, t_exit=t_end))
-                break
-
-            lo = t_lo
-            hi = t_hi
-            for _ in range(bisect_iters):
-                mid = 0.5 * (lo + hi)
-                p_mid = o + mid * d
-                if self.tree.contains_cell(cid, p_mid, coord="xyz", tol=1e-8):
-                    lo = mid
-                else:
-                    hi = mid
-                if (hi - lo) <= abs_eps:
-                    break
-            t_exit = max(t, lo)
-            segments.append(RaySegment(cell_id=cid, t_enter=t, t_exit=t_exit))
-
-            t_next = min(t_end, hi + abs_eps)
-            if t_next <= t + abs_eps * 0.25:
-                t_next = min(t_end, t + abs_eps)
-            p_next = o + t_next * d
-            next_hit = self.tree.lookup_local(p_next, cid)
-            if next_hit is None:
-                break
-            if int(next_hit.cell_id) == cid and t_next < t_end:
-                t_next = min(t_end, t_next + 4.0 * abs_eps)
-                p_next = o + t_next * d
-                next_hit = self.tree.lookup_local(p_next, cid)
-                if next_hit is None:
-                    break
-
-            t = t_next
-            p = p_next
-            hit = next_hit
-
-        return segments
+        return [
+            RaySegment(
+                cell_id=int(cids[i]),
+                t_enter=float(enters[i]),
+                t_exit=float(exits[i]),
+            )
+            for i in range(int(n_seg))
+        ]
 
 
 class OctreeRayInterpolator:
@@ -1639,30 +940,13 @@ class OctreeRayInterpolator:
         t_end: float,
         n_samples: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[RaySegment]]:
-        """Sample interpolated values at uniform `t` points on one ray.
-
-        This method is coord-system agnostic: it evaluates values through the
-        interpolator's generic callable interface with `query_coord="xyz"`.
-        """
+        """Sample interpolated values at uniform `t` points on one ray."""
         if int(n_samples) <= 0:
             raise ValueError("n_samples must be positive.")
 
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
         t_values = np.linspace(float(t_start), float(t_end), int(n_samples))
-
-        segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
-        if not segments:
-            # Rays that do not enter any cell are common in image-plane scans.
-            # Avoid a full interpolation pass for obviously-missed samples.
-            n = int(n_samples)
-            fill = self.interpolator._fill_value_vector()
-            trailing = self.interpolator._point_values.shape[1:]
-            values = np.tile(fill, (n, 1)).reshape((n,) + trailing)
-            if trailing == ():
-                values = values.reshape(n)
-            return t_values, values, np.full(n, -1, dtype=np.int64), segments
-
         query_xyz = o[None, :] + t_values[:, None] * d[None, :]
         values, cell_ids = self.interpolator(
             query_xyz,
@@ -1670,6 +954,7 @@ class OctreeRayInterpolator:
             return_cell_ids=True,
             log_outside_domain=False,
         )
+        segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
         return t_values, values, np.array(cell_ids, dtype=np.int64), segments
 
     def integrate_field_along_rays(
@@ -1682,193 +967,41 @@ class OctreeRayInterpolator:
         chunk_size: int = 2048,
         scale: float = 1.0,
     ) -> np.ndarray:
-        """Integrate interpolated field(s) along many rays.
-
-        This computes `scale * integral f(t) dt` for each ray using exact
-        per-cell linearity on octree leaf segments:
-        - trace cell segments along each ray;
-        - evaluate field at segment endpoints in batch;
-        - use trapezoidal exactness on linear segments.
-
-        Cartesian fast paths (`tree_coord="xyz"`) rely on axis-aligned cell
-        bounds for exact boundary crossing.
-        """
+        """Integrate interpolated field(s) along many rays using linear pieces."""
         origins = _coerce_origins_xyz(origins_xyz)
-        chunk = _coerce_positive_chunk_size(chunk_size)
-
+        _coerce_positive_chunk_size(chunk_size)
         d = _normalize_direction(direction_xyz)
         t0, t1 = _coerce_ray_interval(t_start, t_end)
 
         n_rays = int(origins.shape[0])
+        ncomp = int(self.interpolator.n_value_components)
+        out = np.full((n_rays, ncomp), np.nan, dtype=float)
 
-        # Fastest path: Cartesian scalar field on axis-aligned rays.
-        is_axis_aligned, axis = _axis_alignment(d)
-        xyz_interp_state = self.interpolator.xyz_interp_state
-        can_use_xyz_scalar_kernel = bool(
-            _has_xyz_lookup_kernel(self.tree)
-            and int(self.interpolator.n_value_components) == 1
-            and xyz_interp_state is not None
-        )
-        if (
-            is_axis_aligned
-            and can_use_xyz_scalar_kernel
-        ):
-            return _integrate_axis_aligned_xyz_scalar_kernel(
-                origins,
-                d,
-                t0,
-                t1,
-                int(axis),
-                float(scale),
-                _FAST_KERNEL_TRACE_MAX_STEPS,
-                _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup.lookup_state,
-                xyz_interp_state,
-            )
-
-        if can_use_xyz_scalar_kernel:
-            return _integrate_xyz_scalar_exact_kernel(
-                origins,
-                d,
-                t0,
-                t1,
-                float(scale),
-                _FAST_KERNEL_TRACE_MAX_STEPS,
-                _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup.lookup_state,
-                xyz_interp_state,
-            )
-
-        use_xyz_kernel = _has_xyz_lookup_kernel(self.tree)
-        trace_max_steps = _DEFAULT_TRACE_MAX_STEPS
-        trace_boundary_tol = _DEFAULT_TRACE_BOUNDARY_TOL
-        out_2d: np.ndarray | None = None
-
-        for i0 in range(0, n_rays, chunk):
-            i1 = min(n_rays, i0 + chunk)
-            n_chunk = i1 - i0
-
-            endpoint_offsets = np.zeros(n_chunk + 1, dtype=np.int64)
-            seg_dt_list: list[np.ndarray] = []
-            query_points: list[tuple[float, float, float]] = []
-            k = 0
-            if use_xyz_kernel:
-                lookup_state = self.tree.lookup.lookup_state
-                for j in range(n_chunk):
-                    endpoint_offsets[j] = int(k)
-                    o = origins[i0 + j]
-                    n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
-                        o,
-                        d,
-                        t0,
-                        t1,
-                        int(trace_max_steps),
-                        float(trace_boundary_tol),
-                        lookup_state,
-                    )
-                    dts: list[float] = []
-                    for si in range(int(n_seg)):
-                        if int(cids[si]) < 0:
-                            continue
-                        ta = float(enters[si])
-                        tb = float(exits[si])
-                        dt = tb - ta
-                        if dt <= 0.0:
-                            continue
-                        pa = o + ta * d
-                        pb = o + tb * d
-                        query_points.append((float(pa[0]), float(pa[1]), float(pa[2])))
-                        query_points.append((float(pb[0]), float(pb[1]), float(pb[2])))
-                        dts.append(float(dt))
-                        k += 2
-                    seg_dt_list.append(np.asarray(dts, dtype=float))
-                endpoint_offsets[n_chunk] = int(k)
-            else:
-                segment_lists: list[list[RaySegment]] = []
-                endpoint_count = 0
-                for j in range(n_chunk):
-                    segs = self.ray_tracer.trace_prepared(origins[i0 + j], d, t0, t1)
-                    segment_lists.append(segs)
-                    endpoint_count += 2 * len(segs)
-                if endpoint_count == 0:
-                    if out_2d is None:
-                        continue
-                    continue
-                query_xyz = np.empty((endpoint_count, 3), dtype=float)
-                kk = 0
-                for j, segs in enumerate(segment_lists):
-                    endpoint_offsets[j] = int(kk)
-                    o = origins[i0 + j]
-                    dts: list[float] = []
-                    for seg in segs:
-                        ta = float(seg.t_enter)
-                        tb = float(seg.t_exit)
-                        dt = tb - ta
-                        if dt <= 0.0:
-                            continue
-                        query_xyz[kk] = o + ta * d
-                        kk += 1
-                        query_xyz[kk] = o + tb * d
-                        kk += 1
-                        dts.append(float(dt))
-                    seg_dt_list.append(np.asarray(dts, dtype=float))
-                endpoint_offsets[n_chunk] = int(kk)
-                query_xyz = query_xyz[:kk]
-            if endpoint_offsets[n_chunk] <= 0:
-                if out_2d is None:
-                    continue
+        for i, o in enumerate(origins):
+            segs = self.ray_tracer.trace_prepared(o, d, t0, t1)
+            if not segs:
+                if ncomp == 1:
+                    out[i, 0] = 0.0
                 continue
-            if use_xyz_kernel:
-                query_xyz = np.asarray(query_points, dtype=float)
-
-            values, cell_ids = self.interpolator(
-                query_xyz,
-                query_coord="xyz",
-                return_cell_ids=True,
-                log_outside_domain=False,
-            )
-            value_arr = np.asarray(values, dtype=float)
-            if value_arr.ndim == 1:
-                value_arr_2d = value_arr.reshape(-1, 1)
-                scalar_fields = True
-            else:
-                value_arr_2d = value_arr
-                scalar_fields = False
-            cids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
-
-            if out_2d is None:
-                out_2d = np.full((n_rays, value_arr_2d.shape[1]), np.nan, dtype=float)
-
-            for j in range(n_chunk):
-                s = int(endpoint_offsets[j])
-                e = int(endpoint_offsets[j + 1])
-                if e <= s:
+            pieces = self.linear_pieces(o, d, t0, t1, segments=segs)
+            if not pieces:
+                if ncomp == 1:
+                    out[i, 0] = 0.0
+                continue
+            col = np.zeros(ncomp, dtype=float)
+            for piece in pieces:
+                a = float(piece.t_start)
+                b = float(piece.t_end)
+                if b <= a:
                     continue
-                v = value_arr_2d[s:e]
-                col = np.zeros(v.shape[1], dtype=float)
-                dts = seg_dt_list[j]
-                has_valid_segment = False
-                for si, dt in enumerate(dts):
-                    i_a = s + 2 * si
-                    i_b = i_a + 1
-                    if i_b >= e:
-                        break
-                    if int(cids[i_a]) < 0 or int(cids[i_b]) < 0:
-                        continue
-                    col += 0.5 * (v[2 * si] + v[2 * si + 1]) * float(dt)
-                    has_valid_segment = True
-                if has_valid_segment:
-                    out_2d[i0 + j] = float(scale) * col
+                slope = np.asarray(piece.slope, dtype=float).reshape(-1)
+                intercept = np.asarray(piece.intercept, dtype=float).reshape(-1)
+                col += 0.5 * slope * (b * b - a * a) + intercept * (b - a)
+            out[i] = float(scale) * col
 
-        if out_2d is None:
-            # All rays missed the domain. Preserve scalar/vector behavior.
-            ncomp = int(self.interpolator.n_value_components)
-            if ncomp == 1:
-                return np.full((n_rays,), np.nan, dtype=float)
-            return np.full((n_rays, ncomp), np.nan, dtype=float)
-        if out_2d.shape[1] == 1:
-            return out_2d[:, 0]
-        return out_2d
+        if ncomp == 1:
+            return out[:, 0]
+        return out
 
     def adaptive_midpoint_rule(
         self,
@@ -1879,87 +1012,40 @@ class OctreeRayInterpolator:
         *,
         chunk_size: int = 2048,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Build flattened adaptive midpoint quadrature data for many rays.
-
-        For each crossed leaf segment `[t_enter, t_exit]`, this emits:
-        - midpoint query point `x(t_mid)`,
-        - weight `dt = t_exit - t_enter`,
-        and returns `ray_offsets` so ray `i` uses samples in
-        `[ray_offsets[i], ray_offsets[i+1])`.
-        """
+        """Build flattened midpoint quadrature data for many rays."""
         origins = _coerce_origins_xyz(origins_xyz)
-        chunk = _coerce_positive_chunk_size(chunk_size)
-
+        _coerce_positive_chunk_size(chunk_size)
         d = _normalize_direction(direction_xyz)
         t0, t1 = _coerce_ray_interval(t_start, t_end)
 
         n_rays = int(origins.shape[0])
         ray_offsets = np.zeros(n_rays + 1, dtype=np.int64)
-        midpoints_list: list[tuple[float, float, float]] = []
-        weights_list: list[float] = []
-        global_count = 0
-        use_xyz_kernel = _has_xyz_lookup_kernel(self.tree)
-        trace_max_steps = _DEFAULT_TRACE_MAX_STEPS
-        trace_boundary_tol = _DEFAULT_TRACE_BOUNDARY_TOL
+        midpoints: list[np.ndarray] = []
+        weights: list[float] = []
 
-        for i0 in range(0, n_rays, chunk):
-            i1 = min(n_rays, i0 + chunk)
-            n_chunk = i1 - i0
-            if use_xyz_kernel:
-                lookup_state = self.tree.lookup.lookup_state
-                for j in range(n_chunk):
-                    ray_offsets[i0 + j] = int(global_count)
-                    o = origins[i0 + j]
-                    n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
-                        o,
-                        d,
-                        t0,
-                        t1,
-                        int(trace_max_steps),
-                        float(trace_boundary_tol),
-                        lookup_state,
-                    )
-                    for si in range(int(n_seg)):
-                        if int(cids[si]) < 0:
-                            continue
-                        ta = float(enters[si])
-                        tb = float(exits[si])
-                        dt = tb - ta
-                        if dt <= 0.0:
-                            continue
-                        tm = 0.5 * (ta + tb)
-                        pm = o + tm * d
-                        midpoints_list.append((float(pm[0]), float(pm[1]), float(pm[2])))
-                        weights_list.append(float(dt))
-                        global_count += 1
-            else:
-                for j in range(n_chunk):
-                    ray_offsets[i0 + j] = int(global_count)
-                    o = origins[i0 + j]
-                    segs = self.ray_tracer.trace_prepared(o, d, t0, t1)
-                    for seg in segs:
-                        ta = float(seg.t_enter)
-                        tb = float(seg.t_exit)
-                        dt = tb - ta
-                        if dt <= 0.0:
-                            continue
-                        tm = 0.5 * (ta + tb)
-                        pm = o + tm * d
-                        midpoints_list.append((float(pm[0]), float(pm[1]), float(pm[2])))
-                        weights_list.append(float(dt))
-                        global_count += 1
+        k = 0
+        for i, o in enumerate(origins):
+            ray_offsets[i] = k
+            segs = self.ray_tracer.trace_prepared(o, d, t0, t1)
+            for seg in segs:
+                ta = float(seg.t_enter)
+                tb = float(seg.t_exit)
+                dt = tb - ta
+                if dt <= 0.0:
+                    continue
+                tm = 0.5 * (ta + tb)
+                midpoints.append(o + tm * d)
+                weights.append(float(dt))
+                k += 1
+        ray_offsets[n_rays] = k
 
-        ray_offsets[n_rays] = int(global_count)
-        if global_count == 0:
+        if k == 0:
             return (
                 np.empty((0, 3), dtype=float),
                 np.empty((0,), dtype=float),
                 ray_offsets,
             )
-
-        midpoints_xyz = np.asarray(midpoints_list, dtype=float)
-        weights = np.asarray(weights_list, dtype=float)
-        return midpoints_xyz, weights, ray_offsets
+        return np.asarray(midpoints, dtype=float), np.asarray(weights, dtype=float), ray_offsets
 
     def integrate_midpoint_rule(
         self,
@@ -1973,6 +1059,7 @@ class OctreeRayInterpolator:
         mids = np.asarray(midpoints_xyz, dtype=float)
         w = np.asarray(weights, dtype=float).reshape(-1)
         offsets = np.asarray(ray_offsets, dtype=np.int64).reshape(-1)
+
         if mids.ndim != 2 or mids.shape[1] != 3:
             raise ValueError("midpoints_xyz must have shape (n_samples, 3).")
         if mids.shape[0] != w.shape[0]:
@@ -1987,11 +1074,14 @@ class OctreeRayInterpolator:
             raise ValueError("ray_offsets must be non-decreasing.")
 
         n_rays = int(offsets.size - 1)
+        ncomp = int(self.interpolator.n_value_components)
+        out = np.full((n_rays, ncomp), np.nan, dtype=float)
+
         if mids.shape[0] == 0:
-            ncomp = int(self.interpolator.n_value_components)
             if ncomp == 1:
-                return np.full((n_rays,), np.nan, dtype=float)
-            return np.full((n_rays, ncomp), np.nan, dtype=float)
+                out[:, 0] = 0.0
+                return out[:, 0]
+            return out
 
         values, cell_ids = self.interpolator(
             mids,
@@ -2001,30 +1091,28 @@ class OctreeRayInterpolator:
         )
         value_arr = np.asarray(values, dtype=float)
         if value_arr.ndim == 1:
-            value_arr_2d = value_arr.reshape(-1, 1)
-        else:
-            value_arr_2d = value_arr
+            value_arr = value_arr.reshape(-1, 1)
         cids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
 
-        out_2d = np.full((n_rays, value_arr_2d.shape[1]), np.nan, dtype=float)
         for i in range(n_rays):
             s = int(offsets[i])
             e = int(offsets[i + 1])
             if e <= s:
+                if ncomp == 1:
+                    out[i, 0] = 0.0
                 continue
-            valid_mask = cids[s:e] >= 0
-            if not np.any(valid_mask):
+            valid = cids[s:e] >= 0
+            if not np.any(valid):
+                if ncomp == 1:
+                    out[i, 0] = 0.0
                 continue
-            seg_vals = value_arr_2d[s:e]
-            seg_w = w[s:e]
-            out_2d[i] = float(scale) * np.sum(
-                seg_vals[valid_mask] * seg_w[valid_mask].reshape(-1, 1),
-                axis=0,
-            )
+            seg_vals = value_arr[s:e][valid]
+            seg_w = w[s:e][valid].reshape(-1, 1)
+            out[i] = float(scale) * np.sum(seg_vals * seg_w, axis=0)
 
-        if out_2d.shape[1] == 1:
-            return out_2d[:, 0]
-        return out_2d
+        if ncomp == 1:
+            return out[:, 0]
+        return out
 
     def integrate_field_along_rays_midpoint(
         self,
@@ -2036,57 +1124,13 @@ class OctreeRayInterpolator:
         chunk_size: int = 2048,
         scale: float = 1.0,
     ) -> np.ndarray:
-        """One-shot adaptive midpoint integration on many rays."""
-        origins = _coerce_origins_xyz(origins_xyz)
-        chunk = _coerce_positive_chunk_size(chunk_size)
-
-        d = _normalize_direction(direction_xyz)
-        t0, t1 = _coerce_ray_interval(t_start, t_end)
-
-        # Specialized midpoint path: Cartesian scalar field, axis-aligned rays.
-        is_axis_aligned, axis = _axis_alignment(d)
-        xyz_interp_state = self.interpolator.xyz_interp_state
-        can_use_xyz_scalar_kernel = bool(
-            _has_xyz_lookup_kernel(self.tree)
-            and int(self.interpolator.n_value_components) == 1
-            and xyz_interp_state is not None
-        )
-        if (
-            is_axis_aligned
-            and can_use_xyz_scalar_kernel
-        ):
-            return _integrate_axis_aligned_xyz_scalar_midpoint_kernel(
-                origins,
-                d,
-                t0,
-                t1,
-                int(axis),
-                float(scale),
-                _FAST_KERNEL_TRACE_MAX_STEPS,
-                _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup.lookup_state,
-                xyz_interp_state,
-            )
-
-        if can_use_xyz_scalar_kernel:
-            return _integrate_xyz_scalar_midpoint_kernel(
-                origins,
-                d,
-                t0,
-                t1,
-                float(scale),
-                _FAST_KERNEL_TRACE_MAX_STEPS,
-                _DEFAULT_TRACE_BOUNDARY_TOL,
-                self.tree.lookup.lookup_state,
-                xyz_interp_state,
-            )
-
+        """One-shot midpoint integration on many rays."""
         mids, weights, offsets = self.adaptive_midpoint_rule(
-            origins,
-            d,
-            t0,
-            t1,
-            chunk_size=chunk,
+            origins_xyz,
+            direction_xyz,
+            t_start,
+            t_end,
+            chunk_size=chunk_size,
         )
         return self.integrate_midpoint_rule(mids, weights, offsets, scale=scale)
 
@@ -2096,12 +1140,7 @@ class OctreeRayInterpolator:
         direction_xyz_unit: np.ndarray,
         segments: list[RaySegment],
     ) -> list[RayLinearPiece] | None:
-        """Build cellwise linear pieces quickly for axis-aligned Cartesian rays.
-
-        On Cartesian trees with trilinear interpolation, an axis-aligned ray
-        is linear within each cell segment, so endpoint values define exact
-        `f(t)=m*t+b` pieces without tet subdivision.
-        """
+        """Build cellwise linear pieces quickly for axis-aligned Cartesian rays."""
         if str(self.tree.tree_coord) != "xyz":
             return None
         if not segments:
@@ -2109,10 +1148,11 @@ class OctreeRayInterpolator:
 
         abs_d = np.abs(direction_xyz_unit)
         axis = int(np.argmax(abs_d))
-        axis_tol = _AXIS_ALIGNED_DIR_TOL
-        if abs_d[axis] < (1.0 - axis_tol):
+        if abs_d[axis] < (1.0 - _AXIS_ALIGNED_DIR_TOL):
             return None
-        if abs_d[(axis + 1) % 3] > axis_tol or abs_d[(axis + 2) % 3] > axis_tol:
+        if abs_d[(axis + 1) % 3] > _AXIS_ALIGNED_DIR_TOL:
+            return None
+        if abs_d[(axis + 2) % 3] > _AXIS_ALIGNED_DIR_TOL:
             return None
 
         n_seg = len(segments)
@@ -2120,8 +1160,8 @@ class OctreeRayInterpolator:
         for i, seg in enumerate(segments):
             t_bounds[2 * i] = float(seg.t_enter)
             t_bounds[2 * i + 1] = float(seg.t_exit)
-        query_xyz = origin_xyz[None, :] + t_bounds[:, None] * direction_xyz_unit[None, :]
 
+        query_xyz = origin_xyz[None, :] + t_bounds[:, None] * direction_xyz_unit[None, :]
         values, cell_ids = self.interpolator(
             query_xyz,
             query_coord="xyz",
@@ -2131,6 +1171,7 @@ class OctreeRayInterpolator:
         cid_arr = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
         if np.any(cid_arr < 0):
             return None
+
         value_arr = np.asarray(values, dtype=float)
         if value_arr.ndim == 1:
             value_arr = value_arr.reshape(-1, 1)
@@ -2203,6 +1244,7 @@ class OctreeRayInterpolator:
         for _ in range(max_steps):
             if t >= t_exit - eps:
                 break
+
             tet = HEX_TETS_INDEX[tet_idx]
             tet_xyz = cell_xyz[tet]
             tet_vals = cell_vals[tet]
@@ -2265,16 +1307,20 @@ class OctreeRayInterpolator:
         direction_xyz: np.ndarray,
         t_start: float,
         t_end: float,
+        *,
+        segments: list[RaySegment] | None = None,
     ) -> list[RayLinearPiece]:
         """Return stitched piecewise-linear `f(t)=m*t+b` intervals on a ray."""
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
 
-        segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
-        pieces = self.linear_pieces_axis_aligned(o, d, segments)
+        ray_segments = segments
+        if ray_segments is None:
+            ray_segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
+        pieces = self.linear_pieces_axis_aligned(o, d, ray_segments)
         if pieces is None:
             pieces = []
-            for seg in segments:
+            for seg in ray_segments:
                 pieces.extend(
                     self.linear_pieces_for_cell_segment(
                         o,
@@ -2329,4 +1375,5 @@ class OctreeRayInterpolator:
                 slope=last.slope,
                 intercept=last.intercept,
             )
+
         return out
