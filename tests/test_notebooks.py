@@ -33,7 +33,7 @@ _NOTEBOOK_CASES = [
 
 
 @pytest.mark.parametrize("notebook_name", _NOTEBOOK_CASES)
-def test_execute_example_notebooks(notebook_name: str) -> None:
+def test_execute_examples(notebook_name: str) -> None:
     """Execute example notebooks end-to-end to catch runtime/API regressions."""
     nbformat = pytest.importorskip("nbformat")
     nbclient = pytest.importorskip("nbclient")

@@ -112,7 +112,7 @@ def _interpolation_valid_cells(
     return np.array(good, dtype=np.int64)
 
 
-def test_synthetic_lookup_hits_its_own_cell_centers(synthetic_context) -> None:
+def test_lookup_hits_cell_centers(synthetic_context) -> None:
     """Lookup of each synthetic cell center should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context
     centers = np.array(tree.cell_centers, dtype=float)
@@ -123,7 +123,7 @@ def test_synthetic_lookup_hits_its_own_cell_centers(synthetic_context) -> None:
         assert int(hit.cell_id) == int(cid)
 
 
-def test_synthetic_lookup_xyz_and_rpa_match_for_random_interior_points(synthetic_context) -> None:
+def test_lookup_xyz_rpa_match_random_points(synthetic_context) -> None:
     """xyz and rpa lookups should agree on synthetic interior random points."""
     _ds, tree, _field, _coeffs = synthetic_context
     rng = np.random.default_rng(11)
@@ -139,7 +139,7 @@ def test_synthetic_lookup_xyz_and_rpa_match_for_random_interior_points(synthetic
         assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
 
 
-def test_synthetic_interpolation_matches_linear_field_in_xyz(synthetic_context) -> None:
+def test_interp_matches_linear_field_xyz(synthetic_context) -> None:
     """xyz interpolation should reconstruct an exactly linear spherical field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
@@ -156,7 +156,7 @@ def test_synthetic_interpolation_matches_linear_field_in_xyz(synthetic_context) 
     assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
 
 
-def test_synthetic_interpolation_matches_linear_field_in_rpa_with_wrap(synthetic_context) -> None:
+def test_interp_matches_linear_field_rpa_wrap(synthetic_context) -> None:
     """rpa interpolation should normalize wrapped azimuth and match linear field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
@@ -175,7 +175,7 @@ def test_synthetic_interpolation_matches_linear_field_in_rpa_with_wrap(synthetic
     assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
 
 
-def test_synthetic_vector_interpolation_returns_expected_shape_and_values(synthetic_context) -> None:
+def test_vector_interp_shape_and_values(synthetic_context) -> None:
     """Vector-valued interpolation should preserve trailing dims and nodal exactness."""
     ds, tree, _linear_field, coeffs = synthetic_context
     a, b, c, d = coeffs
@@ -195,7 +195,7 @@ def test_synthetic_vector_interpolation_returns_expected_shape_and_values(synthe
     assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
 
 
-def test_synthetic_outside_points_use_fill_value_and_negative_cell_id(synthetic_context) -> None:
+def test_outside_points_use_fill_and_negative_cell_id(synthetic_context) -> None:
     """Outside-domain synthetic points should return fill value and cell_id=-1."""
     ds, tree, _field, _coeffs = synthetic_context
     fill = -999.0

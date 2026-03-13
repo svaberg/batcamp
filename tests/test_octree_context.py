@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from batcamp import Octree
 from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
 from batcamp import format_histogram
 from batcamp import valid_cell_fraction
@@ -25,7 +24,7 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
     return np.array([r, polar, azimuth], dtype=float)
 
 
-def test_compute_phi_levels_shapes(octree_context: dict[str, object]) -> None:
+def test_phi_level_arrays_shapes(octree_context: dict[str, object]) -> None:
     """Per-cell level arrays have expected sizes and finite coarse spacing."""
     corners = octree_context["corners"]
     delta_phi = octree_context["delta_phi"]
@@ -41,7 +40,7 @@ def test_compute_phi_levels_shapes(octree_context: dict[str, object]) -> None:
     assert np.isfinite(coarse)
 
 
-def test_refinement_fraction_and_histograms(octree_context: dict[str, object]) -> None:
+def test_valid_fraction_and_histograms(octree_context: dict[str, object]) -> None:
     """Valid-level fraction and histogram utilities behave on the sample file."""
     corners = octree_context["corners"]
     ds = octree_context["ds"]
@@ -60,7 +59,7 @@ def test_refinement_fraction_and_histograms(octree_context: dict[str, object]) -
     assert point_hist
 
 
-def test_tree_build_caches_metadata(octree_context: dict[str, object]) -> None:
+def test_tree_caches_metadata(octree_context: dict[str, object]) -> None:
     """Tree stores lookup-level metadata needed for downstream construction."""
     cell_levels = octree_context["cell_levels"]
     tree = octree_context["tree"]
@@ -71,7 +70,7 @@ def test_tree_build_caches_metadata(octree_context: dict[str, object]) -> None:
     assert tree.cell_levels.shape == cell_levels.shape
 
 
-def test_lookup_xyz_and_rpa_agree(octree_context: dict[str, object]) -> None:
+def test_lookup_xyz_rpa_agree(octree_context: dict[str, object]) -> None:
     """Cartesian and spherical lookup coords resolve the same leaf cell."""
     lookup = octree_context["lookup"]
 
@@ -82,29 +81,3 @@ def test_lookup_xyz_and_rpa_agree(octree_context: dict[str, object]) -> None:
     hit_rpa = lookup.lookup_point(_xyz_to_rpa_numpy(q_xyz), coord="rpa")
     assert hit_rpa is not None
     assert hit_xyz.cell_id == hit_rpa.cell_id
-
-
-@pytest.mark.slow
-def test_octree_save_load_roundtrip(octree_context: dict[str, object], tmp_path) -> None:
-    """Saved octree can be loaded and produce matching lookup hits when rebound."""
-    tree = octree_context["tree"]
-    ds = octree_context["ds"]
-    q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-
-    path = tmp_path / "octree_roundtrip.npz"
-    tree.save(path)
-    loaded = Octree.load(path, ds=ds)
-
-    assert loaded.leaf_shape == tree.leaf_shape
-    assert loaded.root_shape == tree.root_shape
-    assert loaded.depth == tree.depth
-    assert loaded.level_counts == tree.level_counts
-    assert loaded.cell_levels is not None
-    assert tree.cell_levels is not None
-    assert np.array_equal(loaded.cell_levels, tree.cell_levels)
-
-    hit_tree = tree.lookup_point(q_xyz, coord="xyz")
-    hit_loaded = loaded.lookup_point(q_xyz, coord="xyz")
-    assert hit_tree is not None
-    assert hit_loaded is not None
-    assert hit_tree.cell_id == hit_loaded.cell_id

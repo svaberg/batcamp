@@ -4,7 +4,7 @@
 - [x] Remove or use dead argument `bisect_iters` in `_trace_segments_xyz_kernel` (currently ignored).
 - [x] Align backend evaluator signatures to remove dead placeholder args (for example `_evaluate_xyz(..., _qs, ...)`).
 - [x] Reclassify long-running tests that are not unit-fast behind explicit markers/flags so default runs stay fast.
-- [x] De-duplicate expensive test setup by sharing one cached dataset/tree fixture across modules that use `difflevels-3d__var_1_n00000000.dat`.
+- [x] De-duplicate expensive test setup by sharing one cached dataset/tree fixture across modules that use `3d__var_4_n00005000`.
 - [x] Reduce test lock-in on private internals (`_cell_*`, `_lookup_state`, `_bin_to_corner`) unless there is no public API alternative.
 - [x] Rename `batcamp/base.py` to `batcamp/octree.py` and update imports.
 - [x] Consolidate duplicated XYZ<->RPA conversion helpers shared across `interpolator.py`, `spherical.py`, and `ray.py`.
@@ -42,6 +42,7 @@
 - [x] Rewrite public docstrings in `batcamp/cartesian.py` and `batcamp/spherical.py` in plain language.
 - [ ] Remove thin pass-through docstrings by removing the wrapper method or moving the useful behavior to one canonical method.
 - [ ] Ensure every remaining public docstring states plain behavior: required inputs, returned value shape/type, and failure conditions.
+- [x] Use "slab" terminology consistently for ray entry-interval naming in tests/docs (avoid mixed terms like "slab entry" vs "entry interval").
 - [x] Remove remaining test-only knobs from public APIs (for example `OctreeBuilder.build(cell_levels=..., bind=...)`) and move this control to private/test helpers.
 - [x] Remove private-state coupling between ray/interpolator/lookup (`_lookup_state`, `_interp_state_xyz`, `hasattr` guards) by introducing explicit public interfaces/contracts.
 - [x] Revisit stale cache-compatibility paths: remove `InterpKernelState` alias in `batcamp/interpolator.py` once cache migration policy is explicit (the old-name shim is still live).
@@ -58,9 +59,9 @@
 - [x] Remove scalar lookup helpers from effective public surface (`lookup_xyz_cell_id`, `lookup_rpa_cell_id`, `contains_xyz_cell`, `contains_rpa_cell`) or make them explicitly private.
 - [x] In `batcamp/ray.py`, centralize repeated ray input validation (`origins`, `direction`, `t_start/t_end`) used by `integrate_field_along_rays`, `adaptive_midpoint_rule`, and `integrate_field_along_rays_midpoint`.
 - [x] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
-- [x] Deduplicate test data scaffolding across `tests/test_octree_builder_edge_cases.py`, `tests/test_octree_interpolator_edge_cases.py`, and `tests/test_octree_fake_edge_cases.py` by sharing one `FakeDataset` helper class.
+- [x] Deduplicate test data scaffolding across `tests/test_builder.py`, `tests/test_interpolator_edges.py`, and `tests/test_fake_inputs.py` by sharing one `FakeDataset` helper class.
 - [x] Deduplicate remaining synthetic dataset builder helpers across edge-case/lookup test modules.
 - [x] Label every private test helper clearly as a private test helper (via helper name and/or docstring).
-- [x] Prune overlapping contract coverage between `tests/test_quickstart_contract.py` and `tests/test_octree_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
-- [x] Replace brittle notebook token smoke checks with slow, opt-in executed notebook tests (`tests/test_notebook_execution.py`).
+- [x] Prune overlapping contract coverage between `tests/test_quickstart.py` and `tests/test_regressions.py` (for example explicit-tree vs auto-tree equivalence appears in both).
+- [x] Replace brittle notebook token smoke checks with slow, opt-in executed notebook tests (`tests/test_notebooks.py`).
 - [x] Declare `pooch` test marker in `pyproject.toml` (single source of truth) instead of runtime-only registration in `tests/conftest.py`.
