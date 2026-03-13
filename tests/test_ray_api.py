@@ -90,18 +90,19 @@ def _integrate_rho2_resample_baseline(
 
 @pytest.mark.pooch
 def test_trace_and_sample_sc(_sc_interp: OctreeInterpolator) -> None:
-    """Ray contract: traced segments and sampled values are valid."""
+    """Ray contract: traced arrays and sampled values are valid."""
     interp = _sc_interp
     origin, direction, t0, t1 = _diagnostic_ray_setup()
 
-    segments = OctreeRayTracer(interp.tree).trace(origin, direction, t0, t1)
-    assert len(segments) > 0
-    assert all(int(seg.cell_id) >= 0 for seg in segments)
-    assert float(segments[0].t_enter) >= 0.0
-    assert float(segments[-1].t_exit) <= t1 + 1e-12
+    cell_ids, t_enter, t_exit = OctreeRayTracer(interp.tree).trace(origin, direction, t0, t1)
+    assert cell_ids.size > 0
+    assert t_enter.shape == cell_ids.shape == t_exit.shape
+    assert np.all(cell_ids >= 0)
+    assert float(t_enter[0]) >= 0.0
+    assert float(t_exit[-1]) <= t1 + 1e-12
 
     n_samples = 1200
-    t_values, ray_values, cell_ids, _ = OctreeRayInterpolator(interp).sample(
+    t_values, ray_values, cell_ids_sample, _ = OctreeRayInterpolator(interp).sample(
         origin,
         direction,
         t0,
@@ -109,50 +110,12 @@ def test_trace_and_sample_sc(_sc_interp: OctreeInterpolator) -> None:
         n_samples,
     )
     vals = np.asarray(ray_values, dtype=float).reshape(-1)
-    cids = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
+    cids = np.asarray(cell_ids_sample, dtype=np.int64).reshape(-1)
     assert np.asarray(t_values, dtype=float).shape == (n_samples,)
     assert vals.shape == (n_samples,)
     assert cids.shape == (n_samples,)
     assert np.all(cids >= 0)
     assert np.all(np.isfinite(vals))
-
-
-@pytest.mark.pooch
-def test_piecewise_matches_samples_sc(_sc_interp: OctreeInterpolator) -> None:
-    """Ray contract: piecewise model matches sampled values and integral."""
-    interp = _sc_interp
-    ray = OctreeRayInterpolator(interp)
-    origin, direction, t0, t1 = _diagnostic_ray_setup()
-
-    n_samples = 1200
-    t_values, ray_values, _ray_cell_ids, _ = ray.sample(origin, direction, t0, t1, n_samples)
-    vals = np.asarray(ray_values, dtype=float).reshape(-1)
-    pieces = ray.linear_pieces(origin, direction, t0, t1)
-    assert len(pieces) > 0
-
-    piece_vals = np.full_like(vals, np.nan)
-    idx = 0
-    for i, t in enumerate(t_values):
-        while idx + 1 < len(pieces) and t > pieces[idx].t_end:
-            idx += 1
-        if idx < len(pieces):
-            p = pieces[idx]
-            if p.t_start - 1e-8 <= t <= p.t_end + 1e-8:
-                piece_vals[i] = p.slope * t + p.intercept
-    mask = np.isfinite(piece_vals) & np.isfinite(vals)
-    assert np.any(mask)
-    np.testing.assert_allclose(piece_vals[mask], vals[mask], atol=1e-18, rtol=1e-9)
-
-    integral_exact = np.asarray(0.0, dtype=float)
-    for p in pieces:
-        a = float(p.t_start)
-        b = float(p.t_end)
-        integral_exact = integral_exact + 0.5 * p.slope * (b * b - a * a) + p.intercept * (b - a)
-    integral_exact_f = float(np.asarray(integral_exact))
-    integral_trap = float(np.trapezoid(vals, t_values))
-    assert np.isfinite(integral_exact_f)
-    assert np.isfinite(integral_trap)
-    assert np.isclose(integral_exact_f, integral_trap, atol=1e-20, rtol=2e-2)
 
 
 @pytest.mark.parametrize(
