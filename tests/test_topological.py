@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from batcamp import Octree
 from batcamp.topological import build_topological_neighborhood
+from batcamp.topological import TopologicalNeighborhood
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -96,6 +98,41 @@ def _build_two_level_topology_tree() -> Octree:
     return tree
 
 
+def _assert_basic_topology_invariants(topo: TopologicalNeighborhood) -> None:
+    """Private test helper: validate basic neighborhood graph invariants."""
+    assert topo.node_count > 0
+    assert topo.face_counts.shape == (topo.node_count, 6)
+    assert topo.face_offsets.shape == (topo.node_count * 6 + 1,)
+    assert int(topo.face_offsets[0]) == 0
+    assert int(topo.face_offsets[-1]) == int(topo.face_neighbors.size)
+    assert np.all(np.diff(topo.face_offsets) >= 0)
+    np.testing.assert_array_equal(np.diff(topo.face_offsets), topo.face_counts.reshape(-1))
+
+    if topo.face_neighbors.size > 0:
+        assert np.all(topo.face_neighbors >= 0)
+        assert np.all(topo.face_neighbors < topo.node_count)
+
+    for node_id in range(topo.node_count):
+        for face in range(6):
+            neighbors = topo.face_neighbor_ids(node_id, face)
+            if neighbors.size == 0:
+                continue
+            assert not np.any(neighbors == node_id)
+            assert np.unique(neighbors).size == neighbors.size
+
+
+@pytest.mark.parametrize(
+    "tree_builder",
+    [_build_cartesian_uniform_tree, _build_spherical_uniform_tree],
+    ids=["cartesian_uniform", "spherical_uniform"],
+)
+def test_uniform_topology_basic_invariants(tree_builder) -> None:
+    tree = tree_builder()
+    topo = build_topological_neighborhood(tree)
+    _assert_basic_topology_invariants(topo)
+    assert np.all(topo.face_counts <= 1)
+
+
 def test_cartesian_uniform_topology_neighbors_are_bidirectional() -> None:
     tree = _build_cartesian_uniform_tree()
     topo = build_topological_neighborhood(tree)
@@ -147,6 +184,8 @@ def test_max_level_cutoff_reduces_frontier_size() -> None:
     assert topo_full.node_count == 15
     assert topo_coarse.node_count == 8
 
-    if topo_full.face_neighbors.size > 0:
-        assert np.all(topo_full.face_neighbors >= 0)
-        assert np.all(topo_full.face_neighbors < topo_full.node_count)
+    _assert_basic_topology_invariants(topo_full)
+    _assert_basic_topology_invariants(topo_coarse)
+    assert np.all(topo_full.face_counts <= 4)
+    assert np.all(topo_coarse.face_counts <= 1)
+    assert np.all(topo_full.face_counts.sum(axis=1) <= 24)
