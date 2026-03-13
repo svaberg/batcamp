@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import logging
+import re
 from typing import TypeAlias
 
 import numpy as np
@@ -23,6 +25,11 @@ LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 
 LevelShapeStatsMap: TypeAlias = dict[int, LevelShapeStatsRow]
 """Map `level -> LevelShapeStatsRow`."""
+
+BlockAux: TypeAlias = tuple[int, GridShape]
+"""Parsed BLOCKS aux tuple `(n_blocks, cells_per_block_xyz)`."""
+
+logger = logging.getLogger(__name__)
 
 
 def _median_positive(values: np.ndarray, *, tiny: float = 1e-12) -> float:
@@ -87,6 +94,63 @@ def _resolve_cell_levels(
     min_level = int(np.min(valid_levels))
     max_level = int(np.max(valid_levels))
     return levels, min_level, max_level
+
+
+def _parse_blocks_aux(text: str | None) -> BlockAux | None:
+    """Parse `BLOCKS` aux string as `(n_blocks, cells_per_block_xyz)`."""
+    if text is None:
+        return None
+    match = re.search(r"(\d+)\s+(\d+)\s*x\s*(\d+)\s*x\s*(\d+)", str(text))
+    if not match:
+        return None
+    n_blocks = int(match.group(1))
+    block_cells = (int(match.group(2)), int(match.group(3)), int(match.group(4)))
+    return n_blocks, block_cells
+
+
+def _blocks_match_cell_count(
+    n_cells: int,
+    block_count: int,
+    block_cells_xyz: GridShape,
+) -> bool:
+    """Return `True` when BLOCKS metadata matches dataset cell count."""
+    if block_count <= 0 or any(int(v) <= 0 for v in block_cells_xyz):
+        return False
+    cells_per_block = int(np.prod(np.asarray(block_cells_xyz, dtype=np.int64)))
+    if cells_per_block <= 0:
+        return False
+    if int(n_cells) <= 0 or (int(n_cells) % cells_per_block) != 0:
+        return False
+    inferred_blocks = int(n_cells) // cells_per_block
+    return inferred_blocks == int(block_count)
+
+
+def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
+    """Warn when `ds.aux['BLOCKS']` exists but conflicts with dataset cell count."""
+    aux = getattr(ds, "aux", None)
+    if not hasattr(aux, "get"):
+        return
+    raw = aux.get("BLOCKS")
+    if raw is None:
+        return
+    raw_text = str(raw)
+    parsed = _parse_blocks_aux(raw_text)
+    if parsed is None:
+        logger.warning(
+            "Dataset aux BLOCKS='%s' is not parseable; ignoring BLOCKS metadata.",
+            raw_text,
+        )
+        return
+    block_count, block_cells_xyz = parsed
+    if not _blocks_match_cell_count(n_cells, block_count, block_cells_xyz):
+        cells_per_block = int(np.prod(np.asarray(block_cells_xyz, dtype=np.int64)))
+        logger.warning(
+            "Dataset aux BLOCKS='%s' does not match dataset cells (n_cells=%d, cells_per_block=%d); "
+            "ignoring BLOCKS metadata.",
+            raw_text,
+            int(n_cells),
+            cells_per_block,
+        )
 
 
 class OctreeBuilder:
@@ -210,6 +274,7 @@ class OctreeBuilder:
                 cell_levels=cell_levels,
             )
 
+        _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
         leaf_shape, weighted_cells, _max_level = self._infer_leaf_shape_from_levels(level_shapes)
         _counts_full, root_shape, _depth = self._full_tree_counts(leaf_shape)
         level_counts = tuple(
