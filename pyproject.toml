@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Octree reconstruction and interpolation utilities"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
 authors = [
   { name = "Dag Evensberget" },
 ]
@@ -38,6 +39,9 @@ examples = [
 
 [tool.setuptools.packages.find]
 include = ["batcamp*"]
+
+[tool.setuptools]
+license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not slow'"
