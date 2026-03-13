@@ -142,6 +142,14 @@ def _build_topology_timed(
     return topo, elapsed_s
 
 
+def _time_call(func, /, *args, **kwargs):
+    """Private test helper: time one function call and return result plus seconds."""
+    t0 = time.perf_counter()
+    result = func(*args, **kwargs)
+    elapsed_s = time.perf_counter() - t0
+    return result, elapsed_s
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _warm_topology_numba() -> None:
     """Private test helper: compile topology kernels before timing assertions/prints."""
@@ -247,12 +255,25 @@ _TOPOLOGY_SAMPLE_CASES = [
 
 @pytest.mark.parametrize("file_name,tree_coord", _TOPOLOGY_SAMPLE_CASES)
 def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: str, record_property) -> None:
-    ds = Dataset.from_file(str(data_file(file_name)))
-    tree = Octree.from_dataset(ds, tree_coord=tree_coord)
-    topo, elapsed_s = _build_topology_timed(tree, label=file_name)
-    record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
+    path, resolve_path_s = _time_call(data_file, file_name)
+    ds, read_dataset_s = _time_call(Dataset.from_file, str(path))
+    tree, build_tree_s = _time_call(Octree.from_dataset, ds, tree_coord=tree_coord)
+    topo, build_topology_s = _build_topology_timed(tree, label=file_name)
+    _unused, validate_invariants_s = _time_call(_assert_basic_topology_invariants, topo)
 
-    _assert_basic_topology_invariants(topo)
+    print(
+        f"sample {file_name}: "
+        f"resolve={resolve_path_s * 1.0e3:.2f} ms, "
+        f"read={read_dataset_s * 1.0e3:.2f} ms, "
+        f"tree={build_tree_s * 1.0e3:.2f} ms, "
+        f"topology={build_topology_s * 1.0e3:.2f} ms, "
+        f"validate={validate_invariants_s * 1.0e3:.2f} ms"
+    )
+    record_property("resolve_path_ms", round(resolve_path_s * 1.0e3, 3))
+    record_property("read_dataset_ms", round(read_dataset_s * 1.0e3, 3))
+    record_property("build_tree_ms", round(build_tree_s * 1.0e3, 3))
+    record_property("build_topology_ms", round(build_topology_s * 1.0e3, 3))
+    record_property("validate_invariants_ms", round(validate_invariants_s * 1.0e3, 3))
     assert topo.node_count == int(tree.cell_count)
     assert topo.max_level == int(tree.max_level)
     assert topo.periodic_i2 == (tree_coord == "rpa")
