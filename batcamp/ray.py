@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Ray traversal and ray-based interpolation helpers for octrees."""
+"""Ray traversal and ray-based integration helpers for octrees."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
 
 from numba import njit
+from numba import prange
 import numpy as np
 
 from .cartesian import CartesianLookupKernelState
 from .cartesian import _lookup_xyz_cell_id_kernel
+from .interpolator import CartesianInterpKernelState
+from .interpolator import SphericalInterpKernelState
+from .interpolator import _trilinear_from_cell
+from .interpolator import _trilinear_from_cell_rpa
 from .octree import Octree
 from .spherical import SphericalLookupKernelState
 from .spherical import _lookup_rpa_cell_id_kernel
@@ -21,32 +25,10 @@ if TYPE_CHECKING:
     from .interpolator import OctreeInterpolator
 
 
-HEX_TETS_INDEX = np.array(
-    (
-        (0, 1, 2, 6),
-        (0, 2, 3, 6),
-        (0, 3, 7, 6),
-        (0, 7, 4, 6),
-        (0, 4, 5, 6),
-        (0, 5, 1, 6),
-    ),
-    dtype=np.int64,
-)
-TET_FACES_INDEX = np.array(
-    (
-        (1, 2, 3),
-        (0, 3, 2),
-        (0, 1, 3),
-        (0, 2, 1),
-    ),
-    dtype=np.int64,
-)
-
 _TRACE_CONTAIN_TOL = 1e-8
 _DEFAULT_TRACE_BOUNDARY_TOL = 1e-9
-_AXIS_ALIGNED_DIR_TOL = 1e-12
-_TET_EPS_ABS = 1e-12
-_TET_EPS_REL = 1e-9
+_DEFAULT_TRACE_MAX_STEPS = 100000
+_DEFAULT_TRACE_BISECT_ITERS = 48
 
 
 @njit(cache=True)
@@ -58,7 +40,7 @@ def _contains_xyz_from_state(
     lookup_state: CartesianLookupKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
-    """Return whether a Cartesian point lies inside one cell."""
+    """Return whether one Cartesian point lies inside one cell."""
     if x < (lookup_state.cell_x_min[cid] - tol) or x > (lookup_state.cell_x_max[cid] + tol):
         return False
     if y < (lookup_state.cell_y_min[cid] - tol) or y > (lookup_state.cell_y_max[cid] + tol):
@@ -77,7 +59,7 @@ def _contains_rpa_from_components(
     lookup_state: SphericalLookupKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
-    """Return whether a spherical point lies inside one cell."""
+    """Return whether one spherical point lies inside one cell."""
     if r < (lookup_state.cell_r_min[cid] - tol) or r > (lookup_state.cell_r_max[cid] + tol):
         return False
     if polar < (lookup_state.cell_theta_min[cid] - tol) or polar > (lookup_state.cell_theta_max[cid] + tol):
@@ -98,7 +80,7 @@ def _forward_face_exit_dt(
     abs_eps: float,
     dir_eps: float,
 ) -> float:
-    """Return forward time to hit one Cartesian face along one axis."""
+    """Return forward distance to next Cartesian face along one axis."""
     if abs(direction_component) <= dir_eps:
         return np.inf
     if direction_component > 0.0:
@@ -120,7 +102,7 @@ def _clip_ray_interval_to_slab(
     slab_max_xyz: np.ndarray,
     tol: float,
 ) -> tuple[bool, float, float]:
-    """Clip ray interval `[t_start, t_end]` to one slab box."""
+    """Clip ray interval `[t_start, t_end]` against an axis-aligned slab."""
     t_near = t_start
     t_far = t_end
     dir_eps = 1e-15
@@ -157,7 +139,7 @@ def _clip_ray_interval_to_sphere(
     radius: float,
     tol: float,
 ) -> tuple[bool, float, float]:
-    """Clip ray interval `[t_start, t_end]` to one sphere centered at origin."""
+    """Clip ray interval `[t_start, t_end]` against sphere at origin."""
     if radius <= 0.0:
         return False, t_start, t_start
 
@@ -202,7 +184,7 @@ def _seek_first_cell_xyz(
     abs_eps: float,
     lookup_state: CartesianLookupKernelState,
 ) -> tuple[bool, float, int, float, float, float]:
-    """Seek the first `t` where the ray point resolves to a Cartesian cell."""
+    """Seek first `t` where ray enters a valid Cartesian cell."""
     t = t_start
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
@@ -277,7 +259,7 @@ def _seek_first_cell_rpa(
     abs_eps: float,
     lookup_state: SphericalLookupKernelState,
 ) -> tuple[bool, float, int, float, float, float, float, float, float]:
-    """Seek the first `t` where the ray point resolves to a spherical cell."""
+    """Seek first `t` where ray enters a valid spherical cell."""
     t = t_start
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
@@ -358,7 +340,7 @@ def _trace_segments_xyz_kernel(
     boundary_tol: float,
     lookup_state: CartesianLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace Cartesian ray segments with exact per-cell boundary walk."""
+    """Trace one Cartesian ray; return `(n_seg, cell_ids, t_enter, t_exit)`."""
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
     exits = np.empty(max_steps, dtype=np.float64)
@@ -506,7 +488,7 @@ def _trace_segments_rpa_kernel(
     boundary_tol: float,
     lookup_state: SphericalLookupKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace straight Cartesian rays on spherical trees using compiled kernels."""
+    """Trace one Cartesian ray on spherical tree; return segment arrays."""
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
     exits = np.empty(max_steps, dtype=np.float64)
@@ -647,6 +629,298 @@ def _trace_segments_rpa_kernel(
     return n_seg, cell_ids, enters, exits
 
 
+@njit(cache=True, parallel=True)
+def _segment_counts_xyz_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    max_steps: int,
+    boundary_tol: float,
+    lookup_state: CartesianLookupKernelState,
+) -> np.ndarray:
+    """Count traced segments for each ray on Cartesian trees."""
+    n_rays = int(origins_xyz.shape[0])
+    counts = np.zeros(n_rays, dtype=np.int64)
+    for i in prange(n_rays):
+        n_seg, _cids, _enters, _exits = _trace_segments_xyz_kernel(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            max_steps,
+            boundary_tol,
+            lookup_state,
+        )
+        counts[i] = int(n_seg)
+    return counts
+
+
+@njit(cache=True, parallel=True)
+def _segment_counts_rpa_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    max_steps: int,
+    bisect_iters: int,
+    boundary_tol: float,
+    lookup_state: SphericalLookupKernelState,
+) -> np.ndarray:
+    """Count traced segments for each ray on spherical trees."""
+    n_rays = int(origins_xyz.shape[0])
+    counts = np.zeros(n_rays, dtype=np.int64)
+    for i in prange(n_rays):
+        n_seg, _cids, _enters, _exits = _trace_segments_rpa_kernel(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            max_steps,
+            bisect_iters,
+            boundary_tol,
+            lookup_state,
+        )
+        counts[i] = int(n_seg)
+    return counts
+
+
+@njit(cache=True)
+def _fill_traces_xyz_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    max_steps: int,
+    boundary_tol: float,
+    lookup_state: CartesianLookupKernelState,
+    ray_offsets: np.ndarray,
+    out_cell_ids: np.ndarray,
+    out_t_enter: np.ndarray,
+    out_t_exit: np.ndarray,
+) -> None:
+    """Fill flattened trace arrays from per-ray offsets on Cartesian trees."""
+    n_rays = int(origins_xyz.shape[0])
+    for i in range(n_rays):
+        n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            max_steps,
+            boundary_tol,
+            lookup_state,
+        )
+        base = int(ray_offsets[i])
+        for j in range(int(n_seg)):
+            out_cell_ids[base + j] = int(cids[j])
+            out_t_enter[base + j] = float(enters[j])
+            out_t_exit[base + j] = float(exits[j])
+
+
+@njit(cache=True)
+def _fill_traces_rpa_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    max_steps: int,
+    bisect_iters: int,
+    boundary_tol: float,
+    lookup_state: SphericalLookupKernelState,
+    ray_offsets: np.ndarray,
+    out_cell_ids: np.ndarray,
+    out_t_enter: np.ndarray,
+    out_t_exit: np.ndarray,
+) -> None:
+    """Fill flattened trace arrays from per-ray offsets on spherical trees."""
+    n_rays = int(origins_xyz.shape[0])
+    for i in range(n_rays):
+        n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            max_steps,
+            bisect_iters,
+            boundary_tol,
+            lookup_state,
+        )
+        base = int(ray_offsets[i])
+        for j in range(int(n_seg)):
+            out_cell_ids[base + j] = int(cids[j])
+            out_t_enter[base + j] = float(enters[j])
+            out_t_exit[base + j] = float(exits[j])
+
+
+@njit(cache=True, parallel=True)
+def _midpoints_from_segments_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_enter: np.ndarray,
+    t_exit: np.ndarray,
+    ray_offsets: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert flattened segment arrays to midpoint points and weights."""
+    n_seg_total = int(t_enter.shape[0])
+    mids = np.empty((n_seg_total, 3), dtype=np.float64)
+    weights = np.empty(n_seg_total, dtype=np.float64)
+    d0 = float(direction_xyz_unit[0])
+    d1 = float(direction_xyz_unit[1])
+    d2 = float(direction_xyz_unit[2])
+    n_rays = int(origins_xyz.shape[0])
+    for i in prange(n_rays):
+        base = int(ray_offsets[i])
+        end = int(ray_offsets[i + 1])
+        ox = float(origins_xyz[i, 0])
+        oy = float(origins_xyz[i, 1])
+        oz = float(origins_xyz[i, 2])
+        for k in range(base, end):
+            ta = float(t_enter[k])
+            tb = float(t_exit[k])
+            tm = 0.5 * (ta + tb)
+            mids[k, 0] = ox + tm * d0
+            mids[k, 1] = oy + tm * d1
+            mids[k, 2] = oz + tm * d2
+            weights[k] = max(0.0, tb - ta)
+    return mids, weights
+
+
+@njit(cache=True, parallel=True)
+def _integrate_rays_xyz_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    max_steps: int,
+    boundary_tol: float,
+    scale: float,
+    trace_lookup_state: CartesianLookupKernelState,
+    interp_state: CartesianInterpKernelState,
+) -> np.ndarray:
+    """Integrate fields along rays on Cartesian trees using midpoint segments."""
+    n_rays = int(origins_xyz.shape[0])
+    ncomp = int(interp_state.point_values_2d.shape[1])
+    out = np.full((n_rays, ncomp), np.nan, dtype=np.float64)
+    d0 = float(direction_xyz_unit[0])
+    d1 = float(direction_xyz_unit[1])
+    d2 = float(direction_xyz_unit[2])
+    for i in prange(n_rays):
+        n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            max_steps,
+            boundary_tol,
+            trace_lookup_state,
+        )
+        if n_seg <= 0:
+            if ncomp == 1:
+                out[i, 0] = 0.0
+            continue
+        acc = np.zeros(ncomp, dtype=np.float64)
+        row = np.empty(ncomp, dtype=np.float64)
+        ox = float(origins_xyz[i, 0])
+        oy = float(origins_xyz[i, 1])
+        oz = float(origins_xyz[i, 2])
+        used = False
+        for j in range(int(n_seg)):
+            ta = float(enters[j])
+            tb = float(exits[j])
+            dt = tb - ta
+            if dt <= 0.0:
+                continue
+            tm = 0.5 * (ta + tb)
+            x = ox + tm * d0
+            y = oy + tm * d1
+            z = oz + tm * d2
+            _trilinear_from_cell(
+                row,
+                int(cids[j]),
+                x,
+                y,
+                z,
+                interp_state,
+            )
+            acc += row * dt
+            used = True
+        if used:
+            out[i, :] = scale * acc
+        elif ncomp == 1:
+            out[i, 0] = 0.0
+    return out
+
+
+@njit(cache=True, parallel=True)
+def _integrate_rays_rpa_kernel(
+    origins_xyz: np.ndarray,
+    direction_xyz_unit: np.ndarray,
+    t_start: float,
+    t_end: float,
+    max_steps: int,
+    bisect_iters: int,
+    boundary_tol: float,
+    scale: float,
+    trace_lookup_state: SphericalLookupKernelState,
+    interp_state: SphericalInterpKernelState,
+) -> np.ndarray:
+    """Integrate fields along rays on spherical trees using midpoint segments."""
+    n_rays = int(origins_xyz.shape[0])
+    ncomp = int(interp_state.point_values_2d.shape[1])
+    out = np.full((n_rays, ncomp), np.nan, dtype=np.float64)
+    d0 = float(direction_xyz_unit[0])
+    d1 = float(direction_xyz_unit[1])
+    d2 = float(direction_xyz_unit[2])
+    for i in prange(n_rays):
+        n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+            origins_xyz[i],
+            direction_xyz_unit,
+            t_start,
+            t_end,
+            max_steps,
+            bisect_iters,
+            boundary_tol,
+            trace_lookup_state,
+        )
+        if n_seg <= 0:
+            if ncomp == 1:
+                out[i, 0] = 0.0
+            continue
+        acc = np.zeros(ncomp, dtype=np.float64)
+        row = np.empty(ncomp, dtype=np.float64)
+        ox = float(origins_xyz[i, 0])
+        oy = float(origins_xyz[i, 1])
+        oz = float(origins_xyz[i, 2])
+        used = False
+        for j in range(int(n_seg)):
+            ta = float(enters[j])
+            tb = float(exits[j])
+            dt = tb - ta
+            if dt <= 0.0:
+                continue
+            tm = 0.5 * (ta + tb)
+            x = ox + tm * d0
+            y = oy + tm * d1
+            z = oz + tm * d2
+            r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+            _trilinear_from_cell_rpa(
+                row,
+                int(cids[j]),
+                r,
+                polar,
+                azimuth,
+                interp_state,
+            )
+            acc += row * dt
+            used = True
+        if used:
+            out[i, :] = scale * acc
+        elif ncomp == 1:
+            out[i, 0] = 0.0
+    return out
+
+
 def _normalize_direction(direction_xyz: np.ndarray) -> np.ndarray:
     """Normalize one Cartesian ray direction."""
     d = np.asarray(direction_xyz, dtype=float).reshape(3)
@@ -657,7 +931,7 @@ def _normalize_direction(direction_xyz: np.ndarray) -> np.ndarray:
 
 
 def _as_xyz(point_xyz: np.ndarray) -> np.ndarray:
-    """Coerce one Cartesian point to shape `(3,)` float array."""
+    """Coerce one Cartesian point to shape `(3,)`."""
     return np.asarray(point_xyz, dtype=float).reshape(3)
 
 
@@ -674,7 +948,7 @@ def _coerce_origins_xyz(origins_xyz: np.ndarray) -> np.ndarray:
 
 
 def _coerce_ray_interval(t_start: float, t_end: float) -> tuple[float, float]:
-    """Validate a ray interval and return `(t0, t1)` as floats."""
+    """Validate and normalize ray interval."""
     t0 = float(t_start)
     t1 = float(t_end)
     if t1 <= t0:
@@ -683,45 +957,34 @@ def _coerce_ray_interval(t_start: float, t_end: float) -> tuple[float, float]:
 
 
 def _coerce_positive_chunk_size(chunk_size: int) -> int:
-    """Validate chunk size for batched ray workflows."""
+    """Validate chunk size."""
     chunk = int(chunk_size)
     if chunk <= 0:
         raise ValueError("chunk_size must be positive.")
     return chunk
 
 
-@dataclass(frozen=True)
-class RaySegment:
-    """Ray interval `[t_enter, t_exit]` that remains inside one leaf cell."""
-
-    cell_id: int
-    t_enter: float
-    t_exit: float
-
-
-@dataclass(frozen=True)
-class RayLinearPiece:
-    """Linear function f(t) = slope*t + intercept over [t_start, t_end]."""
-
-    t_start: float
-    t_end: float
-    cell_id: int
-    tet_id: int
-    slope: np.ndarray
-    intercept: np.ndarray
+def _coerce_positive_int(name: str, value: int) -> int:
+    """Validate positive integer parameter."""
+    iv = int(value)
+    if iv <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return iv
 
 
 class OctreeRayTracer:
-    """Ray tracer operating on an already-built and bound `Octree`."""
+    """Thin convenience wrapper around compiled ray tracing kernels."""
 
     def __init__(self, tree: Octree) -> None:
-        """Store the tree used for cell-segment tracing."""
+        """Bind one built octree."""
         self.tree = tree
-        dmin, dmax = self.tree.domain_bounds(coord="xyz")
+        self._tree_coord = str(tree.tree_coord)
+        dmin, dmax = tree.domain_bounds(coord="xyz")
         self._domain_xyz_min = np.asarray(dmin, dtype=float).reshape(3)
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
-        _r_lo, r_hi = self.tree.domain_bounds(coord="rpa")
+        _r_lo, r_hi = tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
+        self._lookup_state = tree.lookup.lookup_state
 
     def trace(
         self,
@@ -730,11 +993,11 @@ class OctreeRayTracer:
         t_start: float,
         t_end: float,
         *,
-        max_steps: int = 100000,
-        bisect_iters: int = 48,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
-    ) -> list[RaySegment]:
-        """Trace a Cartesian ray into contiguous per-cell segments."""
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Trace one ray and return `(cell_ids, t_enter, t_exit)`."""
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
         return self.trace_prepared(
@@ -754,19 +1017,25 @@ class OctreeRayTracer:
         t_start: float,
         t_end: float,
         *,
-        max_steps: int = 100000,
-        bisect_iters: int = 48,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
-    ) -> list[RaySegment]:
-        """Trace ray segments for pre-normalized inputs using compiled kernels."""
-        o = origin_xyz
-        d = direction_xyz_unit
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Trace one ray for normalized inputs and return segment arrays."""
+        max_steps = _coerce_positive_int("max_steps", max_steps)
+        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
         t0 = float(t_start)
         t1 = float(t_end)
         if t1 <= t0:
-            return []
+            return (
+                np.empty((0,), dtype=np.int64),
+                np.empty((0,), dtype=float),
+                np.empty((0,), dtype=float),
+            )
 
-        tree_coord = str(self.tree.tree_coord)
+        o = np.asarray(origin_xyz, dtype=float).reshape(3)
+        d = np.asarray(direction_xyz_unit, dtype=float).reshape(3)
+
         clipped, t0_clip, t1_clip = _clip_ray_interval_to_slab(
             o,
             d,
@@ -777,9 +1046,13 @@ class OctreeRayTracer:
             float(boundary_tol),
         )
         if not clipped or t1_clip <= t0_clip:
-            return []
+            return (
+                np.empty((0,), dtype=np.int64),
+                np.empty((0,), dtype=float),
+                np.empty((0,), dtype=float),
+            )
 
-        if tree_coord == "rpa":
+        if self._tree_coord == "rpa":
             clipped_sphere, t0_sphere, t1_sphere = _clip_ray_interval_to_sphere(
                 o,
                 d,
@@ -789,7 +1062,11 @@ class OctreeRayTracer:
                 float(boundary_tol),
             )
             if not clipped_sphere or t1_sphere <= t0_sphere:
-                return []
+                return (
+                    np.empty((0,), dtype=np.int64),
+                    np.empty((0,), dtype=float),
+                    np.empty((0,), dtype=float),
+                )
             t0_clip = t0_sphere
             t1_clip = t1_sphere
 
@@ -799,10 +1076,14 @@ class OctreeRayTracer:
             t0 = min(t1_clip, t0_clip + abs_eps)
         t1 = t1_clip
         if t1 <= t0:
-            return []
+            return (
+                np.empty((0,), dtype=np.int64),
+                np.empty((0,), dtype=float),
+                np.empty((0,), dtype=float),
+            )
 
-        lookup_state = self.tree.lookup.lookup_state
-        if tree_coord == "xyz":
+        lookup_state = self._lookup_state
+        if self._tree_coord == "xyz":
             if not isinstance(lookup_state, CartesianLookupKernelState):
                 raise TypeError(
                     "Cartesian ray tracing requires CartesianLookupKernelState; "
@@ -817,7 +1098,7 @@ class OctreeRayTracer:
                 float(boundary_tol),
                 lookup_state,
             )
-        elif tree_coord == "rpa":
+        elif self._tree_coord == "rpa":
             if not isinstance(lookup_state, SphericalLookupKernelState):
                 raise TypeError(
                     "Spherical ray tracing requires SphericalLookupKernelState; "
@@ -834,103 +1115,178 @@ class OctreeRayTracer:
                 lookup_state,
             )
         else:
-            raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
+            raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
 
-        return [
-            RaySegment(
-                cell_id=int(cids[i]),
-                t_enter=float(enters[i]),
-                t_exit=float(exits[i]),
+        n = int(n_seg)
+        return (
+            np.array(cids[:n], dtype=np.int64, copy=True),
+            np.array(enters[:n], dtype=float, copy=True),
+            np.array(exits[:n], dtype=float, copy=True),
+        )
+
+    def segment_counts(
+        self,
+        origins_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+        t_start: float,
+        t_end: float,
+        *,
+        chunk_size: int = 2048,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
+    ) -> np.ndarray:
+        """Return traced segment count for each ray."""
+        origins = _coerce_origins_xyz(origins_xyz)
+        d = _normalize_direction(direction_xyz)
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
+        chunk = _coerce_positive_chunk_size(chunk_size)
+        max_steps = _coerce_positive_int("max_steps", max_steps)
+        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
+
+        counts = np.zeros(origins.shape[0], dtype=np.int64)
+        for start in range(0, int(origins.shape[0]), chunk):
+            stop = min(int(origins.shape[0]), start + chunk)
+            sub = origins[start:stop]
+            if self._tree_coord == "xyz":
+                lookup_state = self._lookup_state
+                if not isinstance(lookup_state, CartesianLookupKernelState):
+                    raise TypeError(
+                        "Cartesian ray tracing requires CartesianLookupKernelState; "
+                        f"got {type(lookup_state).__name__}."
+                    )
+                counts[start:stop] = _segment_counts_xyz_kernel(
+                    sub,
+                    d,
+                    t0,
+                    t1,
+                    int(max_steps),
+                    float(boundary_tol),
+                    lookup_state,
+                )
+            elif self._tree_coord == "rpa":
+                lookup_state = self._lookup_state
+                if not isinstance(lookup_state, SphericalLookupKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires SphericalLookupKernelState; "
+                        f"got {type(lookup_state).__name__}."
+                    )
+                counts[start:stop] = _segment_counts_rpa_kernel(
+                    sub,
+                    d,
+                    t0,
+                    t1,
+                    int(max_steps),
+                    int(bisect_iters),
+                    float(boundary_tol),
+                    lookup_state,
+                )
+            else:
+                raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
+        return counts
+
+    def trace_many(
+        self,
+        origins_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+        t_start: float,
+        t_end: float,
+        *,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Trace many rays and return flattened arrays plus `ray_offsets`."""
+        origins = _coerce_origins_xyz(origins_xyz)
+        d = _normalize_direction(direction_xyz)
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
+        max_steps = _coerce_positive_int("max_steps", max_steps)
+        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
+
+        if self._tree_coord == "xyz":
+            lookup_state = self._lookup_state
+            if not isinstance(lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState; "
+                    f"got {type(lookup_state).__name__}."
+                )
+            counts = _segment_counts_xyz_kernel(
+                origins,
+                d,
+                t0,
+                t1,
+                int(max_steps),
+                float(boundary_tol),
+                lookup_state,
             )
-            for i in range(int(n_seg))
-        ]
+        elif self._tree_coord == "rpa":
+            lookup_state = self._lookup_state
+            if not isinstance(lookup_state, SphericalLookupKernelState):
+                raise TypeError(
+                    "Spherical ray tracing requires SphericalLookupKernelState; "
+                    f"got {type(lookup_state).__name__}."
+                )
+            counts = _segment_counts_rpa_kernel(
+                origins,
+                d,
+                t0,
+                t1,
+                int(max_steps),
+                int(bisect_iters),
+                float(boundary_tol),
+                lookup_state,
+            )
+        else:
+            raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
+
+        ray_offsets = np.zeros(int(origins.shape[0]) + 1, dtype=np.int64)
+        ray_offsets[1:] = np.cumsum(counts, dtype=np.int64)
+        n_seg_total = int(ray_offsets[-1])
+        cell_ids = np.empty(n_seg_total, dtype=np.int64)
+        t_enter = np.empty(n_seg_total, dtype=np.float64)
+        t_exit = np.empty(n_seg_total, dtype=np.float64)
+
+        if self._tree_coord == "xyz":
+            _fill_traces_xyz_kernel(
+                origins,
+                d,
+                t0,
+                t1,
+                int(max_steps),
+                float(boundary_tol),
+                self._lookup_state,
+                ray_offsets,
+                cell_ids,
+                t_enter,
+                t_exit,
+            )
+        else:
+            _fill_traces_rpa_kernel(
+                origins,
+                d,
+                t0,
+                t1,
+                int(max_steps),
+                int(bisect_iters),
+                float(boundary_tol),
+                self._lookup_state,
+                ray_offsets,
+                cell_ids,
+                t_enter,
+                t_exit,
+            )
+
+        return cell_ids, t_enter, t_exit, ray_offsets
 
 
 class OctreeRayInterpolator:
-    """Ray sampling and piecewise-linear extraction on `OctreeInterpolator`."""
+    """Thin convenience wrapper around compiled ray integration kernels."""
 
     def __init__(self, interpolator: "OctreeInterpolator") -> None:
-        """Store the interpolator and its bound tree for ray operations."""
+        """Bind one interpolator and its tree."""
         self.interpolator = interpolator
         self.tree = interpolator.tree
         self.ray_tracer = OctreeRayTracer(self.tree)
-
-    @staticmethod
-    def point_in_tet(point_xyz: np.ndarray, tet_xyz: np.ndarray, *, tol: float = 1e-10) -> bool:
-        """Test whether a point is inside/on one tetrahedron."""
-        a = tet_xyz[0]
-        mat = np.column_stack((tet_xyz[1] - a, tet_xyz[2] - a, tet_xyz[3] - a))
-        try:
-            uvw = np.linalg.solve(mat, point_xyz - a)
-        except np.linalg.LinAlgError:
-            return False
-        b0 = 1.0 - float(np.sum(uvw))
-        bary = np.array([b0, float(uvw[0]), float(uvw[1]), float(uvw[2])], dtype=float)
-        return bool(np.all(bary >= -tol) and np.all(bary <= 1.0 + tol))
-
-    def find_tet_in_hex(self, cell_xyz: np.ndarray, point_xyz: np.ndarray, *, tol: float = 1e-10) -> int | None:
-        """Find which tet in the local 6-tet split contains a point."""
-        p = np.array(point_xyz, dtype=float)
-        for tet_idx, tet in enumerate(HEX_TETS_INDEX):
-            tet_xyz = cell_xyz[tet]
-            if self.point_in_tet(p, tet_xyz, tol=tol):
-                return int(tet_idx)
-        return None
-
-    @staticmethod
-    def ray_triangle_hit_t(
-        ray_origin: np.ndarray,
-        ray_dir: np.ndarray,
-        tri_xyz: np.ndarray,
-        *,
-        t_min: float,
-        t_max: float,
-        tol: float,
-    ) -> float | None:
-        """Intersect one triangle with a ray and return hit `t` when valid."""
-        p0 = tri_xyz[0]
-        p1 = tri_xyz[1]
-        p2 = tri_xyz[2]
-        e1 = p1 - p0
-        e2 = p2 - p0
-        h = np.cross(ray_dir, e2)
-        a = float(np.dot(e1, h))
-        if abs(a) <= tol:
-            return None
-        f = 1.0 / a
-        s = ray_origin - p0
-        u = f * float(np.dot(s, h))
-        if u < -tol or u > 1.0 + tol:
-            return None
-        q = np.cross(s, e1)
-        v = f * float(np.dot(ray_dir, q))
-        if v < -tol or (u + v) > 1.0 + tol:
-            return None
-        t = f * float(np.dot(e2, q))
-        if t <= t_min + tol or t > t_max + tol:
-            return None
-        return float(t)
-
-    @staticmethod
-    def tet_ray_linear_coefficients(
-        ray_origin: np.ndarray,
-        ray_dir: np.ndarray,
-        tet_xyz: np.ndarray,
-        tet_values: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute linear-in-`t` coefficients on one linear tetrahedron."""
-        mat = np.column_stack((tet_xyz, np.ones(4, dtype=float)))
-        rhs = tet_values.reshape(4, -1)
-        coef = np.linalg.solve(mat, rhs)
-        slope = coef[0] * ray_dir[0] + coef[1] * ray_dir[1] + coef[2] * ray_dir[2]
-        intercept = (
-            coef[0] * ray_origin[0]
-            + coef[1] * ray_origin[1]
-            + coef[2] * ray_origin[2]
-            + coef[3]
-        )
-        trailing = tet_values.shape[1:]
-        return slope.reshape(trailing), intercept.reshape(trailing)
 
     def sample(
         self,
@@ -939,11 +1295,10 @@ class OctreeRayInterpolator:
         t_start: float,
         t_end: float,
         n_samples: int,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[RaySegment]]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """Sample interpolated values at uniform `t` points on one ray."""
         if int(n_samples) <= 0:
             raise ValueError("n_samples must be positive.")
-
         o = _as_xyz(origin_xyz)
         d = _normalize_direction(direction_xyz)
         t_values = np.linspace(float(t_start), float(t_end), int(n_samples))
@@ -955,9 +1310,9 @@ class OctreeRayInterpolator:
             log_outside_domain=False,
         )
         segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
-        return t_values, values, np.array(cell_ids, dtype=np.int64), segments
+        return t_values, values, np.asarray(cell_ids, dtype=np.int64), segments
 
-    def integrate_field_along_rays(
+    def segment_counts(
         self,
         origins_xyz: np.ndarray,
         direction_xyz: np.ndarray,
@@ -965,43 +1320,21 @@ class OctreeRayInterpolator:
         t_end: float,
         *,
         chunk_size: int = 2048,
-        scale: float = 1.0,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
-        """Integrate interpolated field(s) along many rays using linear pieces."""
-        origins = _coerce_origins_xyz(origins_xyz)
-        _coerce_positive_chunk_size(chunk_size)
-        d = _normalize_direction(direction_xyz)
-        t0, t1 = _coerce_ray_interval(t_start, t_end)
-
-        n_rays = int(origins.shape[0])
-        ncomp = int(self.interpolator.n_value_components)
-        out = np.full((n_rays, ncomp), np.nan, dtype=float)
-
-        for i, o in enumerate(origins):
-            segs = self.ray_tracer.trace_prepared(o, d, t0, t1)
-            if not segs:
-                if ncomp == 1:
-                    out[i, 0] = 0.0
-                continue
-            pieces = self.linear_pieces(o, d, t0, t1, segments=segs)
-            if not pieces:
-                if ncomp == 1:
-                    out[i, 0] = 0.0
-                continue
-            col = np.zeros(ncomp, dtype=float)
-            for piece in pieces:
-                a = float(piece.t_start)
-                b = float(piece.t_end)
-                if b <= a:
-                    continue
-                slope = np.asarray(piece.slope, dtype=float).reshape(-1)
-                intercept = np.asarray(piece.intercept, dtype=float).reshape(-1)
-                col += 0.5 * slope * (b * b - a * a) + intercept * (b - a)
-            out[i] = float(scale) * col
-
-        if ncomp == 1:
-            return out[:, 0]
-        return out
+        """Return per-ray segment counts."""
+        return self.ray_tracer.segment_counts(
+            origins_xyz,
+            direction_xyz,
+            t_start,
+            t_end,
+            chunk_size=chunk_size,
+            max_steps=max_steps,
+            bisect_iters=bisect_iters,
+            boundary_tol=boundary_tol,
+        )
 
     def adaptive_midpoint_rule(
         self,
@@ -1011,41 +1344,50 @@ class OctreeRayInterpolator:
         t_end: float,
         *,
         chunk_size: int = 2048,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Build flattened midpoint quadrature data for many rays."""
+        """Build flattened midpoint quadrature arrays for many rays."""
         origins = _coerce_origins_xyz(origins_xyz)
-        _coerce_positive_chunk_size(chunk_size)
         d = _normalize_direction(direction_xyz)
         t0, t1 = _coerce_ray_interval(t_start, t_end)
+        chunk = _coerce_positive_chunk_size(chunk_size)
+        max_steps = _coerce_positive_int("max_steps", max_steps)
+        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
 
-        n_rays = int(origins.shape[0])
-        ray_offsets = np.zeros(n_rays + 1, dtype=np.int64)
-        midpoints: list[np.ndarray] = []
-        weights: list[float] = []
+        mids_chunks: list[np.ndarray] = []
+        weights_chunks: list[np.ndarray] = []
+        offsets = np.zeros(int(origins.shape[0]) + 1, dtype=np.int64)
 
-        k = 0
-        for i, o in enumerate(origins):
-            ray_offsets[i] = k
-            segs = self.ray_tracer.trace_prepared(o, d, t0, t1)
-            for seg in segs:
-                ta = float(seg.t_enter)
-                tb = float(seg.t_exit)
-                dt = tb - ta
-                if dt <= 0.0:
-                    continue
-                tm = 0.5 * (ta + tb)
-                midpoints.append(o + tm * d)
-                weights.append(float(dt))
-                k += 1
-        ray_offsets[n_rays] = k
+        written = 0
+        for start in range(0, int(origins.shape[0]), chunk):
+            stop = min(int(origins.shape[0]), start + chunk)
+            sub = origins[start:stop]
+            cids, t_enter, t_exit, sub_offsets = self.ray_tracer.trace_many(
+                sub,
+                d,
+                t0,
+                t1,
+                max_steps=max_steps,
+                bisect_iters=bisect_iters,
+                boundary_tol=boundary_tol,
+            )
+            mids_sub, weights_sub = _midpoints_from_segments_kernel(sub, d, t_enter, t_exit, sub_offsets)
+            mids_chunks.append(mids_sub)
+            weights_chunks.append(weights_sub)
 
-        if k == 0:
+            local_counts = np.diff(sub_offsets)
+            offsets[start + 1 : stop + 1] = written + np.cumsum(local_counts, dtype=np.int64)
+            written += int(sub_offsets[-1])
+
+        if written == 0:
             return (
                 np.empty((0, 3), dtype=float),
                 np.empty((0,), dtype=float),
-                ray_offsets,
+                offsets,
             )
-        return np.asarray(midpoints, dtype=float), np.asarray(weights, dtype=float), ray_offsets
+        return np.vstack(mids_chunks), np.concatenate(weights_chunks), offsets
 
     def integrate_midpoint_rule(
         self,
@@ -1055,7 +1397,7 @@ class OctreeRayInterpolator:
         *,
         scale: float = 1.0,
     ) -> np.ndarray:
-        """Integrate the interpolator field using flattened midpoint quadrature."""
+        """Integrate field values from precomputed midpoint quadrature arrays."""
         mids = np.asarray(midpoints_xyz, dtype=float)
         w = np.asarray(weights, dtype=float).reshape(-1)
         offsets = np.asarray(ray_offsets, dtype=np.int64).reshape(-1)
@@ -1076,7 +1418,6 @@ class OctreeRayInterpolator:
         n_rays = int(offsets.size - 1)
         ncomp = int(self.interpolator.n_value_components)
         out = np.full((n_rays, ncomp), np.nan, dtype=float)
-
         if mids.shape[0] == 0:
             if ncomp == 1:
                 out[:, 0] = 0.0
@@ -1123,257 +1464,104 @@ class OctreeRayInterpolator:
         *,
         chunk_size: int = 2048,
         scale: float = 1.0,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
-        """One-shot midpoint integration on many rays."""
+        """One-shot midpoint integration (trace->midpoints->interpolate->sum)."""
         mids, weights, offsets = self.adaptive_midpoint_rule(
             origins_xyz,
             direction_xyz,
             t_start,
             t_end,
             chunk_size=chunk_size,
+            max_steps=max_steps,
+            bisect_iters=bisect_iters,
+            boundary_tol=boundary_tol,
         )
         return self.integrate_midpoint_rule(mids, weights, offsets, scale=scale)
 
-    def linear_pieces_axis_aligned(
+    def integrate_field_along_rays(
         self,
-        origin_xyz: np.ndarray,
-        direction_xyz_unit: np.ndarray,
-        segments: list[RaySegment],
-    ) -> list[RayLinearPiece] | None:
-        """Build cellwise linear pieces quickly for axis-aligned Cartesian rays."""
-        if str(self.tree.tree_coord) != "xyz":
-            return None
-        if not segments:
-            return []
-
-        abs_d = np.abs(direction_xyz_unit)
-        axis = int(np.argmax(abs_d))
-        if abs_d[axis] < (1.0 - _AXIS_ALIGNED_DIR_TOL):
-            return None
-        if abs_d[(axis + 1) % 3] > _AXIS_ALIGNED_DIR_TOL:
-            return None
-        if abs_d[(axis + 2) % 3] > _AXIS_ALIGNED_DIR_TOL:
-            return None
-
-        n_seg = len(segments)
-        t_bounds = np.empty(2 * n_seg, dtype=float)
-        for i, seg in enumerate(segments):
-            t_bounds[2 * i] = float(seg.t_enter)
-            t_bounds[2 * i + 1] = float(seg.t_exit)
-
-        query_xyz = origin_xyz[None, :] + t_bounds[:, None] * direction_xyz_unit[None, :]
-        values, cell_ids = self.interpolator(
-            query_xyz,
-            query_coord="xyz",
-            return_cell_ids=True,
-            log_outside_domain=False,
-        )
-        cid_arr = np.asarray(cell_ids, dtype=np.int64).reshape(-1)
-        if np.any(cid_arr < 0):
-            return None
-
-        value_arr = np.asarray(values, dtype=float)
-        if value_arr.ndim == 1:
-            value_arr = value_arr.reshape(-1, 1)
-            scalar_field = True
-        else:
-            scalar_field = False
-
-        out: list[RayLinearPiece] = []
-        for i, seg in enumerate(segments):
-            t0 = float(seg.t_enter)
-            t1 = float(seg.t_exit)
-            dt = t1 - t0
-            if dt <= 0.0:
-                continue
-            v0 = value_arr[2 * i]
-            v1 = value_arr[2 * i + 1]
-            slope = (v1 - v0) / dt
-            intercept = v0 - slope * t0
-            if scalar_field:
-                slope_out: np.ndarray | float = float(slope[0])
-                intercept_out: np.ndarray | float = float(intercept[0])
-            else:
-                slope_out = slope.copy()
-                intercept_out = intercept.copy()
-            out.append(
-                RayLinearPiece(
-                    t_start=t0,
-                    t_end=t1,
-                    cell_id=int(seg.cell_id),
-                    tet_id=-1,
-                    slope=slope_out,
-                    intercept=intercept_out,
-                )
-            )
-        return out
-
-    def linear_pieces_for_cell_segment(
-        self,
-        ray_origin: np.ndarray,
-        ray_dir: np.ndarray,
-        cell_id: int,
-        t_enter: float,
-        t_exit: float,
-        *,
-        tol: float = 1e-10,
-        max_steps: int = 128,
-    ) -> list[RayLinearPiece]:
-        """Split one ray/cell interval into piecewise-linear tet intervals."""
-        cid = int(cell_id)
-        if t_exit <= t_enter:
-            return []
-
-        interp = self.interpolator
-        corner_ids = interp.corners[cid]
-        cell_xyz = interp.lookup.points[corner_ids]
-        cell_vals = interp.point_values[corner_ids]
-        eps = max(_TET_EPS_ABS, _TET_EPS_REL * (1.0 + abs(t_exit - t_enter)))
-
-        t = float(t_enter)
-        t_probe = min(float(t_exit), t + eps)
-        p_probe = ray_origin + t_probe * ray_dir
-        tet_idx = self.find_tet_in_hex(cell_xyz, p_probe, tol=1e-8)
-        if tet_idx is None:
-            p_mid = ray_origin + (0.5 * (t_enter + t_exit)) * ray_dir
-            tet_idx = self.find_tet_in_hex(cell_xyz, p_mid, tol=1e-7)
-        if tet_idx is None:
-            return []
-
-        pieces: list[RayLinearPiece] = []
-        for _ in range(max_steps):
-            if t >= t_exit - eps:
-                break
-
-            tet = HEX_TETS_INDEX[tet_idx]
-            tet_xyz = cell_xyz[tet]
-            tet_vals = cell_vals[tet]
-
-            t_next = float(t_exit)
-            for face in TET_FACES_INDEX:
-                tri = tet_xyz[face]
-                t_hit = self.ray_triangle_hit_t(
-                    ray_origin,
-                    ray_dir,
-                    tri,
-                    t_min=t + eps,
-                    t_max=t_exit,
-                    tol=tol,
-                )
-                if t_hit is not None and t_hit < t_next:
-                    t_next = float(t_hit)
-
-            if t_next <= t + eps * 0.25:
-                t_next = min(float(t_exit), t + eps)
-
-            slope, intercept = self.tet_ray_linear_coefficients(
-                ray_origin,
-                ray_dir,
-                tet_xyz,
-                tet_vals,
-            )
-            pieces.append(
-                RayLinearPiece(
-                    t_start=float(t),
-                    t_end=float(t_next),
-                    cell_id=cid,
-                    tet_id=int(tet_idx),
-                    slope=slope,
-                    intercept=intercept,
-                )
-            )
-
-            if t_next >= t_exit - eps:
-                break
-
-            t = float(t_next)
-            next_tet: int | None = None
-            for mult in (1.0, 4.0, 16.0, 64.0):
-                t_probe = min(float(t_exit), t + mult * eps)
-                p_probe = ray_origin + t_probe * ray_dir
-                probe = self.find_tet_in_hex(cell_xyz, p_probe, tol=1e-7)
-                if probe is not None:
-                    next_tet = int(probe)
-                    break
-            if next_tet is None:
-                break
-            tet_idx = next_tet
-
-        return pieces
-
-    def linear_pieces(
-        self,
-        origin_xyz: np.ndarray,
+        origins_xyz: np.ndarray,
         direction_xyz: np.ndarray,
         t_start: float,
         t_end: float,
         *,
-        segments: list[RaySegment] | None = None,
-    ) -> list[RayLinearPiece]:
-        """Return stitched piecewise-linear `f(t)=m*t+b` intervals on a ray."""
-        o = _as_xyz(origin_xyz)
+        chunk_size: int = 2048,
+        scale: float = 1.0,
+        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
+        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
+        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
+    ) -> np.ndarray:
+        """Integrate interpolated fields along many rays using compiled kernels."""
+        origins = _coerce_origins_xyz(origins_xyz)
         d = _normalize_direction(direction_xyz)
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
+        chunk = _coerce_positive_chunk_size(chunk_size)
+        max_steps = _coerce_positive_int("max_steps", max_steps)
+        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
 
-        ray_segments = segments
-        if ray_segments is None:
-            ray_segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
-        pieces = self.linear_pieces_axis_aligned(o, d, ray_segments)
-        if pieces is None:
-            pieces = []
-            for seg in ray_segments:
-                pieces.extend(
-                    self.linear_pieces_for_cell_segment(
-                        o,
-                        d,
-                        int(seg.cell_id),
-                        float(seg.t_enter),
-                        float(seg.t_exit),
+        n_rays = int(origins.shape[0])
+        ncomp = int(self.interpolator.n_value_components)
+        out = np.full((n_rays, ncomp), np.nan, dtype=float)
+
+        tree_coord = str(self.tree.tree_coord)
+        for start in range(0, n_rays, chunk):
+            stop = min(n_rays, start + chunk)
+            sub = origins[start:stop]
+            if tree_coord == "xyz":
+                lookup_state = self.tree.lookup.lookup_state
+                if not isinstance(lookup_state, CartesianLookupKernelState):
+                    raise TypeError(
+                        "Cartesian ray tracing requires CartesianLookupKernelState; "
+                        f"got {type(lookup_state).__name__}."
                     )
+                interp_state = self.interpolator._interp_state_xyz
+                if not isinstance(interp_state, CartesianInterpKernelState):
+                    raise TypeError(
+                        "Cartesian ray interpolation requires CartesianInterpKernelState; "
+                        f"got {type(interp_state).__name__}."
+                    )
+                out[start:stop] = _integrate_rays_xyz_kernel(
+                    sub,
+                    d,
+                    t0,
+                    t1,
+                    int(max_steps),
+                    float(boundary_tol),
+                    float(scale),
+                    lookup_state,
+                    interp_state,
                 )
-        if not pieces:
-            return pieces
-
-        span = abs(float(t_end) - float(t_start))
-        stitch_tol = max(1e-10, 1e-8 * (1.0 + span))
-        out: list[RayLinearPiece] = [pieces[0]]
-        for piece in pieces[1:]:
-            prev = out[-1]
-            a = float(piece.t_start)
-            b = float(piece.t_end)
-            if abs(a - prev.t_end) <= stitch_tol:
-                a = float(prev.t_end)
-            if b <= a:
-                continue
-            out.append(
-                RayLinearPiece(
-                    t_start=a,
-                    t_end=b,
-                    cell_id=int(piece.cell_id),
-                    tet_id=int(piece.tet_id),
-                    slope=piece.slope,
-                    intercept=piece.intercept,
+            elif tree_coord == "rpa":
+                lookup_state = self.tree.lookup.lookup_state
+                if not isinstance(lookup_state, SphericalLookupKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires SphericalLookupKernelState; "
+                        f"got {type(lookup_state).__name__}."
+                    )
+                interp_state = self.interpolator._interp_state_rpa
+                if not isinstance(interp_state, SphericalInterpKernelState):
+                    raise TypeError(
+                        "Spherical ray interpolation requires SphericalInterpKernelState; "
+                        f"got {type(interp_state).__name__}."
+                    )
+                out[start:stop] = _integrate_rays_rpa_kernel(
+                    sub,
+                    d,
+                    t0,
+                    t1,
+                    int(max_steps),
+                    int(bisect_iters),
+                    float(boundary_tol),
+                    float(scale),
+                    lookup_state,
+                    interp_state,
                 )
-            )
+            else:
+                raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
 
-        first = out[0]
-        if abs(first.t_start - float(t_start)) <= stitch_tol:
-            out[0] = RayLinearPiece(
-                t_start=float(t_start),
-                t_end=float(first.t_end),
-                cell_id=int(first.cell_id),
-                tet_id=int(first.tet_id),
-                slope=first.slope,
-                intercept=first.intercept,
-            )
-        last = out[-1]
-        if abs(last.t_end - float(t_end)) <= stitch_tol:
-            out[-1] = RayLinearPiece(
-                t_start=float(last.t_start),
-                t_end=float(t_end),
-                cell_id=int(last.cell_id),
-                tet_id=int(last.tet_id),
-                slope=last.slope,
-                intercept=last.intercept,
-            )
-
+        if ncomp == 1:
+            return out[:, 0]
         return out

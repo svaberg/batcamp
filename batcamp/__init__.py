@@ -30,8 +30,6 @@ __all__ = [
     "Octree",
     "SphericalOctree",
     "OctreeInterpolator",
-    "RayLinearPiece",
-    "RaySegment",
     "OctreeRayTracer",
     "OctreeRayInterpolator",
 ]
@@ -40,8 +38,6 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "CartesianOctree": (".cartesian", "CartesianOctree"),
     "SphericalOctree": (".spherical", "SphericalOctree"),
     "OctreeInterpolator": (".interpolator", "OctreeInterpolator"),
-    "RayLinearPiece": (".ray", "RayLinearPiece"),
-    "RaySegment": (".ray", "RaySegment"),
     "OctreeRayTracer": (".ray", "OctreeRayTracer"),
     "OctreeRayInterpolator": (".ray", "OctreeRayInterpolator"),
 }

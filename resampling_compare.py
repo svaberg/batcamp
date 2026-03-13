@@ -172,14 +172,13 @@ def _ray_segment_counts(
     chunk_size: int,
 ) -> np.ndarray:
     """Return per-pixel segment counts from adaptive-midpoint ray offsets."""
-    _mids, _weights, offsets = ray.adaptive_midpoint_rule(
+    counts = ray.segment_counts(
         origins,
         direction,
         0.0,
         t_end,
         chunk_size=int(chunk_size),
     )
-    counts = np.diff(np.asarray(offsets, dtype=np.int64))
     return counts.reshape((int(n_plane), int(n_plane)))
 
 
