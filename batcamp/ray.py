@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING
+from typing import NamedTuple
 
 from numba import njit
 from numba import prange
@@ -30,8 +31,76 @@ if TYPE_CHECKING:
 _TRACE_CONTAIN_TOL = 1e-8
 _DEFAULT_TRACE_BOUNDARY_TOL = 1e-9
 _DEFAULT_TRACE_MAX_STEPS = 100000
-_DEFAULT_TRACE_BISECT_ITERS = 48
 _MAX_TOPOLOGY_CANDIDATES = 128
+_RPA_FACE_NODE_IDS = (
+    (0, 2, 6, 4),
+    (1, 3, 7, 5),
+    (0, 1, 5, 4),
+    (2, 3, 7, 6),
+    (0, 1, 3, 2),
+    (4, 5, 7, 6),
+)
+_FACE_TRIPLES = (
+    (0, 1, 2),
+    (0, 1, 3),
+    (0, 2, 3),
+    (1, 2, 3),
+)
+
+
+class RpaHexaKernelState(NamedTuple):
+    """Plane representation of spherical-tree cells as Cartesian hexahedra."""
+
+    face_normals: np.ndarray
+    face_offsets: np.ndarray
+    face_valid: np.ndarray
+
+
+def _build_rpa_hexa_kernel_state(tree: Octree) -> RpaHexaKernelState:
+    """Approximate spherical cells as convex Cartesian hexahedra with planar faces."""
+    tree._require_lookup()
+    corners = np.asarray(getattr(tree, "_corners"), dtype=np.int64)
+    points = np.asarray(getattr(tree, "_points"), dtype=float)
+    centers = np.asarray(getattr(tree, "_cell_centers"), dtype=float)
+    n_cells = int(corners.shape[0])
+
+    face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
+    face_offsets = np.zeros((n_cells, 6), dtype=np.float64)
+    face_valid = np.zeros((n_cells, 6), dtype=np.bool_)
+    tiny = 1.0e-24
+
+    for cid in range(n_cells):
+        cell_pts = np.asarray(points[corners[cid]], dtype=float)
+        center = np.asarray(centers[cid], dtype=float)
+        for face, node_ids in enumerate(_RPA_FACE_NODE_IDS):
+            face_pts = np.asarray(cell_pts[list(node_ids)], dtype=float)
+            best_norm2 = -1.0
+            best_normal = np.zeros(3, dtype=float)
+            best_anchor = np.zeros(3, dtype=float)
+            for ia, ib, ic in _FACE_TRIPLES:
+                a = face_pts[ia]
+                b = face_pts[ib]
+                c = face_pts[ic]
+                normal = np.cross(b - a, c - a)
+                norm2 = float(np.dot(normal, normal))
+                if norm2 > best_norm2:
+                    best_norm2 = norm2
+                    best_normal = normal
+                    best_anchor = a
+            if best_norm2 <= tiny:
+                continue
+            best_normal = best_normal / math.sqrt(best_norm2)
+            if float(np.dot(best_normal, center - best_anchor)) > 0.0:
+                best_normal = -best_normal
+            face_normals[cid, face, :] = best_normal
+            face_offsets[cid, face] = float(np.dot(best_normal, best_anchor))
+            face_valid[cid, face] = True
+
+    return RpaHexaKernelState(
+        face_normals=face_normals,
+        face_offsets=face_offsets,
+        face_valid=face_valid,
+    )
 
 
 @njit(cache=True)
@@ -54,24 +123,69 @@ def _contains_xyz_from_state(
 
 
 @njit(cache=True)
-def _contains_rpa_from_components(
+def _contains_rpa_hexa_from_xyz(
     cid: int,
-    r: float,
-    polar: float,
-    azimuth: float,
-    lookup_state: SphericalLookupKernelState,
+    x: float,
+    y: float,
+    z: float,
+    hexa_state: RpaHexaKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
-    """Return whether one spherical point lies inside one cell."""
-    if r < (lookup_state.cell_r_min[cid] - tol) or r > (lookup_state.cell_r_max[cid] + tol):
-        return False
-    if polar < (lookup_state.cell_theta_min[cid] - tol) or polar > (lookup_state.cell_theta_max[cid] + tol):
-        return False
-    width = lookup_state.cell_phi_width[cid]
-    dphi = (azimuth - lookup_state.cell_phi_start[cid]) % (2.0 * math.pi)
-    if width >= ((2.0 * math.pi) - tol):
-        return True
-    return dphi <= (width + tol)
+    """Return whether one Cartesian point lies inside the planar hexahedron model."""
+    for face in range(6):
+        if not hexa_state.face_valid[cid, face]:
+            continue
+        nx = hexa_state.face_normals[cid, face, 0]
+        ny = hexa_state.face_normals[cid, face, 1]
+        nz = hexa_state.face_normals[cid, face, 2]
+        offset = hexa_state.face_offsets[cid, face]
+        signed = nx * x + ny * y + nz * z - offset
+        if signed > tol:
+            return False
+    return True
+
+
+@njit(cache=True)
+def _rpa_hexa_exit_dt_and_mask(
+    cid: int,
+    x: float,
+    y: float,
+    z: float,
+    d0: float,
+    d1: float,
+    d2: float,
+    hexa_state: RpaHexaKernelState,
+    abs_eps: float,
+) -> tuple[float, int]:
+    """Return forward exit distance and exited-face mask for the hexahedron model."""
+    best_dt = np.inf
+    face_mask = 0
+    dir_eps = 1.0e-15
+    tie_tol = max(4.0 * abs_eps, 1.0e-12)
+    for face in range(6):
+        if not hexa_state.face_valid[cid, face]:
+            continue
+        nx = hexa_state.face_normals[cid, face, 0]
+        ny = hexa_state.face_normals[cid, face, 1]
+        nz = hexa_state.face_normals[cid, face, 2]
+        offset = hexa_state.face_offsets[cid, face]
+        signed = nx * x + ny * y + nz * z - offset
+        if signed > tie_tol:
+            return np.inf, 0
+        if signed > 0.0:
+            signed = 0.0
+        denom = nx * d0 + ny * d1 + nz * d2
+        if denom <= dir_eps:
+            continue
+        dt = -signed / denom
+        if dt <= abs_eps:
+            continue
+        if dt < (best_dt - tie_tol):
+            best_dt = dt
+            face_mask = 1 << face
+        elif abs(dt - best_dt) <= tie_tol:
+            face_mask |= 1 << face
+    return best_dt, face_mask
 
 
 @njit(cache=True)
@@ -162,11 +276,11 @@ def _select_next_xyz_cell_from_topology(
 def _select_next_rpa_cell_from_topology(
     current_node_id: int,
     face_mask: int,
-    r_next: float,
-    polar_next: float,
-    azimuth_next: float,
+    x_next: float,
+    y_next: float,
+    z_next: float,
     topo_state: TopologicalKernelState,
-    lookup_state: SphericalLookupKernelState,
+    hexa_state: RpaHexaKernelState,
     work0: np.ndarray,
     work1: np.ndarray,
 ) -> tuple[int, int]:
@@ -178,7 +292,7 @@ def _select_next_rpa_cell_from_topology(
     for i in range(n_candidates):
         node_id = int(nodes[i])
         cid = int(topo_state.node_cell_ids[node_id])
-        if _contains_rpa_from_components(cid, r_next, polar_next, azimuth_next, lookup_state):
+        if _contains_rpa_hexa_from_xyz(cid, x_next, y_next, z_next, hexa_state):
             return node_id, cid
     return -1, -1
 
@@ -196,59 +310,13 @@ def _xyz_exit_face_mask(
 ) -> int:
     """Return Cartesian exited-face bitmask for the current segment."""
     face_mask = 0
-    tol = max(4.0 * abs_eps, 1e-12)
+    tol = max(4.0 * abs_eps, 1.0e-12)
     if math.isfinite(tx) and abs(tx - dt_exit) <= tol:
         face_mask |= 1 << (1 if d0 > 0.0 else 0)
     if math.isfinite(ty) and abs(ty - dt_exit) <= tol:
         face_mask |= 1 << (3 if d1 > 0.0 else 2)
     if math.isfinite(tz) and abs(tz - dt_exit) <= tol:
         face_mask |= 1 << (5 if d2 > 0.0 else 4)
-    return face_mask
-
-
-@njit(cache=True)
-def _unwrap_azimuth_near_interval(azimuth: float, start: float, width: float) -> float:
-    """Unwrap azimuth so it lies near the current cell interval."""
-    two_pi = 2.0 * math.pi
-    center = start + 0.5 * width
-    value = azimuth
-    while value < (center - math.pi):
-        value += two_pi
-    while value > (center + math.pi):
-        value -= two_pi
-    return value
-
-
-@njit(cache=True)
-def _rpa_exit_face_mask_from_outside_point(
-    cid: int,
-    r_out: float,
-    polar_out: float,
-    azimuth_out: float,
-    lookup_state: SphericalLookupKernelState,
-    tol: float,
-) -> int:
-    """Return spherical exited-face bitmask from a point known to be outside the cell."""
-    face_mask = 0
-    if r_out < (lookup_state.cell_r_min[cid] - tol):
-        face_mask |= 1 << 0
-    elif r_out > (lookup_state.cell_r_max[cid] + tol):
-        face_mask |= 1 << 1
-
-    if polar_out < (lookup_state.cell_theta_min[cid] - tol):
-        face_mask |= 1 << 2
-    elif polar_out > (lookup_state.cell_theta_max[cid] + tol):
-        face_mask |= 1 << 3
-
-    width = lookup_state.cell_phi_width[cid]
-    if width < ((2.0 * math.pi) - tol):
-        start = lookup_state.cell_phi_start[cid]
-        phi_out = _unwrap_azimuth_near_interval(azimuth_out, start, width)
-        end = start + width
-        if phi_out < (start - tol):
-            face_mask |= 1 << 4
-        elif phi_out > (end + tol):
-            face_mask |= 1 << 5
     return face_mask
 
 
@@ -439,16 +507,17 @@ def _seek_first_cell_rpa(
     t_end: float,
     abs_eps: float,
     lookup_state: SphericalLookupKernelState,
-) -> tuple[bool, float, int, float, float, float, float, float, float]:
-    """Seek first `t` where ray enters a valid spherical cell."""
+    hexa_state: RpaHexaKernelState,
+) -> tuple[bool, float, int, float, float, float]:
+    """Seek first `t` where ray enters a valid spherical hexahedron cell."""
     t = t_start
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
     cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
-    if cid >= 0:
-        return True, t, cid, x, y, z, r, polar, azimuth
+    if cid >= 0 and _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
+        return True, t, cid, x, y, z
 
     lo = t
     hi = t
@@ -463,13 +532,13 @@ def _seek_first_cell_rpa(
         zh = origin_xyz[2] + hi * direction_xyz_unit[2]
         r_hi, polar_hi, azimuth_hi = _xyz_to_rpa_components(xh, yh, zh)
         cid_hi = _lookup_rpa_cell_id_kernel(r_hi, polar_hi, azimuth_hi, lookup_state, -1)
-        if cid_hi >= 0:
+        if cid_hi >= 0 and _contains_rpa_hexa_from_xyz(cid_hi, xh, yh, zh, hexa_state):
             break
         if hi >= t_end:
-            return False, t_start, -1, x, y, z, r, polar, azimuth
+            return False, t_start, -1, x, y, z
         dt = dt * 2.0
     if cid_hi < 0:
-        return False, t_start, -1, x, y, z, r, polar, azimuth
+        return False, t_start, -1, x, y, z
 
     lo_out = lo
     hi_in = hi
@@ -481,7 +550,7 @@ def _seek_first_cell_rpa(
         zm = origin_xyz[2] + mid * direction_xyz_unit[2]
         r_mid, polar_mid, azimuth_mid = _xyz_to_rpa_components(xm, ym, zm)
         cid_mid = _lookup_rpa_cell_id_kernel(r_mid, polar_mid, azimuth_mid, lookup_state, cid_in)
-        if cid_mid >= 0:
+        if cid_mid >= 0 and _contains_rpa_hexa_from_xyz(cid_mid, xm, ym, zm, hexa_state):
             hi_in = mid
             cid_in = cid_mid
         else:
@@ -499,16 +568,16 @@ def _seek_first_cell_rpa(
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
     cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
-    if cid < 0:
+    if cid < 0 or not _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
         t = hi_in
         x = origin_xyz[0] + t * direction_xyz_unit[0]
         y = origin_xyz[1] + t * direction_xyz_unit[1]
         z = origin_xyz[2] + t * direction_xyz_unit[2]
         r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
         cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
-    if cid < 0:
-        return False, t_start, -1, x, y, z, r, polar, azimuth
-    return True, t, cid, x, y, z, r, polar, azimuth
+    if cid < 0 or not _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
+        return False, t_start, -1, x, y, z
+    return True, t, cid, x, y, z
 
 
 @njit(cache=True)
@@ -692,10 +761,10 @@ def _trace_segments_rpa_kernel(
     t_start: float,
     t_end: float,
     max_steps: int,
-    bisect_iters: int,
     boundary_tol: float,
     lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
+    hexa_state: RpaHexaKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
     """Trace one Cartesian ray on spherical tree; return segment arrays."""
     cell_ids = np.empty(max_steps, dtype=np.int64)
@@ -706,13 +775,14 @@ def _trace_segments_rpa_kernel(
         return 0, cell_ids, enters, exits
 
     abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-    found, t, cid, x, y, z, r, polar, azimuth = _seek_first_cell_rpa(
+    found, t, cid, x, y, z = _seek_first_cell_rpa(
         origin_xyz,
         direction_xyz_unit,
         t_start,
         t_end,
         abs_eps,
         lookup_state,
+        hexa_state,
     )
     if not found or cid < 0:
         return 0, cell_ids, enters, exits
@@ -723,76 +793,35 @@ def _trace_segments_rpa_kernel(
 
     candidate_nodes0 = np.empty(_MAX_TOPOLOGY_CANDIDATES, dtype=np.int64)
     candidate_nodes1 = np.empty(_MAX_TOPOLOGY_CANDIDATES, dtype=np.int64)
+    d0 = direction_xyz_unit[0]
+    d1 = direction_xyz_unit[1]
+    d2 = direction_xyz_unit[2]
     n_seg = 0
     for _ in range(max_steps):
         if t >= (t_end - abs_eps):
             break
 
-        if not _contains_rpa_from_components(cid, r, polar, azimuth, lookup_state):
+        if not _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
             break
 
-        r_span = lookup_state.cell_r_max[cid] - lookup_state.cell_r_min[cid]
-        theta_span = lookup_state.cell_theta_max[cid] - lookup_state.cell_theta_min[cid]
-        phi_span = lookup_state.cell_phi_width[cid]
-        two_pi = 2.0 * math.pi
-        if phi_span > two_pi:
-            phi_span = two_pi
-
-        length_scale = lookup_state.cell_r_max[cid]
-        if length_scale < 1.0:
-            length_scale = 1.0
-
-        dt = r_span
-        t_theta = length_scale * theta_span
-        if t_theta > dt:
-            dt = t_theta
-        t_phi = length_scale * phi_span
-        if t_phi > dt:
-            dt = t_phi
-        if dt < 1e-6:
-            dt = 1e-6
-
-        t_hi = t + dt
-        if t_hi > t_end:
-            t_hi = t_end
-
-        x_hi = origin_xyz[0] + t_hi * direction_xyz_unit[0]
-        y_hi = origin_xyz[1] + t_hi * direction_xyz_unit[1]
-        z_hi = origin_xyz[2] + t_hi * direction_xyz_unit[2]
-        r_hi, polar_hi, azimuth_hi = _xyz_to_rpa_components(x_hi, y_hi, z_hi)
-        while t_hi < t_end and _contains_rpa_from_components(cid, r_hi, polar_hi, azimuth_hi, lookup_state):
-            dt *= 2.0
-            t_hi = t + dt
-            if t_hi > t_end:
-                t_hi = t_end
-            x_hi = origin_xyz[0] + t_hi * direction_xyz_unit[0]
-            y_hi = origin_xyz[1] + t_hi * direction_xyz_unit[1]
-            z_hi = origin_xyz[2] + t_hi * direction_xyz_unit[2]
-            r_hi, polar_hi, azimuth_hi = _xyz_to_rpa_components(x_hi, y_hi, z_hi)
-
-        if _contains_rpa_from_components(cid, r_hi, polar_hi, azimuth_hi, lookup_state):
-            cell_ids[n_seg] = cid
-            enters[n_seg] = t
-            exits[n_seg] = t_end
-            n_seg += 1
-            break
-
-        lo = t
-        hi = t_hi
-        for _ in range(bisect_iters):
-            mid = 0.5 * (lo + hi)
-            x_mid = origin_xyz[0] + mid * direction_xyz_unit[0]
-            y_mid = origin_xyz[1] + mid * direction_xyz_unit[1]
-            z_mid = origin_xyz[2] + mid * direction_xyz_unit[2]
-            r_mid, polar_mid, azimuth_mid = _xyz_to_rpa_components(x_mid, y_mid, z_mid)
-            if _contains_rpa_from_components(cid, r_mid, polar_mid, azimuth_mid, lookup_state):
-                lo = mid
-            else:
-                hi = mid
-            if (hi - lo) <= abs_eps:
-                break
-
-        t_exit = lo
+        dt_exit, face_mask = _rpa_hexa_exit_dt_and_mask(
+            cid,
+            x,
+            y,
+            z,
+            d0,
+            d1,
+            d2,
+            hexa_state,
+            abs_eps,
+        )
+        if not math.isfinite(dt_exit):
+            dt_exit = t_end - t
+        if dt_exit <= abs_eps:
+            dt_exit = abs_eps
+        t_exit = t + dt_exit
+        if t_exit > t_end:
+            t_exit = t_end
         if t_exit < t:
             t_exit = t
         cell_ids[n_seg] = cid
@@ -801,23 +830,13 @@ def _trace_segments_rpa_kernel(
         n_seg += 1
         if n_seg >= max_steps:
             break
+        if t_exit >= (t_end - abs_eps):
+            break
 
-        x_out = origin_xyz[0] + hi * direction_xyz_unit[0]
-        y_out = origin_xyz[1] + hi * direction_xyz_unit[1]
-        z_out = origin_xyz[2] + hi * direction_xyz_unit[2]
-        r_out, polar_out, azimuth_out = _xyz_to_rpa_components(x_out, y_out, z_out)
-        face_mask = _rpa_exit_face_mask_from_outside_point(
-            cid,
-            r_out,
-            polar_out,
-            azimuth_out,
-            lookup_state,
-            abs_eps,
-        )
         if face_mask == 0:
             break
 
-        t_next = hi + abs_eps
+        t_next = t_exit + abs_eps
         if t_next > t_end:
             t_next = t_end
         if t_next <= t + abs_eps * 0.25:
@@ -825,18 +844,17 @@ def _trace_segments_rpa_kernel(
             if t_next > t_end:
                 t_next = t_end
 
-        x_next = origin_xyz[0] + t_next * direction_xyz_unit[0]
-        y_next = origin_xyz[1] + t_next * direction_xyz_unit[1]
-        z_next = origin_xyz[2] + t_next * direction_xyz_unit[2]
-        r_next, polar_next, azimuth_next = _xyz_to_rpa_components(x_next, y_next, z_next)
+        x_next = origin_xyz[0] + t_next * d0
+        y_next = origin_xyz[1] + t_next * d1
+        z_next = origin_xyz[2] + t_next * d2
         next_node, cid_next = _select_next_rpa_cell_from_topology(
             current_node,
             face_mask,
-            r_next,
-            polar_next,
-            azimuth_next,
+            x_next,
+            y_next,
+            z_next,
             topo_state,
-            lookup_state,
+            hexa_state,
             candidate_nodes0,
             candidate_nodes1,
         )
@@ -844,18 +862,17 @@ def _trace_segments_rpa_kernel(
             t_next = t_next + 4.0 * abs_eps
             if t_next > t_end:
                 t_next = t_end
-            x_next = origin_xyz[0] + t_next * direction_xyz_unit[0]
-            y_next = origin_xyz[1] + t_next * direction_xyz_unit[1]
-            z_next = origin_xyz[2] + t_next * direction_xyz_unit[2]
-            r_next, polar_next, azimuth_next = _xyz_to_rpa_components(x_next, y_next, z_next)
+            x_next = origin_xyz[0] + t_next * d0
+            y_next = origin_xyz[1] + t_next * d1
+            z_next = origin_xyz[2] + t_next * d2
             next_node, cid_next = _select_next_rpa_cell_from_topology(
                 current_node,
                 face_mask,
-                r_next,
-                polar_next,
-                azimuth_next,
+                x_next,
+                y_next,
+                z_next,
                 topo_state,
-                lookup_state,
+                hexa_state,
                 candidate_nodes0,
                 candidate_nodes1,
             )
@@ -866,9 +883,6 @@ def _trace_segments_rpa_kernel(
         x = x_next
         y = y_next
         z = z_next
-        r = r_next
-        polar = polar_next
-        azimuth = azimuth_next
         cid = cid_next
         current_node = next_node
 
@@ -911,10 +925,10 @@ def _segment_counts_rpa_kernel(
     t_start: float,
     t_end: float,
     max_steps: int,
-    bisect_iters: int,
     boundary_tol: float,
     lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
+    hexa_state: RpaHexaKernelState,
 ) -> np.ndarray:
     """Count traced segments for each ray on spherical trees."""
     n_rays = int(origins_xyz.shape[0])
@@ -926,10 +940,10 @@ def _segment_counts_rpa_kernel(
             t_start,
             t_end,
             max_steps,
-            bisect_iters,
             boundary_tol,
             lookup_state,
             topo_state,
+            hexa_state,
         )
         counts[i] = int(n_seg)
     return counts
@@ -977,10 +991,10 @@ def _fill_traces_rpa_kernel(
     t_start: float,
     t_end: float,
     max_steps: int,
-    bisect_iters: int,
     boundary_tol: float,
     lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
+    hexa_state: RpaHexaKernelState,
     ray_offsets: np.ndarray,
     out_cell_ids: np.ndarray,
     out_t_enter: np.ndarray,
@@ -995,10 +1009,10 @@ def _fill_traces_rpa_kernel(
             t_start,
             t_end,
             max_steps,
-            bisect_iters,
             boundary_tol,
             lookup_state,
             topo_state,
+            hexa_state,
         )
         base = int(ray_offsets[i])
         for j in range(int(n_seg)):
@@ -1115,11 +1129,11 @@ def _integrate_rays_rpa_kernel(
     t_start: float,
     t_end: float,
     max_steps: int,
-    bisect_iters: int,
     boundary_tol: float,
     scale: float,
     trace_lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
+    hexa_state: RpaHexaKernelState,
     interp_state: SphericalInterpKernelState,
 ) -> np.ndarray:
     """Integrate fields along rays on spherical trees using midpoint segments."""
@@ -1136,10 +1150,10 @@ def _integrate_rays_rpa_kernel(
             t_start,
             t_end,
             max_steps,
-            bisect_iters,
             boundary_tol,
             trace_lookup_state,
             topo_state,
+            hexa_state,
         )
         if n_seg <= 0:
             if ncomp == 1:
@@ -1249,6 +1263,13 @@ class OctreeRayTracer:
             tree._ray_topology_full = topology
         self._topology = topology
         self._topology_state = topology.kernel_state
+        self._rpa_hexa_state = None
+        if self._tree_coord == "rpa":
+            hexa_state = getattr(tree, "_ray_rpa_hexa_state", None)
+            if hexa_state is None:
+                hexa_state = _build_rpa_hexa_kernel_state(tree)
+                tree._ray_rpa_hexa_state = hexa_state
+            self._rpa_hexa_state = hexa_state
 
     def trace(
         self,
@@ -1258,7 +1279,6 @@ class OctreeRayTracer:
         t_end: float,
         *,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Trace one ray and return `(cell_ids, t_enter, t_exit)`."""
@@ -1270,7 +1290,6 @@ class OctreeRayTracer:
             float(t_start),
             float(t_end),
             max_steps=max_steps,
-            bisect_iters=bisect_iters,
             boundary_tol=boundary_tol,
         )
 
@@ -1282,12 +1301,10 @@ class OctreeRayTracer:
         t_end: float,
         *,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Trace one ray for normalized inputs and return segment arrays."""
         max_steps = _coerce_positive_int("max_steps", max_steps)
-        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
         t0 = float(t_start)
         t1 = float(t_end)
         if t1 <= t0:
@@ -1376,10 +1393,10 @@ class OctreeRayTracer:
                 t0,
                 t1,
                 int(max_steps),
-                int(bisect_iters),
                 float(boundary_tol),
                 lookup_state,
                 topo_state,
+                self._rpa_hexa_state,
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -1400,7 +1417,6 @@ class OctreeRayTracer:
         *,
         chunk_size: int = 2048,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """Return traced segment count for each ray."""
@@ -1409,7 +1425,6 @@ class OctreeRayTracer:
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         chunk = _coerce_positive_chunk_size(chunk_size)
         max_steps = _coerce_positive_int("max_steps", max_steps)
-        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
 
         counts = np.zeros(origins.shape[0], dtype=np.int64)
         for start in range(0, int(origins.shape[0]), chunk):
@@ -1446,10 +1461,10 @@ class OctreeRayTracer:
                     t0,
                     t1,
                     int(max_steps),
-                    int(bisect_iters),
                     float(boundary_tol),
                     lookup_state,
                     topo_state,
+                    self._rpa_hexa_state,
                 )
             else:
                 raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -1463,7 +1478,6 @@ class OctreeRayTracer:
         t_end: float,
         *,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Trace many rays and return flattened arrays plus `ray_offsets`."""
@@ -1471,7 +1485,6 @@ class OctreeRayTracer:
         d = _normalize_direction(direction_xyz)
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         max_steps = _coerce_positive_int("max_steps", max_steps)
-        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
 
         if self._tree_coord == "xyz":
             lookup_state = self._lookup_state
@@ -1503,10 +1516,10 @@ class OctreeRayTracer:
                 t0,
                 t1,
                 int(max_steps),
-                int(bisect_iters),
                 float(boundary_tol),
                 lookup_state,
                 self._topology_state,
+                self._rpa_hexa_state,
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -1540,10 +1553,10 @@ class OctreeRayTracer:
                 t0,
                 t1,
                 int(max_steps),
-                int(bisect_iters),
                 float(boundary_tol),
                 self._lookup_state,
                 self._topology_state,
+                self._rpa_hexa_state,
                 ray_offsets,
                 cell_ids,
                 t_enter,
@@ -1595,7 +1608,6 @@ class OctreeRayInterpolator:
         *,
         chunk_size: int = 2048,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """Return per-ray segment counts."""
@@ -1606,7 +1618,6 @@ class OctreeRayInterpolator:
             t_end,
             chunk_size=chunk_size,
             max_steps=max_steps,
-            bisect_iters=bisect_iters,
             boundary_tol=boundary_tol,
         )
 
@@ -1619,7 +1630,6 @@ class OctreeRayInterpolator:
         *,
         chunk_size: int = 2048,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build flattened midpoint quadrature arrays for many rays."""
@@ -1628,7 +1638,6 @@ class OctreeRayInterpolator:
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         chunk = _coerce_positive_chunk_size(chunk_size)
         max_steps = _coerce_positive_int("max_steps", max_steps)
-        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
 
         mids_chunks: list[np.ndarray] = []
         weights_chunks: list[np.ndarray] = []
@@ -1644,7 +1653,6 @@ class OctreeRayInterpolator:
                 t0,
                 t1,
                 max_steps=max_steps,
-                bisect_iters=bisect_iters,
                 boundary_tol=boundary_tol,
             )
             mids_sub, weights_sub = _midpoints_from_segments_kernel(sub, d, t_enter, t_exit, sub_offsets)
@@ -1739,7 +1747,6 @@ class OctreeRayInterpolator:
         chunk_size: int = 2048,
         scale: float = 1.0,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """One-shot midpoint integration (trace->midpoints->interpolate->sum)."""
@@ -1750,7 +1757,6 @@ class OctreeRayInterpolator:
             t_end,
             chunk_size=chunk_size,
             max_steps=max_steps,
-            bisect_iters=bisect_iters,
             boundary_tol=boundary_tol,
         )
         return self.integrate_midpoint_rule(mids, weights, offsets, scale=scale)
@@ -1765,7 +1771,6 @@ class OctreeRayInterpolator:
         chunk_size: int = 2048,
         scale: float = 1.0,
         max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        bisect_iters: int = _DEFAULT_TRACE_BISECT_ITERS,
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """Integrate interpolated fields along many rays using compiled kernels."""
@@ -1774,7 +1779,6 @@ class OctreeRayInterpolator:
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         chunk = _coerce_positive_chunk_size(chunk_size)
         max_steps = _coerce_positive_int("max_steps", max_steps)
-        bisect_iters = _coerce_positive_int("bisect_iters", bisect_iters)
 
         n_rays = int(origins.shape[0])
         ncomp = int(self.interpolator.n_value_components)
@@ -1829,11 +1833,11 @@ class OctreeRayInterpolator:
                     t0,
                     t1,
                     int(max_steps),
-                    int(bisect_iters),
                     float(boundary_tol),
                     float(scale),
                     lookup_state,
                     topo_state,
+                    self.ray_tracer._rpa_hexa_state,
                     interp_state,
                 )
             else:
