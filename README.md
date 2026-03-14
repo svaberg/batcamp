@@ -13,11 +13,13 @@
 Many outputs provide leaf-cell values without storing the octree data. `batcamp` rebuilds that structure, permitting rapid interpolation and resampling.
 
 ## Quick start
-After cloning the repository, the package may be installed with `pip` in the regular way. From the repository root run:
+Install with `pip`:
 
 ```bash
-pip install .
+pip install batcamp
 ```
+The examples below use `starwinds_readplt` to read BATSRUS/Tecplot files; install that loader separately if needed.
+
 The following code plots a two dimensional density slice.
 ```python
 import numpy as np
@@ -39,4 +41,4 @@ rho = interp(X, Y, Z)
 plt.pcolormesh(X, Y, rho, norm="log")
 ```
 
-See the examples folder [examples/quick_start.ipynb](examples/quick_start.ipynb) for a running example.
+See the running example notebook: [examples/quick_start.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/quick_start.ipynb).
