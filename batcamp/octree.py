@@ -57,9 +57,9 @@ def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> T
     else:
         sample = corners_arr
 
-    x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
-    y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
-    z = np.asarray(ds.variable(Octree.Z_VAR), dtype=float)
+    x = np.asarray(ds[Octree.X_VAR], dtype=float)
+    y = np.asarray(ds[Octree.Y_VAR], dtype=float)
+    z = np.asarray(ds[Octree.Z_VAR], dtype=float)
     xr = np.round(x[sample], 12)
     yr = np.round(y[sample], 12)
     zr = np.round(z[sample], 12)

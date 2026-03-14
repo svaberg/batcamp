@@ -76,8 +76,8 @@ class SphericalOctreeBuilder:
         names = set(ds.variables)
         if not set(Octree.XY_VARS).issubset(names):
             return np.zeros(corners.shape, dtype=bool)
-        x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
-        y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
+        x = np.asarray(ds[Octree.X_VAR], dtype=float)
+        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
         rho = np.hypot(x, y)
         return rho[corners] <= float(axis_rho_tol)
 
@@ -86,17 +86,17 @@ class SphericalOctreeBuilder:
         """Extract wrapped azimuth values from dataset fields."""
         variable_names = set(ds.variables)
         if "Lon [deg]" in variable_names:
-            lon_deg = np.asarray(ds.variable("Lon [deg]"), dtype=float)
+            lon_deg = np.asarray(ds["Lon [deg]"], dtype=float)
             return np.deg2rad(np.mod(lon_deg, 360.0))
         if "Lon [rad]" in variable_names:
-            lon_rad = np.asarray(ds.variable("Lon [rad]"), dtype=float)
+            lon_rad = np.asarray(ds["Lon [rad]"], dtype=float)
             return np.mod(lon_rad, 2.0 * math.pi)
         if "phi [rad]" in variable_names:
-            phi_rad = np.asarray(ds.variable("phi [rad]"), dtype=float)
+            phi_rad = np.asarray(ds["phi [rad]"], dtype=float)
             return np.mod(phi_rad, 2.0 * math.pi)
         if set(Octree.XY_VARS).issubset(variable_names):
-            x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
-            y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
+            x = np.asarray(ds[Octree.X_VAR], dtype=float)
+            y = np.asarray(ds[Octree.Y_VAR], dtype=float)
             return np.mod(np.arctan2(y, x), 2.0 * math.pi)
         raise ValueError(
             "Could not determine phi. Need either (X [R], Y [R]) or Lon/phi fields. "
@@ -179,9 +179,9 @@ class SphericalOctreeBuilder:
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level angular counts/spacings from spherical mesh geometry."""
-        x = np.asarray(ds.variable(Octree.X_VAR), dtype=float)
-        y = np.asarray(ds.variable(Octree.Y_VAR), dtype=float)
-        z = np.asarray(ds.variable(Octree.Z_VAR), dtype=float)
+        x = np.asarray(ds[Octree.X_VAR], dtype=float)
+        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
+        z = np.asarray(ds[Octree.Z_VAR], dtype=float)
         r = np.sqrt(x * x + y * y + z * z)
         theta = np.arccos(np.clip(z / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
         delta_theta = np.ptp(theta[corners], axis=1)
