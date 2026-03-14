@@ -9,7 +9,7 @@ import re
 from typing import TypeAlias
 
 import numpy as np
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from .octree import TreeCoord
 from .octree import DEFAULT_AXIS_RHO_TOL

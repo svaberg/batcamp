@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from sample_data_helper import data_file
 from batcamp import OCTREE_FILE_VERSION

@@ -13,7 +13,7 @@ authors = [
   { name = "Dag Evensberget" },
 ]
 dependencies = [
-  "starwinds_readplt",
+  "batread",
   "numpy",
   "numba",
 ]
