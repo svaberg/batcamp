@@ -253,6 +253,19 @@ def _ray_setup(
     return origins, direction, t_end
 
 
+def _pixel_radius_image(
+    *,
+    n_plane: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> np.ndarray:
+    """Return per-pixel `r = sqrt(y^2 + z^2)` on the image plane as `(z, y)`."""
+    _xmin, _xmax, ymin, ymax, zmin, zmax = bounds
+    y = np.linspace(ymin, ymax, int(n_plane), dtype=float)
+    z = np.linspace(zmin, zmax, int(n_plane), dtype=float)
+    yg, zg = np.meshgrid(y, z, indexing="xy")
+    return np.sqrt(yg * yg + zg * zg)
+
+
 def _ray_segment_counts(
     ray: OctreeRayInterpolator,
     *,
@@ -315,6 +328,7 @@ def _save_four_panel_figure(
     n_plane: int,
     img0: np.ndarray,
     img1: np.ndarray,
+    pixel_r: np.ndarray,
     ray_segment_counts: np.ndarray,
     grid_segment_count: int,
     time0: float,
@@ -333,6 +347,8 @@ def _save_four_panel_figure(
     pos0 = np.isfinite(img0) & (img0 > 0.0)
     pos1 = np.isfinite(img1) & (img1 > 0.0)
     both_pos = pos0 & pos1
+    plot0_only = pos0 & np.isfinite(img1) & (img1 == 0.0)
+    plot1_only = np.isfinite(img0) & (img0 == 0.0) & pos1
     pos_vals = np.concatenate((img0[pos0], img1[pos1])) if (np.any(pos0) or np.any(pos1)) else np.array(
         [],
         dtype=float,
@@ -386,22 +402,70 @@ def _save_four_panel_figure(
     cbar.set_label(cbar_label)
 
     axes[1, 0].set_title("Comparison: plot0 vs plot1")
-    if np.any(both_pos):
-        x = img0[both_pos].reshape(-1)
-        y = img1[both_pos].reshape(-1)
-        axes[1, 0].scatter(x, y, s=12, alpha=0.8)
-        lo_data = float(min(np.min(x), np.min(y)))
-        hi_data = float(max(np.max(x), np.max(y)))
+    if pos_vals.size > 0:
+        lo_data = float(np.min(pos_vals))
+        hi_data = float(np.max(pos_vals))
         if not np.isfinite(lo_data) or not np.isfinite(hi_data) or lo_data <= 0.0 or hi_data <= lo_data:
             lo_data, hi_data = 1.0, 10.0
         pad = 1.12
         lo = lo_data / pad
         hi = hi_data * pad
-        axes[1, 0].plot([lo, hi], [lo, hi], "k--", linewidth=1.2)
+        r_mask = both_pos | plot0_only | plot1_only
+        r_vals = pixel_r[r_mask].reshape(-1) if np.any(r_mask) else np.array([0.0], dtype=float)
+        r_lo = float(np.min(r_vals))
+        r_hi = float(np.max(r_vals))
+        if not np.isfinite(r_lo) or not np.isfinite(r_hi) or r_hi <= r_lo:
+            r_lo = 0.0
+            r_hi = max(r_lo + 1.0, r_hi)
+        r_norm = Normalize(vmin=r_lo, vmax=r_hi)
+        scatter_artist = None
+        if np.any(both_pos):
+            x = img0[both_pos].reshape(-1)
+            y = img1[both_pos].reshape(-1)
+            scatter_artist = axes[1, 0].scatter(
+                x,
+                y,
+                c=pixel_r[both_pos].reshape(-1),
+                cmap="cividis",
+                norm=r_norm,
+                s=12,
+                alpha=0.85,
+                linewidths=0.0,
+            )
+        if np.any(plot0_only):
+            scatter_artist = axes[1, 0].scatter(
+                img0[plot0_only].reshape(-1),
+                np.full(int(np.count_nonzero(plot0_only)), lo, dtype=float),
+                c=pixel_r[plot0_only].reshape(-1),
+                cmap="cividis",
+                norm=r_norm,
+                marker="v",
+                s=22,
+                alpha=0.95,
+                linewidths=0.0,
+                clip_on=False,
+            )
+        if np.any(plot1_only):
+            scatter_artist = axes[1, 0].scatter(
+                np.full(int(np.count_nonzero(plot1_only)), lo, dtype=float),
+                img1[plot1_only].reshape(-1),
+                c=pixel_r[plot1_only].reshape(-1),
+                cmap="cividis",
+                norm=r_norm,
+                marker="<",
+                s=22,
+                alpha=0.95,
+                linewidths=0.0,
+                clip_on=False,
+            )
         axes[1, 0].set_xlim(lo, hi)
         axes[1, 0].set_ylim(lo, hi)
         axes[1, 0].set_xscale("log")
         axes[1, 0].set_yscale("log")
+        axes[1, 0].plot([lo, hi], [lo, hi], "k--", linewidth=1.2)
+        if scatter_artist is not None:
+            cbar_r = fig.colorbar(scatter_artist, ax=axes[1, 0], fraction=0.046, pad=0.02)
+            cbar_r.set_label("r = sqrt(y^2 + z^2)")
     else:
         axes[1, 0].set_xscale("log")
         axes[1, 0].set_yscale("log")
@@ -421,7 +485,9 @@ def _save_four_panel_figure(
         f"RMSE={eq_abs_rmse:.3e}\n"
         f"log10 L1={log_l1_text}\n"
         f"log10 RMSE={log_rmse_text}\n"
-        f"positive overlap={eq_pos_overlap}",
+        f"positive overlap={eq_pos_overlap}\n"
+        f"plot0>0, plot1=0: {int(np.count_nonzero(plot0_only))}\n"
+        f"plot1>0, plot0=0: {int(np.count_nonzero(plot1_only))}",
         transform=axes[1, 0].transAxes,
         va="top",
         ha="left",
@@ -673,12 +739,14 @@ def main() -> None:
             rows.append(row)
 
             figure_path = case_dir / f"resampling_compare_{n}x{n}.png"
+            pixel_r = _pixel_radius_image(n_plane=int(n), bounds=bounds)
             _save_four_panel_figure(
                 figure_path,
                 dataset_label=f"{case.label}:{case.file_name}",
                 n_plane=int(n),
                 img0=img0,
                 img1=img1,
+                pixel_r=pixel_r,
                 ray_segment_counts=ray_seg_counts,
                 grid_segment_count=grid_seg_const,
                 time0=grid_s,
