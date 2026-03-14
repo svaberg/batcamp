@@ -404,6 +404,31 @@ def test_spherical_maxdepth_full_matches_default() -> None:
     assert np.allclose(default_vals, full_vals, atol=1e-12, rtol=1e-12)
 
 
+def test_spherical_maxdepth_one_matches_depth_one_mesh() -> None:
+    """Spherical `maxdepth=1` should match a true depth-1 mesh on the same rays."""
+    fine = _build_fake_dataset(nr=4, ntheta=8, nphi=16)
+    coarse = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
+    fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
+    coarse_interp = OctreeInterpolator(coarse, ["Scalar"], tree=Octree.from_dataset(coarse, tree_coord="rpa"))
+
+    cut = OctreeRayInterpolator(fine_interp, maxdepth=1)
+    ref = OctreeRayInterpolator(coarse_interp)
+
+    origins = np.array(
+        [[-2.1, -0.2, 0.2], [-2.1, 0.3, 0.1], [-2.1, 0.1, -0.25]],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    cut_counts = np.asarray(cut.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    ref_counts = np.asarray(ref.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    cut_vals = np.asarray(cut.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
+    ref_vals = np.asarray(ref.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
+
+    assert np.array_equal(cut_counts, ref_counts)
+    assert np.allclose(cut_vals, ref_vals, atol=1e-12, rtol=1e-12)
+
+
 def test_vector_integrals_shape_on_all_miss() -> None:
     """Vector ray integration should keep `(n_rays, n_components)` shape on all misses."""
     ds = _build_fake_cartesian_dataset()
