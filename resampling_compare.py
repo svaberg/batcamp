@@ -33,6 +33,15 @@ class DatasetCase:
     file_name: str
 
 
+def _progress(message: str, *, log_path: Path | None = None) -> None:
+    """Print one progress line immediately and optionally append it to a log."""
+    print(message, flush=True)
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+
+
 def _unique_match(paths: list[Path], *, name: str) -> Path:
     """Return one matched path by name, otherwise raise."""
     if not paths:
@@ -85,16 +94,16 @@ def _octree_cache_path(cache_root: Path, data_path: Path) -> Path:
     return cache_root / cache_name
 
 
-def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> Octree:
+def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> tuple[Octree, str]:
     """Load one cached octree or build and persist it once."""
     cache_path = _octree_cache_path(cache_root, data_path)
     if cache_path.exists():
-        return Octree.load(cache_path, ds=ds)
+        return Octree.load(cache_path, ds=ds), "cache"
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     tree = Octree.from_dataset(ds)
     tree.save(cache_path)
-    return tree
+    return tree, "build"
 
 
 def _topology_cache_path(cache_root: Path, data_path: Path) -> Path:
@@ -143,16 +152,18 @@ def _save_topology_cache(path: Path, topo: TopologicalNeighborhood) -> None:
     )
 
 
-def _load_or_build_full_topology(tree: Octree, data_path: Path, cache_root: Path) -> TopologicalNeighborhood:
+def _load_or_build_full_topology(tree: Octree, data_path: Path, cache_root: Path) -> tuple[TopologicalNeighborhood, str]:
     """Load one cached full-depth topology graph or build and persist it once."""
     cache_path = _topology_cache_path(cache_root, data_path)
     if cache_path.exists():
         topo = _load_topology_cache(cache_path)
+        source = "cache"
     else:
         topo = build_topological_neighborhood(tree, max_level=int(tree.max_level))
         _save_topology_cache(cache_path, topo)
+        source = "build"
     tree._ray_topology_full = topo
-    return topo
+    return topo, source
 
 
 def parse_resolutions(raw: str) -> list[int]:
@@ -507,6 +518,13 @@ def _save_runtime_plot(rows: list[dict[str, float | int]], out_path: Path, *, ti
     plt.close(fig)
 
 
+def _time_call(fn, /, *args, **kwargs):
+    """Run one callable and return `(result, seconds)`."""
+    t0 = time.perf_counter()
+    result = fn(*args, **kwargs)
+    return result, float(time.perf_counter() - t0)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare 3D grid-sum vs ray integration resampling.")
     parser.add_argument(
@@ -538,6 +556,9 @@ def main() -> None:
     out_root = (repo_root / args.output_dir).resolve()
     cache_root = (repo_root / "build" / "resampling_compare_octree_cache").resolve()
     topology_cache_root = (repo_root / "build" / "resampling_compare_topology_cache").resolve()
+    progress_log_path = out_root / "progress.log"
+    progress_log_path.parent.mkdir(parents=True, exist_ok=True)
+    progress_log_path.write_text("", encoding="utf-8")
 
     cases = [
         DatasetCase("example", "3d__var_1_n00000000.plt"),
@@ -545,20 +566,29 @@ def main() -> None:
         DatasetCase("ih", "3d__var_4_n00005000.plt"),
     ]
 
+    _progress(f"output_dir={out_root}", log_path=progress_log_path)
     print(
         "dataset,resolution,pixels,grid_s,ray_s,grid_nan,grid_zero,ray_nan,ray_zero,"
-        "finite_overlap,positive_overlap,eq_abs_l1,eq_abs_rmse,eq_log10_l1,eq_log10_rmse"
+        "finite_overlap,positive_overlap,eq_abs_l1,eq_abs_rmse,eq_log10_l1,eq_log10_rmse",
+        flush=True,
     )
     for case in cases:
         case_dir = out_root / case.label
         case_dir.mkdir(parents=True, exist_ok=True)
 
-        data_path = resolve_data_file(repo_root, case.file_name)
-        ds = Dataset.from_file(str(data_path))
-        tree = _load_or_build_octree(ds, data_path, cache_root)
-        _load_or_build_full_topology(tree, data_path, topology_cache_root)
-        interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
-        ray = OctreeRayInterpolator(interp)
+        _progress(f"[{case.label}] start file={case.file_name}", log_path=progress_log_path)
+        data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
+        _progress(f"[{case.label}] resolved path={data_path} ({resolve_s:.2f}s)", log_path=progress_log_path)
+        ds, read_s = _time_call(Dataset.from_file, str(data_path))
+        _progress(f"[{case.label}] read dataset ({read_s:.2f}s)", log_path=progress_log_path)
+        (tree, tree_source), tree_s = _time_call(_load_or_build_octree, ds, data_path, cache_root)
+        _progress(f"[{case.label}] octree {tree_source} ({tree_s:.2f}s)", log_path=progress_log_path)
+        ((_topology, topo_source), topo_s) = _time_call(_load_or_build_full_topology, tree, data_path, topology_cache_root)
+        _progress(f"[{case.label}] topology {topo_source} ({topo_s:.2f}s)", log_path=progress_log_path)
+        interp, interp_s = _time_call(OctreeInterpolator, ds, ["Rho [g/cm^3]"], tree=tree)
+        _progress(f"[{case.label}] interpolator ready ({interp_s:.2f}s)", log_path=progress_log_path)
+        ray, ray_s0 = _time_call(OctreeRayInterpolator, interp)
+        _progress(f"[{case.label}] ray interpolator ready ({ray_s0:.2f}s)", log_path=progress_log_path)
 
         dmin, dmax = interp.tree.domain_bounds(coord="xyz")
         bounds = (
@@ -571,9 +601,10 @@ def main() -> None:
         )
 
         warm_n = int(resolutions[0])
-        _ = _grid_sum_image(interp, n_plane=warm_n, nx_sum=int(args.nx_sum), bounds=bounds)
+        _, warm_grid_s = _time_call(_grid_sum_image, interp, n_plane=warm_n, nx_sum=int(args.nx_sum), bounds=bounds)
         warm_origins, warm_direction, warm_t_end = _ray_setup(n_plane=warm_n, bounds=bounds)
-        _ = _ray_image(
+        _, warm_ray_s = _time_call(
+            _ray_image,
             ray,
             origins=warm_origins,
             direction=warm_direction,
@@ -581,9 +612,14 @@ def main() -> None:
             n_plane=warm_n,
             chunk_size=int(args.chunk_size),
         )
+        _progress(
+            f"[{case.label}] warmup grid={warm_grid_s:.2f}s ray={warm_ray_s:.2f}s",
+            log_path=progress_log_path,
+        )
 
         rows: list[dict[str, float | int]] = []
         for n in resolutions:
+            _progress(f"[{case.label}] run {n}x{n}", log_path=progress_log_path)
             origins, direction, t_end = _ray_setup(n_plane=int(n), bounds=bounds)
 
             t0 = time.perf_counter()
@@ -665,8 +701,10 @@ def main() -> None:
             print(
                 f"{case.label},{n}x{n},{pixels},{grid_s:.6f},{ray_s:.6f},"
                 f"{grid_nan},{grid_zero},{ray_nan},{ray_zero},{finite_overlap},"
-                f"{pos_overlap},{eq_abs_l1:.6e},{eq_abs_rmse:.6e},{eq_log_l1:.6e},{eq_log_rmse:.6e}"
+                f"{pos_overlap},{eq_abs_l1:.6e},{eq_abs_rmse:.6e},{eq_log_l1:.6e},{eq_log_rmse:.6e}",
+                flush=True,
             )
+        _progress(f"[{case.label}] done -> {case_dir}", log_path=progress_log_path)
 
 
 if __name__ == "__main__":
