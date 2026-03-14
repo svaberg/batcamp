@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+build/
+dist/
 
 # Local copied data for demos/tests (not versioned)
 example_data/
