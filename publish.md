@@ -5,6 +5,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 ## Metadata and dependencies
 
 - [x] Use the MIT license and include it in package metadata.
+- [x] Use the non-deprecated SPDX/license-files metadata format in `pyproject.toml`.
 - [x] Add project URLs, classifiers, and keywords to `pyproject.toml`.
 - [x] Rename runtime imports from `starwinds_readplt` to `batread`.
 - [x] Declare `batread` as a runtime dependency in `pyproject.toml`.
