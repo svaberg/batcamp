@@ -1957,8 +1957,6 @@ def _integrate_rays_xyz_kernel(
             topo_state,
         )
         if n_seg <= 0:
-            if ncomp == 1:
-                out[i, 0] = 0.0
             continue
         acc = np.zeros(ncomp, dtype=np.float64)
         row = np.empty(ncomp, dtype=np.float64)
@@ -2003,8 +2001,6 @@ def _integrate_rays_xyz_kernel(
             used = True
         if used:
             out[i, :] = scale * acc
-        elif ncomp == 1:
-            out[i, 0] = 0.0
     return out
 
 
@@ -2044,8 +2040,6 @@ def _integrate_rays_rpa_kernel(
             plane_state,
         )
         if n_seg <= 0:
-            if ncomp == 1:
-                out[i, 0] = 0.0
             continue
         acc = np.zeros(ncomp, dtype=np.float64)
         row = np.empty(ncomp, dtype=np.float64)
@@ -2092,8 +2086,6 @@ def _integrate_rays_rpa_kernel(
             used = True
         if used:
             out[i, :] = scale * acc
-        elif ncomp == 1:
-            out[i, 0] = 0.0
     return out
 
 
@@ -2726,7 +2718,6 @@ class OctreeRayInterpolator:
         out = np.full((n_rays, ncomp), np.nan, dtype=float)
         if mids.shape[0] == 0:
             if ncomp == 1:
-                out[:, 0] = 0.0
                 return out[:, 0]
             return out
 
@@ -2745,13 +2736,9 @@ class OctreeRayInterpolator:
             s = int(offsets[i])
             e = int(offsets[i + 1])
             if e <= s:
-                if ncomp == 1:
-                    out[i, 0] = 0.0
                 continue
             valid = cids[s:e] >= 0
             if not np.any(valid):
-                if ncomp == 1:
-                    out[i, 0] = 0.0
                 continue
             seg_vals = value_arr[s:e][valid]
             seg_w = w[s:e][valid].reshape(-1, 1)
