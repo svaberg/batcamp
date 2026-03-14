@@ -22,6 +22,9 @@ from .spherical import SphericalLookupKernelState
 from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 from .topological import TopologicalKernelState
+from .topological import TopologicalNeighborhood
+from .topological import _cell_local_indices_from_bounds
+from .topological import build_topological_neighborhood_kernel
 from .topological import build_topological_neighborhood
 
 if TYPE_CHECKING:
@@ -32,14 +35,7 @@ _TRACE_CONTAIN_TOL = 1e-8
 _DEFAULT_TRACE_BOUNDARY_TOL = 1e-9
 _DEFAULT_TRACE_MAX_STEPS = 100000
 _MAX_TOPOLOGY_CANDIDATES = 128
-_RPA_FACE_NODE_IDS = (
-    (0, 2, 6, 4),
-    (1, 3, 7, 5),
-    (0, 1, 5, 4),
-    (2, 3, 7, 6),
-    (0, 1, 3, 2),
-    (4, 5, 7, 6),
-)
+_GAUSS_LEGENDRE_2_ABSCISSA = 0.5773502691896257
 _FACE_TRIPLES = (
     (0, 1, 2),
     (0, 1, 3),
@@ -48,22 +44,226 @@ _FACE_TRIPLES = (
 )
 
 
-class RpaHexaKernelState(NamedTuple):
-    """Plane representation of spherical-tree cells as Cartesian hexahedra."""
+class CellPlaneKernelState(NamedTuple):
+    """Plane representation of cell faces in Cartesian coordinates."""
 
     face_normals: np.ndarray
     face_offsets: np.ndarray
     face_valid: np.ndarray
 
 
-def _build_rpa_hexa_kernel_state(tree: Octree) -> RpaHexaKernelState:
-    """Approximate spherical cells as convex Cartesian hexahedra with planar faces."""
-    tree._require_lookup()
-    corners = np.asarray(getattr(tree, "_corners"), dtype=np.int64)
-    points = np.asarray(getattr(tree, "_points"), dtype=float)
-    centers = np.asarray(getattr(tree, "_cell_centers"), dtype=float)
-    n_cells = int(corners.shape[0])
+class CartesianRayCellGeometry(NamedTuple):
+    """Truncated Cartesian ray-cell geometry at one depth cutoff."""
 
+    topology_state: TopologicalKernelState
+    lookup_state: CartesianLookupKernelState
+    corners: np.ndarray
+    bin_to_corner: np.ndarray
+    cell_x0: np.ndarray
+    cell_xden: np.ndarray
+    cell_y0: np.ndarray
+    cell_yden: np.ndarray
+    cell_z0: np.ndarray
+    cell_zden: np.ndarray
+
+
+class SphericalRayCellGeometry(NamedTuple):
+    """Truncated spherical ray-cell geometry at one depth cutoff."""
+
+    topology_state: TopologicalKernelState
+    plane_state: CellPlaneKernelState
+    corners: np.ndarray
+    bin_to_corner: np.ndarray
+    cell_r0: np.ndarray
+    cell_rden: np.ndarray
+    cell_t0: np.ndarray
+    cell_tden: np.ndarray
+    cell_p_start: np.ndarray
+    cell_p_width: np.ndarray
+    cell_pden: np.ndarray
+    cell_phi_full: np.ndarray
+    cell_phi_tiny: np.ndarray
+
+
+_TARGET_UNIT_CORNERS = np.array(
+    [[k & 1, (k >> 1) & 1, (k >> 2) & 1] for k in range(8)],
+    dtype=np.float64,
+)
+_ORDERED_FACE_CORNERS = (
+    (0, 2, 4, 6),
+    (1, 3, 5, 7),
+    (0, 1, 4, 5),
+    (2, 3, 6, 7),
+    (0, 1, 2, 3),
+    (4, 5, 6, 7),
+)
+
+
+def _resolve_ray_maxdepth(tree: Octree, maxdepth: int | None) -> int:
+    """Return requested ray depth cutoff, defaulting to the full tree depth."""
+    if maxdepth is None:
+        return int(tree.depth)
+    depth = int(maxdepth)
+    if depth < 0 or depth > int(tree.depth):
+        raise ValueError(f"maxdepth={depth} is outside [0, {int(tree.depth)}] for this tree.")
+    return depth
+
+
+def _shape_for_ray_depth(tree: Octree, depth: int) -> tuple[int, int, int]:
+    """Return `(n0, n1, n2)` cell counts at one root-relative depth."""
+    if depth < 0 or depth > int(tree.depth):
+        raise ValueError(f"depth={depth} is outside [0, {int(tree.depth)}] for this tree.")
+    scale = 1 << int(depth)
+    return (
+        int(tree.root_shape[0]) * scale,
+        int(tree.root_shape[1]) * scale,
+        int(tree.root_shape[2]) * scale,
+    )
+
+
+def _depth_shapes_for_cutoff(tree: Octree, min_depth: int, max_depth: int) -> np.ndarray:
+    """Return `(n0, n1, n2)` for every ray depth in `[min_depth, max_depth]`."""
+    if max_depth < min_depth:
+        raise ValueError(f"Invalid depth bounds: min_depth={min_depth}, max_depth={max_depth}.")
+    out = np.empty((int(max_depth - min_depth + 1), 3), dtype=np.int64)
+    for depth in range(int(min_depth), int(max_depth) + 1):
+        out[int(depth - min_depth), :] = _shape_for_ray_depth(tree, depth)
+    return out
+
+
+def _topology_for_ray_maxdepth(tree: Octree, maxdepth: int) -> TopologicalNeighborhood:
+    """Build face-neighbor topology at one root-relative ray depth cutoff."""
+    cache = getattr(tree, "_ray_topology_by_maxdepth", None)
+    if cache is None:
+        cache = {}
+        tree._ray_topology_by_maxdepth = cache
+    key = int(maxdepth)
+    if key in cache:
+        return cache[key]
+
+    tree._require_lookup()
+    if tree.cell_levels is None:
+        raise ValueError("Octree has no cell_levels; cannot build ray topology.")
+
+    levels_all = np.asarray(tree.cell_levels, dtype=np.int64)
+    valid = levels_all >= 0
+    if not np.any(valid):
+        raise ValueError("Octree contains no valid cells (all levels are < 0).")
+
+    cell_ids = np.flatnonzero(valid).astype(np.int64)
+    cell_levels = levels_all[valid]
+    cell_depths = np.asarray(int(tree.depth) - (int(tree.max_level) - cell_levels), dtype=np.int64)
+    active_depths = np.minimum(cell_depths, key)
+
+    if str(tree.tree_coord) == "xyz":
+        i0_valid, i1_valid, i2_valid = _cell_local_indices_from_bounds(tree, cell_ids, cell_levels)
+    else:
+        if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
+            raise ValueError("Lookup indices (_i0/_i1/_i2) are unavailable; build lookup before ray topology.")
+        i0_valid = np.asarray(getattr(tree, "_i0"), dtype=np.int64)[valid]
+        i1_valid = np.asarray(getattr(tree, "_i1"), dtype=np.int64)[valid]
+        i2_valid = np.asarray(getattr(tree, "_i2"), dtype=np.int64)[valid]
+
+    shift = cell_depths - active_depths
+    active_i0 = np.right_shift(i0_valid, shift)
+    active_i1 = np.right_shift(i1_valid, shift)
+    active_i2 = np.right_shift(i2_valid, shift)
+
+    keys = np.column_stack((active_depths, active_i0, active_i1, active_i2)).astype(np.int64)
+    unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+
+    node_cell_ids = np.full(int(unique_keys.shape[0]), -1, dtype=np.int64)
+    cell_to_node_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
+    for row, node_id in enumerate(inverse):
+        nid = int(node_id)
+        if node_cell_ids[nid] < 0:
+            node_cell_ids[nid] = int(cell_ids[row])
+        cell_to_node_id[int(cell_ids[row])] = nid
+
+    depths = np.asarray(unique_keys[:, 0], dtype=np.int64)
+    i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
+    i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
+    i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
+    min_depth = int(np.min(depths))
+    level_shapes = _depth_shapes_for_cutoff(tree, min_depth, key)
+    periodic_i2 = str(tree.tree_coord) == "rpa"
+    face_counts, face_offsets, face_neighbors = build_topological_neighborhood_kernel(
+        depths,
+        i0,
+        i1,
+        i2,
+        min_depth,
+        key,
+        level_shapes,
+        periodic_i2,
+    )
+    topology = TopologicalNeighborhood(
+        levels=depths,
+        i0=i0,
+        i1=i1,
+        i2=i2,
+        face_counts=face_counts,
+        face_offsets=face_offsets,
+        face_neighbors=face_neighbors,
+        node_cell_ids=node_cell_ids,
+        cell_to_node_id=cell_to_node_id,
+        min_level=min_depth,
+        max_level=key,
+        periodic_i2=periodic_i2,
+    )
+    cache[key] = topology
+    return topology
+
+
+def _topology_state_for_node_cells(topology) -> TopologicalKernelState:
+    """Return one topology state whose active cell ids are the frontier node ids."""
+    node_ids = np.arange(int(topology.node_count), dtype=np.int64)
+    return TopologicalKernelState(
+        face_offsets=np.asarray(topology.face_offsets, dtype=np.int64),
+        face_neighbors=np.asarray(topology.face_neighbors, dtype=np.int64),
+        node_cell_ids=node_ids,
+        cell_to_node_id=np.asarray(topology.cell_to_node_id, dtype=np.int64),
+    )
+
+
+def _node_point_candidates(tree: Octree, topology) -> list[np.ndarray]:
+    """Return unique descendant-corner point ids for every frontier node."""
+    tree._require_lookup()
+    if tree.cell_levels is None:
+        raise ValueError("Octree has no cell levels; cannot build truncated ray cells.")
+    corners = np.asarray(getattr(tree, "_corners"), dtype=np.int64)
+    cell_levels = np.asarray(tree.cell_levels, dtype=np.int64)
+    valid_cells = np.flatnonzero(cell_levels >= 0).astype(np.int64)
+    node_ids = np.asarray(topology.cell_to_node_id[valid_cells], dtype=np.int64)
+    order = np.argsort(node_ids, kind="stable")
+    node_ids = node_ids[order]
+    valid_cells = valid_cells[order]
+    groups: list[np.ndarray] = [np.empty((0,), dtype=np.int64) for _ in range(int(topology.node_count))]
+    start = 0
+    while start < int(node_ids.size):
+        stop = start + 1
+        node_id = int(node_ids[start])
+        while stop < int(node_ids.size) and int(node_ids[stop]) == node_id:
+            stop += 1
+        groups[node_id] = np.unique(corners[valid_cells[start:stop]].reshape(-1)).astype(np.int64)
+        start = stop
+    return groups
+
+
+def _ordered_corners_from_unit_coords(point_ids: np.ndarray, unit_coords: np.ndarray) -> np.ndarray:
+    """Pick 8 logical corner point ids by nearest unit-cube corners."""
+    d2 = np.sum((unit_coords[:, None, :] - _TARGET_UNIT_CORNERS[None, :, :]) ** 2, axis=2)
+    picks = np.argmin(d2, axis=0).astype(np.int64)
+    return np.asarray(point_ids[picks], dtype=np.int64)
+
+
+def _build_plane_state_from_ordered_corners(
+    points: np.ndarray,
+    corners: np.ndarray,
+    centers: np.ndarray,
+) -> CellPlaneKernelState:
+    """Build plane faces from ordered hexahedron corner ids."""
+    n_cells = int(corners.shape[0])
     face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
     face_offsets = np.zeros((n_cells, 6), dtype=np.float64)
     face_valid = np.zeros((n_cells, 6), dtype=np.bool_)
@@ -72,8 +272,8 @@ def _build_rpa_hexa_kernel_state(tree: Octree) -> RpaHexaKernelState:
     for cid in range(n_cells):
         cell_pts = np.asarray(points[corners[cid]], dtype=float)
         center = np.asarray(centers[cid], dtype=float)
-        for face, node_ids in enumerate(_RPA_FACE_NODE_IDS):
-            face_pts = np.asarray(cell_pts[list(node_ids)], dtype=float)
+        for face, local_ids in enumerate(_ORDERED_FACE_CORNERS):
+            face_pts = np.asarray(cell_pts[np.asarray(local_ids, dtype=np.int64)], dtype=float)
             best_norm2 = -1.0
             best_normal = np.zeros(3, dtype=float)
             best_anchor = np.zeros(3, dtype=float)
@@ -96,11 +296,382 @@ def _build_rpa_hexa_kernel_state(tree: Octree) -> RpaHexaKernelState:
             face_offsets[cid, face] = float(np.dot(best_normal, best_anchor))
             face_valid[cid, face] = True
 
-    return RpaHexaKernelState(
+    return CellPlaneKernelState(
         face_normals=face_normals,
         face_offsets=face_offsets,
         face_valid=face_valid,
     )
+
+
+def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
+    """Build one Cartesian plane model from topology-aligned cell faces."""
+    tree._require_lookup()
+    corners = np.asarray(getattr(tree, "_corners"), dtype=np.int64)
+    points = np.asarray(getattr(tree, "_points"), dtype=float)
+    centers = np.asarray(getattr(tree, "_cell_centers"), dtype=float)
+    lookup_state = tree.lookup.lookup_state
+    n_cells = int(corners.shape[0])
+
+    face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
+    face_offsets = np.zeros((n_cells, 6), dtype=np.float64)
+    face_valid = np.zeros((n_cells, 6), dtype=np.bool_)
+    tiny = 1.0e-24
+    tree_coord = str(tree.tree_coord)
+
+    point_r = np.linalg.norm(points, axis=1)
+    point_theta = np.arccos(np.clip(points[:, 2] / np.maximum(point_r, np.finfo(float).tiny), -1.0, 1.0))
+    point_phi = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
+
+    def _closest_four(values: np.ndarray, target: float, tol: float) -> np.ndarray:
+        mask = np.abs(values - target) <= tol
+        idx = np.flatnonzero(mask)
+        if idx.size == 4:
+            return idx
+        order = np.argsort(np.abs(values - target))
+        return np.asarray(order[:4], dtype=np.int64)
+
+    def _unwrap_cell_phi(phi_values: np.ndarray, start: float, width: float) -> np.ndarray:
+        center = start + 0.5 * width
+        out = np.array(phi_values, dtype=float, copy=True)
+        out[out < (center - math.pi)] += 2.0 * math.pi
+        out[out > (center + math.pi)] -= 2.0 * math.pi
+        return out
+
+    for cid in range(n_cells):
+        cell_pts = np.asarray(points[corners[cid]], dtype=float)
+        center = np.asarray(centers[cid], dtype=float)
+        cell_corner_ids = corners[cid]
+        if tree_coord == "xyz":
+            if not isinstance(lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian cell-plane construction requires CartesianLookupKernelState; "
+                    f"got {type(lookup_state).__name__}."
+                )
+            cx = cell_pts[:, 0]
+            cy = cell_pts[:, 1]
+            cz = cell_pts[:, 2]
+            tx = max(1e-10, 1e-8 * float(lookup_state.cell_x_max[cid] - lookup_state.cell_x_min[cid]))
+            ty = max(1e-10, 1e-8 * float(lookup_state.cell_y_max[cid] - lookup_state.cell_y_min[cid]))
+            tz = max(1e-10, 1e-8 * float(lookup_state.cell_z_max[cid] - lookup_state.cell_z_min[cid]))
+            face_corner_sets = (
+                _closest_four(cx, float(lookup_state.cell_x_min[cid]), tx),
+                _closest_four(cx, float(lookup_state.cell_x_max[cid]), tx),
+                _closest_four(cy, float(lookup_state.cell_y_min[cid]), ty),
+                _closest_four(cy, float(lookup_state.cell_y_max[cid]), ty),
+                _closest_four(cz, float(lookup_state.cell_z_min[cid]), tz),
+                _closest_four(cz, float(lookup_state.cell_z_max[cid]), tz),
+            )
+        elif tree_coord == "rpa":
+            if not isinstance(lookup_state, SphericalLookupKernelState):
+                raise TypeError(
+                    "Spherical cell-plane construction requires SphericalLookupKernelState; "
+                    f"got {type(lookup_state).__name__}."
+                )
+            cr = point_r[cell_corner_ids]
+            ctheta = point_theta[cell_corner_ids]
+            cphi = _unwrap_cell_phi(
+                point_phi[cell_corner_ids],
+                float(lookup_state.cell_phi_start[cid]),
+                float(lookup_state.cell_phi_width[cid]),
+            )
+            tr = max(1e-10, 1e-8 * float(lookup_state.cell_r_max[cid] - lookup_state.cell_r_min[cid]))
+            tt = max(1e-10, 1e-8 * float(lookup_state.cell_theta_max[cid] - lookup_state.cell_theta_min[cid]))
+            tp = max(1e-10, 1e-8 * float(lookup_state.cell_phi_width[cid]))
+            phi_lo = float(lookup_state.cell_phi_start[cid])
+            phi_hi = phi_lo + float(lookup_state.cell_phi_width[cid])
+            face_corner_sets = (
+                _closest_four(cr, float(lookup_state.cell_r_min[cid]), tr),
+                _closest_four(cr, float(lookup_state.cell_r_max[cid]), tr),
+                _closest_four(ctheta, float(lookup_state.cell_theta_min[cid]), tt),
+                _closest_four(ctheta, float(lookup_state.cell_theta_max[cid]), tt),
+                _closest_four(cphi, phi_lo, tp),
+                _closest_four(cphi, phi_hi, tp),
+            )
+        else:
+            raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
+
+        for face, node_ids in enumerate(face_corner_sets):
+            face_pts = np.asarray(cell_pts[np.asarray(node_ids, dtype=np.int64)], dtype=float)
+            best_norm2 = -1.0
+            best_normal = np.zeros(3, dtype=float)
+            best_anchor = np.zeros(3, dtype=float)
+            for ia, ib, ic in _FACE_TRIPLES:
+                a = face_pts[ia]
+                b = face_pts[ib]
+                c = face_pts[ic]
+                normal = np.cross(b - a, c - a)
+                norm2 = float(np.dot(normal, normal))
+                if norm2 > best_norm2:
+                    best_norm2 = norm2
+                    best_normal = normal
+                    best_anchor = a
+            if best_norm2 <= tiny:
+                continue
+            best_normal = best_normal / math.sqrt(best_norm2)
+            if float(np.dot(best_normal, center - best_anchor)) > 0.0:
+                best_normal = -best_normal
+            face_normals[cid, face, :] = best_normal
+            face_offsets[cid, face] = float(np.dot(best_normal, best_anchor))
+            face_valid[cid, face] = True
+
+    return CellPlaneKernelState(
+        face_normals=face_normals,
+        face_offsets=face_offsets,
+        face_valid=face_valid,
+    )
+
+
+def _build_cartesian_ray_cell_geometry(tree: Octree, topology) -> CartesianRayCellGeometry:
+    """Build truncated Cartesian ray-cell geometry from one frontier topology."""
+    points = np.asarray(tree.lookup.points, dtype=float)
+    point_groups = _node_point_candidates(tree, topology)
+    n_cells = int(topology.node_count)
+
+    corners = np.empty((n_cells, 8), dtype=np.int64)
+    bin_to_corner = np.broadcast_to(np.arange(8, dtype=np.int64), (n_cells, 8)).copy()
+    cell_x0 = np.empty(n_cells, dtype=np.float64)
+    cell_xden = np.empty(n_cells, dtype=np.float64)
+    cell_y0 = np.empty(n_cells, dtype=np.float64)
+    cell_yden = np.empty(n_cells, dtype=np.float64)
+    cell_z0 = np.empty(n_cells, dtype=np.float64)
+    cell_zden = np.empty(n_cells, dtype=np.float64)
+    cell_x1 = np.empty(n_cells, dtype=np.float64)
+    cell_y1 = np.empty(n_cells, dtype=np.float64)
+    cell_z1 = np.empty(n_cells, dtype=np.float64)
+    centers = np.empty((n_cells, 3), dtype=np.float64)
+    tiny = np.finfo(float).tiny
+
+    for node_id in range(n_cells):
+        point_ids = np.asarray(point_groups[node_id], dtype=np.int64)
+        cell_pts = np.asarray(points[point_ids], dtype=float)
+        x0 = float(np.min(cell_pts[:, 0]))
+        x1 = float(np.max(cell_pts[:, 0]))
+        y0 = float(np.min(cell_pts[:, 1]))
+        y1 = float(np.max(cell_pts[:, 1]))
+        z0 = float(np.min(cell_pts[:, 2]))
+        z1 = float(np.max(cell_pts[:, 2]))
+        dx = max(x1 - x0, tiny)
+        dy = max(y1 - y0, tiny)
+        dz = max(z1 - z0, tiny)
+        unit = np.empty((int(point_ids.size), 3), dtype=np.float64)
+        unit[:, 0] = np.clip((cell_pts[:, 0] - x0) / dx, 0.0, 1.0)
+        unit[:, 1] = np.clip((cell_pts[:, 1] - y0) / dy, 0.0, 1.0)
+        unit[:, 2] = np.clip((cell_pts[:, 2] - z0) / dz, 0.0, 1.0)
+        corners[node_id, :] = _ordered_corners_from_unit_coords(point_ids, unit)
+        centers[node_id, :] = np.mean(points[corners[node_id]], axis=0)
+        cell_x0[node_id] = x0
+        cell_x1[node_id] = x1
+        cell_y0[node_id] = y0
+        cell_y1[node_id] = y1
+        cell_z0[node_id] = z0
+        cell_z1[node_id] = z1
+        cell_xden[node_id] = dx
+        cell_yden[node_id] = dy
+        cell_zden[node_id] = dz
+
+    seed_lookup = tree.lookup.lookup_state
+    if not isinstance(seed_lookup, CartesianLookupKernelState):
+        raise TypeError(
+            "Cartesian truncated ray geometry requires CartesianLookupKernelState; "
+            f"got {type(seed_lookup).__name__}."
+        )
+    lookup_state = CartesianLookupKernelState(
+        cell_centers=centers,
+        cell_x_min=cell_x0,
+        cell_x_max=cell_x1,
+        cell_y_min=cell_y0,
+        cell_y_max=cell_y1,
+        cell_z_min=cell_z0,
+        cell_z_max=cell_z1,
+        cell_valid=np.ones(n_cells, dtype=np.bool_),
+        xyz_min=np.asarray(seed_lookup.xyz_min, dtype=np.float64),
+        xyz_max=np.asarray(seed_lookup.xyz_max, dtype=np.float64),
+        xyz_span=np.asarray(seed_lookup.xyz_span, dtype=np.float64),
+        bin_shape=np.array([1, 1, 1], dtype=np.int64),
+        bin_offsets=np.zeros(2, dtype=np.int64),
+        bin_cell_ids=np.empty((0,), dtype=np.int64),
+        max_radius=0,
+    )
+    return CartesianRayCellGeometry(
+        topology_state=_topology_state_for_node_cells(topology),
+        lookup_state=lookup_state,
+        corners=corners,
+        bin_to_corner=bin_to_corner,
+        cell_x0=cell_x0,
+        cell_xden=cell_xden,
+        cell_y0=cell_y0,
+        cell_yden=cell_yden,
+        cell_z0=cell_z0,
+        cell_zden=cell_zden,
+    )
+
+
+def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCellGeometry:
+    """Build truncated spherical ray-cell geometry from one frontier topology."""
+    points = np.asarray(tree.lookup.points, dtype=float)
+    point_groups = _node_point_candidates(tree, topology)
+    point_r = np.linalg.norm(points, axis=1)
+    point_theta = np.arccos(np.clip(points[:, 2] / np.maximum(point_r, np.finfo(float).tiny), -1.0, 1.0))
+    point_phi = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
+
+    n_cells = int(topology.node_count)
+    corners = np.empty((n_cells, 8), dtype=np.int64)
+    bin_to_corner = np.broadcast_to(np.arange(8, dtype=np.int64), (n_cells, 8)).copy()
+    centers = np.empty((n_cells, 3), dtype=np.float64)
+    cell_r0 = np.empty(n_cells, dtype=np.float64)
+    cell_rden = np.empty(n_cells, dtype=np.float64)
+    cell_t0 = np.empty(n_cells, dtype=np.float64)
+    cell_tden = np.empty(n_cells, dtype=np.float64)
+    cell_p_start = np.empty(n_cells, dtype=np.float64)
+    cell_p_width = np.empty(n_cells, dtype=np.float64)
+    cell_pden = np.empty(n_cells, dtype=np.float64)
+    cell_phi_full = np.zeros(n_cells, dtype=np.bool_)
+    cell_phi_tiny = np.zeros(n_cells, dtype=np.bool_)
+    tiny = np.finfo(float).tiny
+
+    for node_id in range(n_cells):
+        point_ids = np.asarray(point_groups[node_id], dtype=np.int64)
+        depth = int(topology.levels[node_id])
+        _nr, ntheta, nphi = _shape_for_ray_depth(tree, depth)
+        dtheta = math.pi / float(ntheta)
+        dphi = 2.0 * math.pi / float(nphi)
+        theta0 = float(int(topology.i1[node_id]) * dtheta)
+        theta1 = theta0 + dtheta
+        phi_start = float(int(topology.i2[node_id]) * dphi)
+        phi_width = float(dphi)
+
+        cr = point_r[point_ids]
+        ct = point_theta[point_ids]
+        cp = np.array(point_phi[point_ids], dtype=float, copy=True)
+        center_phi = phi_start + 0.5 * phi_width
+        cp[cp < (center_phi - math.pi)] += 2.0 * math.pi
+        cp[cp > (center_phi + math.pi)] -= 2.0 * math.pi
+
+        r0 = float(np.min(cr))
+        r1 = float(np.max(cr))
+        dr = max(r1 - r0, tiny)
+        dt = max(theta1 - theta0, tiny)
+        dp = max(phi_width, tiny)
+        p_rel = np.clip(cp - phi_start, 0.0, phi_width)
+
+        unit = np.empty((int(point_ids.size), 3), dtype=np.float64)
+        unit[:, 0] = np.clip((cr - r0) / dr, 0.0, 1.0)
+        unit[:, 1] = np.clip((ct - theta0) / dt, 0.0, 1.0)
+        unit[:, 2] = np.clip(p_rel / dp, 0.0, 1.0)
+        corners[node_id, :] = _ordered_corners_from_unit_coords(point_ids, unit)
+        centers[node_id, :] = np.mean(points[corners[node_id]], axis=0)
+
+        cell_r0[node_id] = r0
+        cell_rden[node_id] = dr
+        cell_t0[node_id] = theta0
+        cell_tden[node_id] = dt
+        cell_p_start[node_id] = phi_start
+        cell_p_width[node_id] = phi_width
+        cell_pden[node_id] = dp
+        cell_phi_full[node_id] = phi_width >= (2.0 * math.pi - 1e-10)
+        cell_phi_tiny[node_id] = phi_width <= tiny
+
+    plane_state = _build_plane_state_from_ordered_corners(points, corners, centers)
+    return SphericalRayCellGeometry(
+        topology_state=_topology_state_for_node_cells(topology),
+        plane_state=plane_state,
+        corners=corners,
+        bin_to_corner=bin_to_corner,
+        cell_r0=cell_r0,
+        cell_rden=cell_rden,
+        cell_t0=cell_t0,
+        cell_tden=cell_tden,
+        cell_p_start=cell_p_start,
+        cell_p_width=cell_p_width,
+        cell_pden=cell_pden,
+        cell_phi_full=cell_phi_full,
+        cell_phi_tiny=cell_phi_tiny,
+    )
+
+
+def _cartesian_interp_state_from_geometry(
+    point_values_2d: np.ndarray,
+    geometry: CartesianRayCellGeometry,
+) -> CartesianInterpKernelState:
+    """Build one Cartesian interpolation state from truncated ray-cell geometry."""
+    return CartesianInterpKernelState(
+        point_values_2d=point_values_2d,
+        corners=geometry.corners,
+        bin_to_corner=geometry.bin_to_corner,
+        cell_x0=geometry.cell_x0,
+        cell_xden=geometry.cell_xden,
+        cell_y0=geometry.cell_y0,
+        cell_yden=geometry.cell_yden,
+        cell_z0=geometry.cell_z0,
+        cell_zden=geometry.cell_zden,
+    )
+
+
+def _spherical_interp_state_from_geometry(
+    point_values_2d: np.ndarray,
+    geometry: SphericalRayCellGeometry,
+) -> SphericalInterpKernelState:
+    """Build one spherical interpolation state from truncated ray-cell geometry."""
+    return SphericalInterpKernelState(
+        point_values_2d=point_values_2d,
+        corners=geometry.corners,
+        bin_to_corner=geometry.bin_to_corner,
+        cell_r0=geometry.cell_r0,
+        cell_rden=geometry.cell_rden,
+        cell_t0=geometry.cell_t0,
+        cell_tden=geometry.cell_tden,
+        cell_p_start=geometry.cell_p_start,
+        cell_p_width=geometry.cell_p_width,
+        cell_pden=geometry.cell_pden,
+        cell_phi_full=geometry.cell_phi_full,
+        cell_phi_tiny=geometry.cell_phi_tiny,
+    )
+
+
+def _ray_cell_geometry_for_maxdepth(tree: Octree, maxdepth: int) -> CartesianRayCellGeometry | SphericalRayCellGeometry:
+    """Return cached truncated ray-cell geometry for one depth cutoff."""
+    cache = getattr(tree, "_ray_cell_geometry_by_maxdepth", None)
+    if cache is None:
+        cache = {}
+        tree._ray_cell_geometry_by_maxdepth = cache
+    key = int(maxdepth)
+    if key in cache:
+        return cache[key]
+
+    topology = _topology_for_ray_maxdepth(tree, key)
+    if str(tree.tree_coord) == "xyz":
+        geometry = _build_cartesian_ray_cell_geometry(tree, topology)
+    elif str(tree.tree_coord) == "rpa":
+        geometry = _build_spherical_ray_cell_geometry(tree, topology)
+    else:
+        raise ValueError(f"Unsupported tree_coord '{tree.tree_coord}'.")
+    cache[key] = geometry
+    return geometry
+
+
+def _ray_interp_state_for_maxdepth(
+    interpolator: "OctreeInterpolator",
+    maxdepth: int,
+) -> CartesianInterpKernelState | SphericalInterpKernelState:
+    """Return cached truncated interpolation state for one ray depth cutoff."""
+    cache = getattr(interpolator, "_ray_interp_state_by_maxdepth", None)
+    if cache is None:
+        cache = {}
+        interpolator._ray_interp_state_by_maxdepth = cache
+    key = int(maxdepth)
+    if key in cache:
+        return cache[key]
+
+    geometry = _ray_cell_geometry_for_maxdepth(interpolator.tree, key)
+    point_values_2d = np.asarray(interpolator._point_values_2d, dtype=np.float64)
+    if isinstance(geometry, CartesianRayCellGeometry):
+        state = _cartesian_interp_state_from_geometry(point_values_2d, geometry)
+    elif isinstance(geometry, SphericalRayCellGeometry):
+        state = _spherical_interp_state_from_geometry(point_values_2d, geometry)
+    else:
+        raise TypeError(f"Unsupported truncated ray geometry {type(geometry).__name__}.")
+    cache[key] = state
+    return state
 
 
 @njit(cache=True)
@@ -123,22 +694,22 @@ def _contains_xyz_from_state(
 
 
 @njit(cache=True)
-def _contains_rpa_hexa_from_xyz(
+def _contains_cell_from_xyz(
     cid: int,
     x: float,
     y: float,
     z: float,
-    hexa_state: RpaHexaKernelState,
+    plane_state: CellPlaneKernelState,
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
-    """Return whether one Cartesian point lies inside the planar hexahedron model."""
+    """Return whether one Cartesian point lies inside one plane-bounded cell."""
     for face in range(6):
-        if not hexa_state.face_valid[cid, face]:
+        if not plane_state.face_valid[cid, face]:
             continue
-        nx = hexa_state.face_normals[cid, face, 0]
-        ny = hexa_state.face_normals[cid, face, 1]
-        nz = hexa_state.face_normals[cid, face, 2]
-        offset = hexa_state.face_offsets[cid, face]
+        nx = plane_state.face_normals[cid, face, 0]
+        ny = plane_state.face_normals[cid, face, 1]
+        nz = plane_state.face_normals[cid, face, 2]
+        offset = plane_state.face_offsets[cid, face]
         signed = nx * x + ny * y + nz * z - offset
         if signed > tol:
             return False
@@ -146,7 +717,7 @@ def _contains_rpa_hexa_from_xyz(
 
 
 @njit(cache=True)
-def _rpa_hexa_exit_dt_and_mask(
+def _cell_exit_dt_and_mask(
     cid: int,
     x: float,
     y: float,
@@ -154,21 +725,21 @@ def _rpa_hexa_exit_dt_and_mask(
     d0: float,
     d1: float,
     d2: float,
-    hexa_state: RpaHexaKernelState,
+    plane_state: CellPlaneKernelState,
     abs_eps: float,
 ) -> tuple[float, int]:
-    """Return forward exit distance and exited-face mask for the hexahedron model."""
+    """Return forward exit distance and exited-face mask for one plane-bounded cell."""
     best_dt = np.inf
     face_mask = 0
     dir_eps = 1.0e-15
     tie_tol = max(4.0 * abs_eps, 1.0e-12)
     for face in range(6):
-        if not hexa_state.face_valid[cid, face]:
+        if not plane_state.face_valid[cid, face]:
             continue
-        nx = hexa_state.face_normals[cid, face, 0]
-        ny = hexa_state.face_normals[cid, face, 1]
-        nz = hexa_state.face_normals[cid, face, 2]
-        offset = hexa_state.face_offsets[cid, face]
+        nx = plane_state.face_normals[cid, face, 0]
+        ny = plane_state.face_normals[cid, face, 1]
+        nz = plane_state.face_normals[cid, face, 2]
+        offset = plane_state.face_offsets[cid, face]
         signed = nx * x + ny * y + nz * z - offset
         if signed > tie_tol:
             return np.inf, 0
@@ -228,23 +799,16 @@ def _candidate_nodes_after_exit(
     work0: np.ndarray,
     work1: np.ndarray,
 ) -> tuple[int, int]:
-    """Follow all exited faces and return `(n_candidates, active_buffer)`."""
+    """Return nodes reachable across any non-empty subset of exited faces."""
     work0[0] = int(current_node_id)
-    n_active = 1
-    active = 0
+    n_reachable = 1
     for face in range(6):
         if (int(face_mask) & (1 << face)) == 0:
             continue
-        if active == 0:
-            n_next = _expand_topology_nodes_for_face(work0, n_active, face, topo_state, work1)
-            active = 1
-        else:
-            n_next = _expand_topology_nodes_for_face(work1, n_active, face, topo_state, work0)
-            active = 0
-        n_active = int(n_next)
-        if n_active <= 0:
-            return 0, active
-    return n_active, active
+        n_new = _expand_topology_nodes_for_face(work0, n_reachable, face, topo_state, work1)
+        for i in range(n_new):
+            n_reachable = _append_unique_node(work0, n_reachable, int(work1[i]))
+    return n_reachable, 0
 
 
 @njit(cache=True)
@@ -273,18 +837,18 @@ def _select_next_xyz_cell_from_topology(
 
 
 @njit(cache=True)
-def _select_next_rpa_cell_from_topology(
+def _select_next_cell_from_topology(
     current_node_id: int,
     face_mask: int,
     x_next: float,
     y_next: float,
     z_next: float,
     topo_state: TopologicalKernelState,
-    hexa_state: RpaHexaKernelState,
+    plane_state: CellPlaneKernelState,
     work0: np.ndarray,
     work1: np.ndarray,
 ) -> tuple[int, int]:
-    """Choose next spherical `(node_id, cell_id)` from topology candidates."""
+    """Choose next `(node_id, cell_id)` from topology candidates."""
     n_candidates, active = _candidate_nodes_after_exit(current_node_id, face_mask, topo_state, work0, work1)
     if n_candidates <= 0:
         return -1, -1
@@ -292,7 +856,7 @@ def _select_next_rpa_cell_from_topology(
     for i in range(n_candidates):
         node_id = int(nodes[i])
         cid = int(topo_state.node_cell_ids[node_id])
-        if _contains_rpa_hexa_from_xyz(cid, x_next, y_next, z_next, hexa_state):
+        if _contains_cell_from_xyz(cid, x_next, y_next, z_next, plane_state):
             return node_id, cid
     return -1, -1
 
@@ -507,17 +1071,17 @@ def _seek_first_cell_rpa(
     t_end: float,
     abs_eps: float,
     lookup_state: SphericalLookupKernelState,
-    hexa_state: RpaHexaKernelState,
-) -> tuple[bool, float, int, float, float, float]:
-    """Seek first `t` where ray enters a valid spherical hexahedron cell."""
+    plane_state: CellPlaneKernelState,
+) -> tuple[bool, float, int, float, float, float, float, float, float]:
+    """Seek first `t` where ray enters a valid plane-bounded cell."""
     t = t_start
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
     cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
-    if cid >= 0 and _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
-        return True, t, cid, x, y, z
+    if cid >= 0 and _contains_cell_from_xyz(cid, x, y, z, plane_state):
+        return True, t, cid, x, y, z, r, polar, azimuth
 
     lo = t
     hi = t
@@ -532,13 +1096,13 @@ def _seek_first_cell_rpa(
         zh = origin_xyz[2] + hi * direction_xyz_unit[2]
         r_hi, polar_hi, azimuth_hi = _xyz_to_rpa_components(xh, yh, zh)
         cid_hi = _lookup_rpa_cell_id_kernel(r_hi, polar_hi, azimuth_hi, lookup_state, -1)
-        if cid_hi >= 0 and _contains_rpa_hexa_from_xyz(cid_hi, xh, yh, zh, hexa_state):
+        if cid_hi >= 0 and _contains_cell_from_xyz(cid_hi, xh, yh, zh, plane_state):
             break
         if hi >= t_end:
-            return False, t_start, -1, x, y, z
+            return False, t_start, -1, x, y, z, r, polar, azimuth
         dt = dt * 2.0
     if cid_hi < 0:
-        return False, t_start, -1, x, y, z
+        return False, t_start, -1, x, y, z, r, polar, azimuth
 
     lo_out = lo
     hi_in = hi
@@ -550,7 +1114,7 @@ def _seek_first_cell_rpa(
         zm = origin_xyz[2] + mid * direction_xyz_unit[2]
         r_mid, polar_mid, azimuth_mid = _xyz_to_rpa_components(xm, ym, zm)
         cid_mid = _lookup_rpa_cell_id_kernel(r_mid, polar_mid, azimuth_mid, lookup_state, cid_in)
-        if cid_mid >= 0 and _contains_rpa_hexa_from_xyz(cid_mid, xm, ym, zm, hexa_state):
+        if cid_mid >= 0 and _contains_cell_from_xyz(cid_mid, xm, ym, zm, plane_state):
             hi_in = mid
             cid_in = cid_mid
         else:
@@ -568,16 +1132,16 @@ def _seek_first_cell_rpa(
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
     cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
-    if cid < 0 or not _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
+    if cid < 0 or not _contains_cell_from_xyz(cid, x, y, z, plane_state):
         t = hi_in
         x = origin_xyz[0] + t * direction_xyz_unit[0]
         y = origin_xyz[1] + t * direction_xyz_unit[1]
         z = origin_xyz[2] + t * direction_xyz_unit[2]
         r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
         cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
-    if cid < 0 or not _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
-        return False, t_start, -1, x, y, z
-    return True, t, cid, x, y, z
+    if cid < 0 or not _contains_cell_from_xyz(cid, x, y, z, plane_state):
+        return False, t_start, -1, x, y, z, r, polar, azimuth
+    return True, t, cid, x, y, z, r, polar, azimuth
 
 
 @njit(cache=True)
@@ -588,7 +1152,8 @@ def _trace_segments_xyz_kernel(
     t_end: float,
     max_steps: int,
     boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
+    seed_lookup_state: CartesianLookupKernelState,
+    cell_lookup_state: CartesianLookupKernelState,
     topo_state: TopologicalKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
     """Trace one Cartesian ray; return `(n_seg, cell_ids, t_enter, t_exit)`."""
@@ -604,8 +1169,8 @@ def _trace_segments_xyz_kernel(
         direction_xyz_unit,
         t_start,
         t_end,
-        lookup_state.xyz_min,
-        lookup_state.xyz_max,
+        seed_lookup_state.xyz_min,
+        seed_lookup_state.xyz_max,
         boundary_tol,
     )
     if not clipped or t1_clip <= t0_clip:
@@ -625,13 +1190,16 @@ def _trace_segments_xyz_kernel(
         t,
         t_end,
         abs_eps,
-        lookup_state,
+        seed_lookup_state,
     )
     if not found or cid < 0:
         return 0, cell_ids, enters, exits
 
     current_node = int(topo_state.cell_to_node_id[cid])
     if current_node < 0:
+        return 0, cell_ids, enters, exits
+    cid = int(topo_state.node_cell_ids[current_node])
+    if cid < 0:
         return 0, cell_ids, enters, exits
 
     d0 = direction_xyz_unit[0]
@@ -645,30 +1213,30 @@ def _trace_segments_xyz_kernel(
         if t >= (t_end - abs_eps):
             break
 
-        if not _contains_xyz_from_state(cid, x, y, z, lookup_state):
+        if not _contains_xyz_from_state(cid, x, y, z, cell_lookup_state):
             break
 
         tx = _forward_face_exit_dt(
             x,
             d0,
-            lookup_state.cell_x_min[cid],
-            lookup_state.cell_x_max[cid],
+            cell_lookup_state.cell_x_min[cid],
+            cell_lookup_state.cell_x_max[cid],
             abs_eps,
             dir_eps,
         )
         ty = _forward_face_exit_dt(
             y,
             d1,
-            lookup_state.cell_y_min[cid],
-            lookup_state.cell_y_max[cid],
+            cell_lookup_state.cell_y_min[cid],
+            cell_lookup_state.cell_y_max[cid],
             abs_eps,
             dir_eps,
         )
         tz = _forward_face_exit_dt(
             z,
             d2,
-            lookup_state.cell_z_min[cid],
-            lookup_state.cell_z_max[cid],
+            cell_lookup_state.cell_z_min[cid],
+            cell_lookup_state.cell_z_max[cid],
             abs_eps,
             dir_eps,
         )
@@ -719,7 +1287,7 @@ def _trace_segments_xyz_kernel(
             y_next,
             z_next,
             topo_state,
-            lookup_state,
+            cell_lookup_state,
             candidate_nodes0,
             candidate_nodes1,
         )
@@ -737,7 +1305,7 @@ def _trace_segments_xyz_kernel(
                 y_next,
                 z_next,
                 topo_state,
-                lookup_state,
+                cell_lookup_state,
                 candidate_nodes0,
                 candidate_nodes1,
             )
@@ -762,11 +1330,12 @@ def _trace_segments_rpa_kernel(
     t_end: float,
     max_steps: int,
     boundary_tol: float,
-    lookup_state: SphericalLookupKernelState,
+    seed_lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
-    hexa_state: RpaHexaKernelState,
+    seed_plane_state: CellPlaneKernelState,
+    plane_state: CellPlaneKernelState,
 ) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace one Cartesian ray on spherical tree; return segment arrays."""
+    """Trace one Cartesian ray on a plane-bounded cell tree; return segment arrays."""
     cell_ids = np.empty(max_steps, dtype=np.int64)
     enters = np.empty(max_steps, dtype=np.float64)
     exits = np.empty(max_steps, dtype=np.float64)
@@ -775,20 +1344,23 @@ def _trace_segments_rpa_kernel(
         return 0, cell_ids, enters, exits
 
     abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
-    found, t, cid, x, y, z = _seek_first_cell_rpa(
+    found, t, cid, x, y, z, r, polar, azimuth = _seek_first_cell_rpa(
         origin_xyz,
         direction_xyz_unit,
         t_start,
         t_end,
         abs_eps,
-        lookup_state,
-        hexa_state,
+        seed_lookup_state,
+        seed_plane_state,
     )
     if not found or cid < 0:
         return 0, cell_ids, enters, exits
 
     current_node = int(topo_state.cell_to_node_id[cid])
     if current_node < 0:
+        return 0, cell_ids, enters, exits
+    cid = int(topo_state.node_cell_ids[current_node])
+    if cid < 0:
         return 0, cell_ids, enters, exits
 
     candidate_nodes0 = np.empty(_MAX_TOPOLOGY_CANDIDATES, dtype=np.int64)
@@ -801,10 +1373,10 @@ def _trace_segments_rpa_kernel(
         if t >= (t_end - abs_eps):
             break
 
-        if not _contains_rpa_hexa_from_xyz(cid, x, y, z, hexa_state):
+        if not _contains_cell_from_xyz(cid, x, y, z, plane_state):
             break
 
-        dt_exit, face_mask = _rpa_hexa_exit_dt_and_mask(
+        dt_exit, face_mask = _cell_exit_dt_and_mask(
             cid,
             x,
             y,
@@ -812,7 +1384,7 @@ def _trace_segments_rpa_kernel(
             d0,
             d1,
             d2,
-            hexa_state,
+            plane_state,
             abs_eps,
         )
         if not math.isfinite(dt_exit):
@@ -847,14 +1419,14 @@ def _trace_segments_rpa_kernel(
         x_next = origin_xyz[0] + t_next * d0
         y_next = origin_xyz[1] + t_next * d1
         z_next = origin_xyz[2] + t_next * d2
-        next_node, cid_next = _select_next_rpa_cell_from_topology(
+        next_node, cid_next = _select_next_cell_from_topology(
             current_node,
             face_mask,
             x_next,
             y_next,
             z_next,
             topo_state,
-            hexa_state,
+            plane_state,
             candidate_nodes0,
             candidate_nodes1,
         )
@@ -865,14 +1437,14 @@ def _trace_segments_rpa_kernel(
             x_next = origin_xyz[0] + t_next * d0
             y_next = origin_xyz[1] + t_next * d1
             z_next = origin_xyz[2] + t_next * d2
-            next_node, cid_next = _select_next_rpa_cell_from_topology(
+            next_node, cid_next = _select_next_cell_from_topology(
                 current_node,
                 face_mask,
                 x_next,
                 y_next,
                 z_next,
                 topo_state,
-                hexa_state,
+                plane_state,
                 candidate_nodes0,
                 candidate_nodes1,
             )
@@ -883,6 +1455,7 @@ def _trace_segments_rpa_kernel(
         x = x_next
         y = y_next
         z = z_next
+        r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
         cid = cid_next
         current_node = next_node
 
@@ -897,7 +1470,8 @@ def _segment_counts_xyz_kernel(
     t_end: float,
     max_steps: int,
     boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
+    seed_lookup_state: CartesianLookupKernelState,
+    cell_lookup_state: CartesianLookupKernelState,
     topo_state: TopologicalKernelState,
 ) -> np.ndarray:
     """Count traced segments for each ray on Cartesian trees."""
@@ -911,7 +1485,8 @@ def _segment_counts_xyz_kernel(
             t_end,
             max_steps,
             boundary_tol,
-            lookup_state,
+            seed_lookup_state,
+            cell_lookup_state,
             topo_state,
         )
         counts[i] = int(n_seg)
@@ -926,9 +1501,10 @@ def _segment_counts_rpa_kernel(
     t_end: float,
     max_steps: int,
     boundary_tol: float,
-    lookup_state: SphericalLookupKernelState,
+    seed_lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
-    hexa_state: RpaHexaKernelState,
+    seed_plane_state: CellPlaneKernelState,
+    plane_state: CellPlaneKernelState,
 ) -> np.ndarray:
     """Count traced segments for each ray on spherical trees."""
     n_rays = int(origins_xyz.shape[0])
@@ -941,9 +1517,10 @@ def _segment_counts_rpa_kernel(
             t_end,
             max_steps,
             boundary_tol,
-            lookup_state,
+            seed_lookup_state,
             topo_state,
-            hexa_state,
+            seed_plane_state,
+            plane_state,
         )
         counts[i] = int(n_seg)
     return counts
@@ -957,7 +1534,8 @@ def _fill_traces_xyz_kernel(
     t_end: float,
     max_steps: int,
     boundary_tol: float,
-    lookup_state: CartesianLookupKernelState,
+    seed_lookup_state: CartesianLookupKernelState,
+    cell_lookup_state: CartesianLookupKernelState,
     topo_state: TopologicalKernelState,
     ray_offsets: np.ndarray,
     out_cell_ids: np.ndarray,
@@ -974,7 +1552,8 @@ def _fill_traces_xyz_kernel(
             t_end,
             max_steps,
             boundary_tol,
-            lookup_state,
+            seed_lookup_state,
+            cell_lookup_state,
             topo_state,
         )
         base = int(ray_offsets[i])
@@ -992,9 +1571,10 @@ def _fill_traces_rpa_kernel(
     t_end: float,
     max_steps: int,
     boundary_tol: float,
-    lookup_state: SphericalLookupKernelState,
+    seed_lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
-    hexa_state: RpaHexaKernelState,
+    seed_plane_state: CellPlaneKernelState,
+    plane_state: CellPlaneKernelState,
     ray_offsets: np.ndarray,
     out_cell_ids: np.ndarray,
     out_t_enter: np.ndarray,
@@ -1010,9 +1590,10 @@ def _fill_traces_rpa_kernel(
             t_end,
             max_steps,
             boundary_tol,
-            lookup_state,
+            seed_lookup_state,
             topo_state,
-            hexa_state,
+            seed_plane_state,
+            plane_state,
         )
         base = int(ray_offsets[i])
         for j in range(int(n_seg)):
@@ -1063,11 +1644,12 @@ def _integrate_rays_xyz_kernel(
     max_steps: int,
     boundary_tol: float,
     scale: float,
-    trace_lookup_state: CartesianLookupKernelState,
+    seed_lookup_state: CartesianLookupKernelState,
+    cell_lookup_state: CartesianLookupKernelState,
     topo_state: TopologicalKernelState,
     interp_state: CartesianInterpKernelState,
 ) -> np.ndarray:
-    """Integrate fields along rays on Cartesian trees using midpoint segments."""
+    """Integrate fields along rays on Cartesian trees with 2-point Gauss segments."""
     n_rays = int(origins_xyz.shape[0])
     ncomp = int(interp_state.point_values_2d.shape[1])
     out = np.full((n_rays, ncomp), np.nan, dtype=np.float64)
@@ -1082,7 +1664,8 @@ def _integrate_rays_xyz_kernel(
             t_end,
             max_steps,
             boundary_tol,
-            trace_lookup_state,
+            seed_lookup_state,
+            cell_lookup_state,
             topo_state,
         )
         if n_seg <= 0:
@@ -1102,9 +1685,12 @@ def _integrate_rays_xyz_kernel(
             if dt <= 0.0:
                 continue
             tm = 0.5 * (ta + tb)
-            x = ox + tm * d0
-            y = oy + tm * d1
-            z = oz + tm * d2
+            th = 0.5 * dt
+            tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
+            tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
+            x = ox + tg0 * d0
+            y = oy + tg0 * d1
+            z = oz + tg0 * d2
             _trilinear_from_cell(
                 row,
                 int(cids[j]),
@@ -1113,7 +1699,19 @@ def _integrate_rays_xyz_kernel(
                 z,
                 interp_state,
             )
-            acc += row * dt
+            acc += row * th
+            x = ox + tg1 * d0
+            y = oy + tg1 * d1
+            z = oz + tg1 * d2
+            _trilinear_from_cell(
+                row,
+                int(cids[j]),
+                x,
+                y,
+                z,
+                interp_state,
+            )
+            acc += row * th
             used = True
         if used:
             out[i, :] = scale * acc
@@ -1131,12 +1729,13 @@ def _integrate_rays_rpa_kernel(
     max_steps: int,
     boundary_tol: float,
     scale: float,
-    trace_lookup_state: SphericalLookupKernelState,
+    seed_lookup_state: SphericalLookupKernelState,
     topo_state: TopologicalKernelState,
-    hexa_state: RpaHexaKernelState,
+    seed_plane_state: CellPlaneKernelState,
+    plane_state: CellPlaneKernelState,
     interp_state: SphericalInterpKernelState,
 ) -> np.ndarray:
-    """Integrate fields along rays on spherical trees using midpoint segments."""
+    """Integrate fields along rays on spherical trees with 2-point Gauss segments."""
     n_rays = int(origins_xyz.shape[0])
     ncomp = int(interp_state.point_values_2d.shape[1])
     out = np.full((n_rays, ncomp), np.nan, dtype=np.float64)
@@ -1151,9 +1750,10 @@ def _integrate_rays_rpa_kernel(
             t_end,
             max_steps,
             boundary_tol,
-            trace_lookup_state,
+            seed_lookup_state,
             topo_state,
-            hexa_state,
+            seed_plane_state,
+            plane_state,
         )
         if n_seg <= 0:
             if ncomp == 1:
@@ -1172,9 +1772,12 @@ def _integrate_rays_rpa_kernel(
             if dt <= 0.0:
                 continue
             tm = 0.5 * (ta + tb)
-            x = ox + tm * d0
-            y = oy + tm * d1
-            z = oz + tm * d2
+            th = 0.5 * dt
+            tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
+            tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
+            x = ox + tg0 * d0
+            y = oy + tg0 * d1
+            z = oz + tg0 * d2
             r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
             _trilinear_from_cell_rpa(
                 row,
@@ -1184,7 +1787,20 @@ def _integrate_rays_rpa_kernel(
                 azimuth,
                 interp_state,
             )
-            acc += row * dt
+            acc += row * th
+            x = ox + tg1 * d0
+            y = oy + tg1 * d1
+            z = oz + tg1 * d2
+            r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+            _trilinear_from_cell_rpa(
+                row,
+                int(cids[j]),
+                r,
+                polar,
+                azimuth,
+                interp_state,
+            )
+            acc += row * th
             used = True
         if used:
             out[i, :] = scale * acc
@@ -1247,29 +1863,68 @@ def _coerce_positive_int(name: str, value: int) -> int:
 class OctreeRayTracer:
     """Thin convenience wrapper around compiled ray tracing kernels."""
 
-    def __init__(self, tree: Octree) -> None:
+    def __init__(self, tree: Octree, *, maxdepth: int | None = None) -> None:
         """Bind one built octree."""
         self.tree = tree
+        self.maxdepth = _resolve_ray_maxdepth(tree, maxdepth)
         self._tree_coord = str(tree.tree_coord)
         dmin, dmax = tree.domain_bounds(coord="xyz")
         self._domain_xyz_min = np.asarray(dmin, dtype=float).reshape(3)
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
         _r_lo, r_hi = tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
-        self._lookup_state = tree.lookup.lookup_state
-        topology = getattr(tree, "_ray_topology_full", None)
-        if topology is None or int(topology.max_level) != int(tree.max_level):
-            topology = build_topological_neighborhood(tree, max_level=int(tree.max_level))
-            tree._ray_topology_full = topology
-        self._topology = topology
-        self._topology_state = topology.kernel_state
-        self._rpa_hexa_state = None
-        if self._tree_coord == "rpa":
-            hexa_state = getattr(tree, "_ray_rpa_hexa_state", None)
-            if hexa_state is None:
-                hexa_state = _build_rpa_hexa_kernel_state(tree)
-                tree._ray_rpa_hexa_state = hexa_state
-            self._rpa_hexa_state = hexa_state
+        self._seed_lookup_state = tree.lookup.lookup_state
+        plane_state = getattr(tree, "_ray_cell_plane_state", None)
+        if plane_state is None:
+            plane_state = _build_cell_plane_kernel_state(tree)
+            tree._ray_cell_plane_state = plane_state
+        self._seed_cell_plane_state = plane_state
+
+        if int(self.maxdepth) >= int(tree.depth):
+            topology = getattr(tree, "_ray_topology_full", None)
+            if topology is None or int(topology.max_level) != int(tree.max_level):
+                topology = build_topological_neighborhood(tree, max_level=int(tree.max_level))
+                tree._ray_topology_full = topology
+            self._topology = topology
+            self._topology_state = topology.kernel_state
+            if self._tree_coord == "xyz":
+                if not isinstance(self._seed_lookup_state, CartesianLookupKernelState):
+                    raise TypeError(
+                        "Cartesian ray tracing requires CartesianLookupKernelState; "
+                        f"got {type(self._seed_lookup_state).__name__}."
+                    )
+                self._cell_lookup_state = self._seed_lookup_state
+                self._cell_plane_state = None
+            elif self._tree_coord == "rpa":
+                self._cell_lookup_state = None
+                self._cell_plane_state = self._seed_cell_plane_state
+            else:
+                raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
+            self._ray_cell_geometry = None
+            return
+
+        geometry = _ray_cell_geometry_for_maxdepth(tree, int(self.maxdepth))
+        self._ray_cell_geometry = geometry
+        self._topology = None
+        self._topology_state = geometry.topology_state
+        if self._tree_coord == "xyz":
+            if not isinstance(geometry, CartesianRayCellGeometry):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianRayCellGeometry; "
+                    f"got {type(geometry).__name__}."
+                )
+            self._cell_lookup_state = geometry.lookup_state
+            self._cell_plane_state = None
+        elif self._tree_coord == "rpa":
+            if not isinstance(geometry, SphericalRayCellGeometry):
+                raise TypeError(
+                    "Spherical ray tracing requires SphericalRayCellGeometry; "
+                    f"got {type(geometry).__name__}."
+                )
+            self._cell_lookup_state = None
+            self._cell_plane_state = geometry.plane_state
+        else:
+            raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
 
     def trace(
         self,
@@ -1363,13 +2018,19 @@ class OctreeRayTracer:
                 np.empty((0,), dtype=float),
             )
 
-        lookup_state = self._lookup_state
         topo_state = self._topology_state
         if self._tree_coord == "xyz":
-            if not isinstance(lookup_state, CartesianLookupKernelState):
+            seed_lookup_state = self._seed_lookup_state
+            cell_lookup_state = self._cell_lookup_state
+            if not isinstance(seed_lookup_state, CartesianLookupKernelState):
                 raise TypeError(
                     "Cartesian ray tracing requires CartesianLookupKernelState; "
-                    f"got {type(lookup_state).__name__}."
+                    f"got {type(seed_lookup_state).__name__}."
+                )
+            if not isinstance(cell_lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
+                    f"got {type(cell_lookup_state).__name__}."
                 )
             n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
                 o,
@@ -1378,14 +2039,28 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                lookup_state,
+                seed_lookup_state,
+                cell_lookup_state,
                 topo_state,
             )
         elif self._tree_coord == "rpa":
-            if not isinstance(lookup_state, SphericalLookupKernelState):
+            seed_lookup_state = self._seed_lookup_state
+            seed_plane_state = self._seed_cell_plane_state
+            plane_state = self._cell_plane_state
+            if not isinstance(seed_lookup_state, SphericalLookupKernelState):
                 raise TypeError(
                     "Spherical ray tracing requires SphericalLookupKernelState; "
-                    f"got {type(lookup_state).__name__}."
+                    f"got {type(seed_lookup_state).__name__}."
+                )
+            if not isinstance(seed_plane_state, CellPlaneKernelState):
+                raise TypeError(
+                    "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
+                    f"got {type(seed_plane_state).__name__}."
+                )
+            if not isinstance(plane_state, CellPlaneKernelState):
+                raise TypeError(
+                    "Spherical ray tracing requires CellPlaneKernelState for active cells; "
+                    f"got {type(plane_state).__name__}."
                 )
             n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
                 o,
@@ -1394,9 +2069,10 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                lookup_state,
+                seed_lookup_state,
                 topo_state,
-                self._rpa_hexa_state,
+                seed_plane_state,
+                plane_state,
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -1432,11 +2108,17 @@ class OctreeRayTracer:
             sub = origins[start:stop]
             topo_state = self._topology_state
             if self._tree_coord == "xyz":
-                lookup_state = self._lookup_state
-                if not isinstance(lookup_state, CartesianLookupKernelState):
+                seed_lookup_state = self._seed_lookup_state
+                cell_lookup_state = self._cell_lookup_state
+                if not isinstance(seed_lookup_state, CartesianLookupKernelState):
                     raise TypeError(
                         "Cartesian ray tracing requires CartesianLookupKernelState; "
-                        f"got {type(lookup_state).__name__}."
+                        f"got {type(seed_lookup_state).__name__}."
+                    )
+                if not isinstance(cell_lookup_state, CartesianLookupKernelState):
+                    raise TypeError(
+                        "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
+                        f"got {type(cell_lookup_state).__name__}."
                     )
                 counts[start:stop] = _segment_counts_xyz_kernel(
                     sub,
@@ -1445,15 +2127,26 @@ class OctreeRayTracer:
                     t1,
                     int(max_steps),
                     float(boundary_tol),
-                    lookup_state,
+                    seed_lookup_state,
+                    cell_lookup_state,
                     topo_state,
                 )
             elif self._tree_coord == "rpa":
-                lookup_state = self._lookup_state
-                if not isinstance(lookup_state, SphericalLookupKernelState):
+                seed_lookup_state = self._seed_lookup_state
+                if not isinstance(seed_lookup_state, SphericalLookupKernelState):
                     raise TypeError(
                         "Spherical ray tracing requires SphericalLookupKernelState; "
-                        f"got {type(lookup_state).__name__}."
+                        f"got {type(seed_lookup_state).__name__}."
+                    )
+                if not isinstance(self._seed_cell_plane_state, CellPlaneKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
+                        f"got {type(self._seed_cell_plane_state).__name__}."
+                    )
+                if not isinstance(self._cell_plane_state, CellPlaneKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires CellPlaneKernelState for active cells; "
+                        f"got {type(self._cell_plane_state).__name__}."
                     )
                 counts[start:stop] = _segment_counts_rpa_kernel(
                     sub,
@@ -1462,9 +2155,10 @@ class OctreeRayTracer:
                     t1,
                     int(max_steps),
                     float(boundary_tol),
-                    lookup_state,
+                    seed_lookup_state,
                     topo_state,
-                    self._rpa_hexa_state,
+                    self._seed_cell_plane_state,
+                    self._cell_plane_state,
                 )
             else:
                 raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -1487,11 +2181,17 @@ class OctreeRayTracer:
         max_steps = _coerce_positive_int("max_steps", max_steps)
 
         if self._tree_coord == "xyz":
-            lookup_state = self._lookup_state
-            if not isinstance(lookup_state, CartesianLookupKernelState):
+            seed_lookup_state = self._seed_lookup_state
+            cell_lookup_state = self._cell_lookup_state
+            if not isinstance(seed_lookup_state, CartesianLookupKernelState):
                 raise TypeError(
                     "Cartesian ray tracing requires CartesianLookupKernelState; "
-                    f"got {type(lookup_state).__name__}."
+                    f"got {type(seed_lookup_state).__name__}."
+                )
+            if not isinstance(cell_lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
+                    f"got {type(cell_lookup_state).__name__}."
                 )
             counts = _segment_counts_xyz_kernel(
                 origins,
@@ -1500,15 +2200,26 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                lookup_state,
+                seed_lookup_state,
+                cell_lookup_state,
                 self._topology_state,
             )
         elif self._tree_coord == "rpa":
-            lookup_state = self._lookup_state
-            if not isinstance(lookup_state, SphericalLookupKernelState):
+            seed_lookup_state = self._seed_lookup_state
+            if not isinstance(seed_lookup_state, SphericalLookupKernelState):
                 raise TypeError(
                     "Spherical ray tracing requires SphericalLookupKernelState; "
-                    f"got {type(lookup_state).__name__}."
+                    f"got {type(seed_lookup_state).__name__}."
+                )
+            if not isinstance(self._seed_cell_plane_state, CellPlaneKernelState):
+                raise TypeError(
+                    "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
+                    f"got {type(self._seed_cell_plane_state).__name__}."
+                )
+            if not isinstance(self._cell_plane_state, CellPlaneKernelState):
+                raise TypeError(
+                    "Spherical ray tracing requires CellPlaneKernelState for active cells; "
+                    f"got {type(self._cell_plane_state).__name__}."
                 )
             counts = _segment_counts_rpa_kernel(
                 origins,
@@ -1517,9 +2228,10 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                lookup_state,
+                seed_lookup_state,
                 self._topology_state,
-                self._rpa_hexa_state,
+                self._seed_cell_plane_state,
+                self._cell_plane_state,
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -1539,7 +2251,8 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                self._lookup_state,
+                self._seed_lookup_state,
+                self._cell_lookup_state,
                 self._topology_state,
                 ray_offsets,
                 cell_ids,
@@ -1554,9 +2267,10 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                self._lookup_state,
+                self._seed_lookup_state,
                 self._topology_state,
-                self._rpa_hexa_state,
+                self._seed_cell_plane_state,
+                self._cell_plane_state,
                 ray_offsets,
                 cell_ids,
                 t_enter,
@@ -1569,11 +2283,25 @@ class OctreeRayTracer:
 class OctreeRayInterpolator:
     """Thin convenience wrapper around compiled ray integration kernels."""
 
-    def __init__(self, interpolator: "OctreeInterpolator") -> None:
+    def __init__(self, interpolator: "OctreeInterpolator", *, maxdepth: int | None = None) -> None:
         """Bind one interpolator and its tree."""
         self.interpolator = interpolator
         self.tree = interpolator.tree
-        self.ray_tracer = OctreeRayTracer(self.tree)
+        self.maxdepth = _resolve_ray_maxdepth(self.tree, maxdepth)
+        self.ray_tracer = OctreeRayTracer(self.tree, maxdepth=maxdepth)
+        if int(self.maxdepth) >= int(self.tree.depth):
+            self._interp_state_xyz = getattr(interpolator, "_interp_state_xyz", None)
+            self._interp_state_rpa = getattr(interpolator, "_interp_state_rpa", None)
+        else:
+            interp_state = _ray_interp_state_for_maxdepth(interpolator, int(self.maxdepth))
+            if isinstance(interp_state, CartesianInterpKernelState):
+                self._interp_state_xyz = interp_state
+                self._interp_state_rpa = None
+            elif isinstance(interp_state, SphericalInterpKernelState):
+                self._interp_state_xyz = None
+                self._interp_state_rpa = interp_state
+            else:
+                raise TypeError(f"Unsupported truncated interpolation state {type(interp_state).__name__}.")
 
     def sample(
         self,
@@ -1790,13 +2518,19 @@ class OctreeRayInterpolator:
             stop = min(n_rays, start + chunk)
             sub = origins[start:stop]
             if tree_coord == "xyz":
-                lookup_state = self.tree.lookup.lookup_state
-                if not isinstance(lookup_state, CartesianLookupKernelState):
+                seed_lookup_state = self.ray_tracer._seed_lookup_state
+                cell_lookup_state = self.ray_tracer._cell_lookup_state
+                if not isinstance(seed_lookup_state, CartesianLookupKernelState):
                     raise TypeError(
                         "Cartesian ray tracing requires CartesianLookupKernelState; "
-                        f"got {type(lookup_state).__name__}."
+                        f"got {type(seed_lookup_state).__name__}."
                     )
-                interp_state = self.interpolator._interp_state_xyz
+                if not isinstance(cell_lookup_state, CartesianLookupKernelState):
+                    raise TypeError(
+                        "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
+                        f"got {type(cell_lookup_state).__name__}."
+                    )
+                interp_state = self._interp_state_xyz
                 if not isinstance(interp_state, CartesianInterpKernelState):
                     raise TypeError(
                         "Cartesian ray interpolation requires CartesianInterpKernelState; "
@@ -1810,18 +2544,31 @@ class OctreeRayInterpolator:
                     int(max_steps),
                     float(boundary_tol),
                     float(scale),
-                    lookup_state,
+                    seed_lookup_state,
+                    cell_lookup_state,
                     topo_state,
                     interp_state,
                 )
             elif tree_coord == "rpa":
-                lookup_state = self.tree.lookup.lookup_state
-                if not isinstance(lookup_state, SphericalLookupKernelState):
+                seed_lookup_state = self.ray_tracer._seed_lookup_state
+                seed_plane_state = self.ray_tracer._seed_cell_plane_state
+                plane_state = self.ray_tracer._cell_plane_state
+                if not isinstance(seed_lookup_state, SphericalLookupKernelState):
                     raise TypeError(
                         "Spherical ray tracing requires SphericalLookupKernelState; "
-                        f"got {type(lookup_state).__name__}."
+                        f"got {type(seed_lookup_state).__name__}."
                     )
-                interp_state = self.interpolator._interp_state_rpa
+                if not isinstance(seed_plane_state, CellPlaneKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
+                        f"got {type(seed_plane_state).__name__}."
+                    )
+                if not isinstance(plane_state, CellPlaneKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires CellPlaneKernelState for active cells; "
+                        f"got {type(plane_state).__name__}."
+                    )
+                interp_state = self._interp_state_rpa
                 if not isinstance(interp_state, SphericalInterpKernelState):
                     raise TypeError(
                         "Spherical ray interpolation requires SphericalInterpKernelState; "
@@ -1835,9 +2582,10 @@ class OctreeRayInterpolator:
                     int(max_steps),
                     float(boundary_tol),
                     float(scale),
-                    lookup_state,
+                    seed_lookup_state,
                     topo_state,
-                    self.ray_tracer._rpa_hexa_state,
+                    seed_plane_state,
+                    plane_state,
                     interp_state,
                 )
             else:

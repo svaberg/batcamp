@@ -68,6 +68,72 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
     )
 
 
+def _build_single_cell_trilinear_dataset() -> _FakeDataset:
+    """Private test helper: one Cartesian cell with trilinear field `x*y`."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0], dtype=float),
+        y_edges=np.array([0.0, 1.0], dtype=float),
+        z_edges=np.array([0.0, 1.0], dtype=float),
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    return _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "TrilinearXY": x * y,
+        },
+    )
+
+
+def _build_depth1_cartesian_dataset() -> _FakeDataset:
+    """Private test helper: 2x2x2 Cartesian mesh on `[0, 2]^3`."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+        y_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+        z_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    return _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Curved": x * x + y + 0.5 * z,
+        },
+    )
+
+
+def _build_root_cartesian_dataset() -> _FakeDataset:
+    """Private test helper: one Cartesian root cell on `[0, 2]^3`."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 2.0], dtype=float),
+        y_edges=np.array([0.0, 2.0], dtype=float),
+        z_edges=np.array([0.0, 2.0], dtype=float),
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    return _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Curved": x * x + y + 0.5 * z,
+        },
+    )
+
+
 def test_sample_rejects_bad_args() -> None:
     """Ray sampling should reject non-positive sample count and zero direction."""
     ds = _build_fake_dataset()
@@ -207,6 +273,69 @@ def test_midpoint_matches_exact_for_linear_field() -> None:
         dtype=float,
     )
     assert np.allclose(midpoint, exact, atol=1e-8, rtol=1e-9)
+
+
+def test_direct_ray_integral_matches_exact_for_trilinear_field() -> None:
+    """Direct ray integral should match the exact value on a trilinear field."""
+    ds = _build_single_cell_trilinear_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(ds, ["TrilinearXY"], tree=tree)
+    ray = OctreeRayInterpolator(interp)
+
+    origin = np.array([0.0, 0.0, 0.5], dtype=float)
+    direction = np.array([1.0, 1.0, 0.0], dtype=float)
+    t0 = 0.0
+    t1 = float(np.sqrt(2.0))
+
+    direct = float(np.asarray(ray.integrate_field_along_rays(origin[None, :], direction, t0, t1), dtype=float)[0])
+    exact = float(np.sqrt(2.0) / 3.0)
+    assert np.isclose(direct, exact, rtol=1e-12, atol=1e-12)
+
+
+def test_cartesian_maxdepth_zero_matches_root_cell_interpolation() -> None:
+    """`maxdepth=0` should match one-root-cell interpolation on a depth-1 Cartesian mesh."""
+    fine = _build_depth1_cartesian_dataset()
+    coarse = _build_root_cartesian_dataset()
+    fine_interp = OctreeInterpolator(fine, ["Curved"], tree=Octree.from_dataset(fine, tree_coord="xyz"))
+    coarse_interp = OctreeInterpolator(coarse, ["Curved"], tree=Octree.from_dataset(coarse, tree_coord="xyz"))
+
+    cut = OctreeRayInterpolator(fine_interp, maxdepth=0)
+    root = OctreeRayInterpolator(coarse_interp)
+
+    origins = np.array(
+        [[0.0, 0.25, 0.25], [0.0, 1.25, 0.75], [0.0, 1.5, 1.5]],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    cut_vals = np.asarray(cut.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
+    root_vals = np.asarray(root.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
+    assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
+
+
+def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
+    """`maxdepth=0` should match one-root-cell interpolation on a depth-1 spherical mesh."""
+    fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
+    coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
+    fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
+    coarse_interp = OctreeInterpolator(coarse, ["Scalar"], tree=Octree.from_dataset(coarse, tree_coord="rpa"))
+
+    cut = OctreeRayInterpolator(fine_interp, maxdepth=0)
+    root = OctreeRayInterpolator(coarse_interp)
+
+    origins = np.array(
+        [[-2.1, -0.2, 0.2], [-2.1, 0.3, 0.1]],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    cut_counts = np.asarray(cut.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    root_counts = np.asarray(root.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    cut_vals = np.asarray(cut.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
+    root_vals = np.asarray(root.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
+
+    assert np.array_equal(cut_counts, root_counts)
+    assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
 
 
 def test_vector_integrals_shape_on_all_miss() -> None:
