@@ -8,7 +8,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [x] Add project URLs, classifiers, and keywords to `pyproject.toml`.
 - [x] Rename runtime imports from `starwinds_readplt` to `batread`.
 - [x] Declare `batread` as a runtime dependency in `pyproject.toml`.
-- [ ] Decide the minimum supported `batread` version and pin it as `batread>=...` instead of leaving it unversioned.
+- [x] Decide the minimum supported `batread` version and pin it as `batread>=...` instead of leaving it unversioned.
 - [ ] Decide whether `version = "0.1.0"` is the actual first PyPI release version or if it should be bumped before release.
 
 ## Repo hygiene
