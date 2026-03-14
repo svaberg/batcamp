@@ -410,6 +410,8 @@ def _save_four_panel_figure(
         pad = 1.12
         lo = lo_data / pad
         hi = hi_data * pad
+        # Keep boundary markers just inside the visible log-scaled frame.
+        lo_marker = lo * (10.0**0.015)
         r_mask = both_pos | plot0_only | plot1_only
         r_vals = pixel_r[r_mask].reshape(-1) if np.any(r_mask) else np.array([0.0], dtype=float)
         r_lo = float(np.min(r_vals))
@@ -435,7 +437,7 @@ def _save_four_panel_figure(
         if np.any(plot0_only):
             scatter_artist = axes[1, 0].scatter(
                 img0[plot0_only].reshape(-1),
-                np.full(int(np.count_nonzero(plot0_only)), lo, dtype=float),
+                np.full(int(np.count_nonzero(plot0_only)), lo_marker, dtype=float),
                 c=pixel_r[plot0_only].reshape(-1),
                 cmap="cividis",
                 norm=r_norm,
@@ -447,7 +449,7 @@ def _save_four_panel_figure(
             )
         if np.any(plot1_only):
             scatter_artist = axes[1, 0].scatter(
-                np.full(int(np.count_nonzero(plot1_only)), lo, dtype=float),
+                np.full(int(np.count_nonzero(plot1_only)), lo_marker, dtype=float),
                 img1[plot1_only].reshape(-1),
                 c=pixel_r[plot1_only].reshape(-1),
                 cmap="cividis",
