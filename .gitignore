@@ -9,4 +9,4 @@ build/
 dist/
 
 # Local copied data for demos/tests (not versioned)
-example_data/
+sample_data/

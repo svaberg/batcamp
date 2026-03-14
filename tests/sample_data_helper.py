@@ -19,8 +19,8 @@ def _unique_match(paths: list[Path], *, name: str) -> Path:
     return paths[0]
 
 
-def _find_in_example_data(root: Path, name: str) -> Path:
-    """Private test helper: find one file by basename under `example_data`."""
+def _find_in_sample_data(root: Path, name: str) -> Path:
+    """Private test helper: find one file by basename under `sample_data`."""
     return _unique_match(sorted(root.rglob(name)), name=name)
 
 
@@ -53,12 +53,12 @@ def data_file(name: str) -> Path:
     """Resolve one sample file by basename.
 
     Resolution order:
-    1. Find uniquely in this repo's `example_data` tree.
+    1. Find uniquely in this repo's `sample_data` tree.
     2. Fallback to Zenodo G2211 archive via `pooch`, then extract that one member.
     """
     root = Path(__file__).resolve().parents[1]
-    example_data_root = root / "example_data"
+    sample_data_root = root / "sample_data"
     try:
-        return _find_in_example_data(example_data_root, name)
+        return _find_in_sample_data(sample_data_root, name)
     except FileNotFoundError:
         return _fetch_from_g2211_archive(name)
