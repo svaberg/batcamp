@@ -42,6 +42,7 @@ _FACE_TRIPLES = (
     (0, 2, 3),
     (1, 2, 3),
 )
+_FACE_TRIPLES_ARRAY = np.asarray(_FACE_TRIPLES, dtype=np.int64)
 
 
 class CellPlaneKernelState(NamedTuple):
@@ -98,6 +99,7 @@ _ORDERED_FACE_CORNERS = (
     (0, 1, 2, 3),
     (4, 5, 6, 7),
 )
+_ORDERED_FACE_CORNERS_ARRAY = np.asarray(_ORDERED_FACE_CORNERS, dtype=np.int64)
 
 
 def _resolve_ray_maxdepth(tree: Octree, maxdepth: int | None) -> int:
@@ -292,45 +294,169 @@ def _ordered_spherical_corners_from_targets(
     return out
 
 
-def _build_plane_state_from_ordered_corners(
+@njit(cache=True, parallel=True)
+def _ordered_spherical_corners_from_targets_kernel(
+    points: np.ndarray,
+    corners: np.ndarray,
+    cell_r_min: np.ndarray,
+    cell_r_max: np.ndarray,
+    cell_theta_min: np.ndarray,
+    cell_theta_max: np.ndarray,
+    cell_phi_start: np.ndarray,
+    cell_phi_width: np.ndarray,
+) -> np.ndarray:
+    """Return ordered spherical corners for every cell from exact xyz corner targets."""
+    n_cells = int(corners.shape[0])
+    ordered = np.empty_like(corners)
+
+    for cid in prange(n_cells):
+        r0 = float(cell_r_min[cid])
+        r1 = float(cell_r_max[cid])
+        theta0 = float(cell_theta_min[cid])
+        theta1 = float(cell_theta_max[cid])
+        phi0 = float(cell_phi_start[cid])
+        phi1 = float(phi0 + cell_phi_width[cid])
+
+        for k in range(8):
+            r = r0 if (k & 1) == 0 else r1
+            theta = theta0 if ((k >> 1) & 1) == 0 else theta1
+            phi = phi0 if ((k >> 2) & 1) == 0 else phi1
+            s = math.sin(theta)
+            tx = r * s * math.cos(phi)
+            ty = r * s * math.sin(phi)
+            tz = r * math.cos(theta)
+
+            best_j = 0
+            best_d2 = math.inf
+            for j in range(8):
+                pid = int(corners[cid, j])
+                dx = float(points[pid, 0] - tx)
+                dy = float(points[pid, 1] - ty)
+                dz = float(points[pid, 2] - tz)
+                d2 = dx * dx + dy * dy + dz * dz
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_j = j
+            ordered[cid, k] = corners[cid, best_j]
+    return ordered
+
+
+@njit(cache=True, parallel=True)
+def _build_plane_state_from_ordered_corners_kernel(
     points: np.ndarray,
     corners: np.ndarray,
     centers: np.ndarray,
-) -> CellPlaneKernelState:
-    """Build plane faces from ordered hexahedron corner ids."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build face planes from ordered hexahedron corner ids."""
     n_cells = int(corners.shape[0])
     face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
     face_offsets = np.zeros((n_cells, 6), dtype=np.float64)
     face_valid = np.zeros((n_cells, 6), dtype=np.bool_)
     tiny = 1.0e-24
 
-    for cid in range(n_cells):
-        cell_pts = np.asarray(points[corners[cid]], dtype=float)
-        center = np.asarray(centers[cid], dtype=float)
-        for face, local_ids in enumerate(_ORDERED_FACE_CORNERS):
-            face_pts = np.asarray(cell_pts[np.asarray(local_ids, dtype=np.int64)], dtype=float)
+    for cid in prange(n_cells):
+        center0 = float(centers[cid, 0])
+        center1 = float(centers[cid, 1])
+        center2 = float(centers[cid, 2])
+
+        for face in range(6):
+            local0 = int(_ORDERED_FACE_CORNERS_ARRAY[face, 0])
+            local1 = int(_ORDERED_FACE_CORNERS_ARRAY[face, 1])
+            local2 = int(_ORDERED_FACE_CORNERS_ARRAY[face, 2])
+            local3 = int(_ORDERED_FACE_CORNERS_ARRAY[face, 3])
+
+            pid0 = int(corners[cid, local0])
+            pid1 = int(corners[cid, local1])
+            pid2 = int(corners[cid, local2])
+            pid3 = int(corners[cid, local3])
+
+            face_pts = np.empty((4, 3), dtype=np.float64)
+            face_pts[0, 0] = points[pid0, 0]
+            face_pts[0, 1] = points[pid0, 1]
+            face_pts[0, 2] = points[pid0, 2]
+            face_pts[1, 0] = points[pid1, 0]
+            face_pts[1, 1] = points[pid1, 1]
+            face_pts[1, 2] = points[pid1, 2]
+            face_pts[2, 0] = points[pid2, 0]
+            face_pts[2, 1] = points[pid2, 1]
+            face_pts[2, 2] = points[pid2, 2]
+            face_pts[3, 0] = points[pid3, 0]
+            face_pts[3, 1] = points[pid3, 1]
+            face_pts[3, 2] = points[pid3, 2]
+
             best_norm2 = -1.0
-            best_normal = np.zeros(3, dtype=float)
-            best_anchor = np.zeros(3, dtype=float)
-            for ia, ib, ic in _FACE_TRIPLES:
-                a = face_pts[ia]
-                b = face_pts[ib]
-                c = face_pts[ic]
-                normal = np.cross(b - a, c - a)
-                norm2 = float(np.dot(normal, normal))
+            best_nx = 0.0
+            best_ny = 0.0
+            best_nz = 0.0
+            best_ax = 0.0
+            best_ay = 0.0
+            best_az = 0.0
+
+            for triple in range(4):
+                ia = int(_FACE_TRIPLES_ARRAY[triple, 0])
+                ib = int(_FACE_TRIPLES_ARRAY[triple, 1])
+                ic = int(_FACE_TRIPLES_ARRAY[triple, 2])
+
+                ax = float(face_pts[ia, 0])
+                ay = float(face_pts[ia, 1])
+                az = float(face_pts[ia, 2])
+                bx = float(face_pts[ib, 0])
+                by = float(face_pts[ib, 1])
+                bz = float(face_pts[ib, 2])
+                cx = float(face_pts[ic, 0])
+                cy = float(face_pts[ic, 1])
+                cz = float(face_pts[ic, 2])
+
+                abx = bx - ax
+                aby = by - ay
+                abz = bz - az
+                acx = cx - ax
+                acy = cy - ay
+                acz = cz - az
+
+                nx = aby * acz - abz * acy
+                ny = abz * acx - abx * acz
+                nz = abx * acy - aby * acx
+                norm2 = nx * nx + ny * ny + nz * nz
                 if norm2 > best_norm2:
                     best_norm2 = norm2
-                    best_normal = normal
-                    best_anchor = a
+                    best_nx = nx
+                    best_ny = ny
+                    best_nz = nz
+                    best_ax = ax
+                    best_ay = ay
+                    best_az = az
+
             if best_norm2 <= tiny:
                 continue
-            best_normal = best_normal / math.sqrt(best_norm2)
-            if float(np.dot(best_normal, center - best_anchor)) > 0.0:
-                best_normal = -best_normal
-            face_normals[cid, face, :] = best_normal
-            face_offsets[cid, face] = float(np.dot(best_normal, best_anchor))
+
+            inv_norm = 1.0 / math.sqrt(best_norm2)
+            best_nx = best_nx * inv_norm
+            best_ny = best_ny * inv_norm
+            best_nz = best_nz * inv_norm
+
+            orient = best_nx * (center0 - best_ax) + best_ny * (center1 - best_ay) + best_nz * (center2 - best_az)
+            if orient > 0.0:
+                best_nx = -best_nx
+                best_ny = -best_ny
+                best_nz = -best_nz
+
+            face_normals[cid, face, 0] = best_nx
+            face_normals[cid, face, 1] = best_ny
+            face_normals[cid, face, 2] = best_nz
+            face_offsets[cid, face] = best_nx * best_ax + best_ny * best_ay + best_nz * best_az
             face_valid[cid, face] = True
 
+    return face_normals, face_offsets, face_valid
+
+
+def _build_plane_state_from_ordered_corners(
+    points: np.ndarray,
+    corners: np.ndarray,
+    centers: np.ndarray,
+) -> CellPlaneKernelState:
+    """Build plane faces from ordered hexahedron corner ids."""
+    face_normals, face_offsets, face_valid = _build_plane_state_from_ordered_corners_kernel(points, corners, centers)
     return CellPlaneKernelState(
         face_normals=face_normals,
         face_offsets=face_offsets,
@@ -359,19 +485,16 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
                 "Spherical cell-plane construction requires SphericalLookupKernelState; "
                 f"got {type(lookup_state).__name__}."
             )
-        ordered_corners = np.empty_like(corners)
-        for cid in range(n_cells):
-            point_ids = np.asarray(corners[cid], dtype=np.int64)
-            ordered_corners[cid, :] = _ordered_spherical_corners_from_targets(
-                point_ids,
-                np.asarray(points[point_ids], dtype=float),
-                float(lookup_state.cell_r_min[cid]),
-                float(lookup_state.cell_r_max[cid]),
-                float(lookup_state.cell_theta_min[cid]),
-                float(lookup_state.cell_theta_max[cid]),
-                float(lookup_state.cell_phi_start[cid]),
-                float(lookup_state.cell_phi_start[cid] + lookup_state.cell_phi_width[cid]),
-            )
+        ordered_corners = _ordered_spherical_corners_from_targets_kernel(
+            points,
+            corners,
+            np.asarray(lookup_state.cell_r_min, dtype=np.float64),
+            np.asarray(lookup_state.cell_r_max, dtype=np.float64),
+            np.asarray(lookup_state.cell_theta_min, dtype=np.float64),
+            np.asarray(lookup_state.cell_theta_max, dtype=np.float64),
+            np.asarray(lookup_state.cell_phi_start, dtype=np.float64),
+            np.asarray(lookup_state.cell_phi_width, dtype=np.float64),
+        )
         return _build_plane_state_from_ordered_corners(points, ordered_corners, centers)
 
     def _closest_four(values: np.ndarray, target: float, tol: float) -> np.ndarray:
