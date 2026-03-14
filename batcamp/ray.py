@@ -900,6 +900,7 @@ def _cell_exit_dt_and_mask(
     """Return forward exit distance and exited-face mask for one plane-bounded cell."""
     best_dt = np.inf
     face_mask = 0
+    boundary_mask = 0
     dir_eps = 1.0e-15
     tie_tol = max(4.0 * abs_eps, 1.0e-12)
     for face in range(6):
@@ -910,11 +911,13 @@ def _cell_exit_dt_and_mask(
         nz = plane_state.face_normals[cid, face, 2]
         offset = plane_state.face_offsets[cid, face]
         signed = nx * x + ny * y + nz * z - offset
+        denom = nx * d0 + ny * d1 + nz * d2
         if signed > tie_tol:
             return np.inf, 0
+        if signed >= -tie_tol and denom > dir_eps:
+            boundary_mask |= 1 << face
         if signed > 0.0:
             signed = 0.0
-        denom = nx * d0 + ny * d1 + nz * d2
         if denom <= dir_eps:
             continue
         dt = -signed / denom
@@ -925,6 +928,8 @@ def _cell_exit_dt_and_mask(
             face_mask = 1 << face
         elif abs(dt - best_dt) <= tie_tol:
             face_mask |= 1 << face
+    if boundary_mask != 0:
+        face_mask |= boundary_mask
     return best_dt, face_mask
 
 
