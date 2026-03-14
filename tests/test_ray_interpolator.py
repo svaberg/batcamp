@@ -313,6 +313,29 @@ def test_cartesian_maxdepth_zero_matches_root_cell_interpolation() -> None:
     assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
 
 
+def test_cartesian_maxdepth_full_matches_default() -> None:
+    """Full-depth Cartesian `maxdepth` should match the default ray path exactly."""
+    fine = _build_depth1_cartesian_dataset()
+    interp = OctreeInterpolator(fine, ["Curved"], tree=Octree.from_dataset(fine, tree_coord="xyz"))
+
+    default = OctreeRayInterpolator(interp)
+    full = OctreeRayInterpolator(interp, maxdepth=int(interp.tree.depth))
+
+    origins = np.array(
+        [[0.0, 0.25, 0.25], [0.0, 1.25, 0.75], [0.0, 1.5, 1.5]],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    default_counts = np.asarray(default.segment_counts(origins, direction, 0.0, 2.0), dtype=np.int64)
+    full_counts = np.asarray(full.segment_counts(origins, direction, 0.0, 2.0), dtype=np.int64)
+    default_vals = np.asarray(default.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
+    full_vals = np.asarray(full.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
+
+    assert np.array_equal(default_counts, full_counts)
+    assert np.allclose(default_vals, full_vals, atol=1e-12, rtol=1e-12)
+
+
 def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
     """`maxdepth=0` should match one-root-cell interpolation on a depth-1 spherical mesh."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
@@ -336,6 +359,29 @@ def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
 
     assert np.array_equal(cut_counts, root_counts)
     assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
+
+
+def test_spherical_maxdepth_full_matches_default() -> None:
+    """Full-depth spherical `maxdepth` should match the default ray path exactly."""
+    fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
+    interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
+
+    default = OctreeRayInterpolator(interp)
+    full = OctreeRayInterpolator(interp, maxdepth=int(interp.tree.depth))
+
+    origins = np.array(
+        [[-2.1, -0.2, 0.2], [-2.1, 0.3, 0.1]],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    default_counts = np.asarray(default.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    full_counts = np.asarray(full.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    default_vals = np.asarray(default.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
+    full_vals = np.asarray(full.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
+
+    assert np.array_equal(default_counts, full_counts)
+    assert np.allclose(default_vals, full_vals, atol=1e-12, rtol=1e-12)
 
 
 def test_vector_integrals_shape_on_all_miss() -> None:
