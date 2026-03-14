@@ -23,7 +23,7 @@
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
 - [x] Fix Cartesian ray boundary-start behavior in compiled kernels (`_trace_segments_xyz_kernel`, `_integrate_xyz_scalar_exact_kernel`, `_integrate_xyz_scalar_midpoint_kernel`) so outward rays starting on a face do not integrate/trace as interior; add regression tests.
-- [x] Add missing runtime dependency declaration for `starwinds-readplt` in `pyproject.toml` to match imports from core modules.
+- [x] Add missing runtime dependency declaration for `batread` in `pyproject.toml` to match imports from core modules.
 - [ ] Expand `[project.optional-dependencies].tests` to include non-pytest test imports (at least `pooch`) and verify tests run in a clean `. [tests]` environment.
 - [ ] Investigate and suppress/resolve intermittent runtime warning: `OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.`
 - [ ] Investigate and suppress/resolve notebook warning from `tqdm.auto`: `TqdmWarning: IProgress not found. Please update jupyter and ipywidgets.`

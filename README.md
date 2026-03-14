@@ -18,14 +18,14 @@ Install with `pip`:
 ```bash
 pip install batcamp
 ```
-The examples below use `starwinds_readplt` to read BATSRUS/Tecplot files; install that loader separately if needed.
+The examples below use `batread` to read BATSRUS/Tecplot files; install that loader separately if needed.
 
 The following code plots a two dimensional density slice.
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
 
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 from batcamp import OctreeInterpolator
 
 # Read the dataset

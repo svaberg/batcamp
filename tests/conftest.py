@@ -2,7 +2,7 @@ from functools import lru_cache
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree

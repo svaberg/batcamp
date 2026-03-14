@@ -14,7 +14,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.colors import Normalize
 import numpy as np
 import pooch
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
