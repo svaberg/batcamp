@@ -19,6 +19,8 @@ from batread.dataset import Dataset
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
+from batcamp.topological import build_topological_neighborhood
+from batcamp.topological import TopologicalNeighborhood
 
 
 _G2211_URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
@@ -93,6 +95,64 @@ def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> Oct
     tree = Octree.from_dataset(ds)
     tree.save(cache_path)
     return tree
+
+
+def _topology_cache_path(cache_root: Path, data_path: Path) -> Path:
+    """Return one persistent topology cache path keyed by file contents."""
+    stat = data_path.stat()
+    cache_name = f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}.topology.npz"
+    return cache_root / cache_name
+
+
+def _load_topology_cache(path: Path) -> TopologicalNeighborhood:
+    """Load one cached full-depth topology graph."""
+    with np.load(path, allow_pickle=False) as data:
+        return TopologicalNeighborhood(
+            levels=np.asarray(data["levels"], dtype=np.int64),
+            i0=np.asarray(data["i0"], dtype=np.int64),
+            i1=np.asarray(data["i1"], dtype=np.int64),
+            i2=np.asarray(data["i2"], dtype=np.int64),
+            face_counts=np.asarray(data["face_counts"], dtype=np.int64),
+            face_offsets=np.asarray(data["face_offsets"], dtype=np.int64),
+            face_neighbors=np.asarray(data["face_neighbors"], dtype=np.int64),
+            node_cell_ids=np.asarray(data["node_cell_ids"], dtype=np.int64),
+            cell_to_node_id=np.asarray(data["cell_to_node_id"], dtype=np.int64),
+            min_level=int(data["min_level"]),
+            max_level=int(data["max_level"]),
+            periodic_i2=bool(int(data["periodic_i2"])),
+        )
+
+
+def _save_topology_cache(path: Path, topo: TopologicalNeighborhood) -> None:
+    """Persist one full-depth topology graph."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        levels=np.asarray(topo.levels, dtype=np.int64),
+        i0=np.asarray(topo.i0, dtype=np.int64),
+        i1=np.asarray(topo.i1, dtype=np.int64),
+        i2=np.asarray(topo.i2, dtype=np.int64),
+        face_counts=np.asarray(topo.face_counts, dtype=np.int64),
+        face_offsets=np.asarray(topo.face_offsets, dtype=np.int64),
+        face_neighbors=np.asarray(topo.face_neighbors, dtype=np.int64),
+        node_cell_ids=np.asarray(topo.node_cell_ids, dtype=np.int64),
+        cell_to_node_id=np.asarray(topo.cell_to_node_id, dtype=np.int64),
+        min_level=np.int64(topo.min_level),
+        max_level=np.int64(topo.max_level),
+        periodic_i2=np.int8(1 if topo.periodic_i2 else 0),
+    )
+
+
+def _load_or_build_full_topology(tree: Octree, data_path: Path, cache_root: Path) -> TopologicalNeighborhood:
+    """Load one cached full-depth topology graph or build and persist it once."""
+    cache_path = _topology_cache_path(cache_root, data_path)
+    if cache_path.exists():
+        topo = _load_topology_cache(cache_path)
+    else:
+        topo = build_topological_neighborhood(tree, max_level=int(tree.max_level))
+        _save_topology_cache(cache_path, topo)
+    tree._ray_topology_full = topo
+    return topo
 
 
 def parse_resolutions(raw: str) -> list[int]:
@@ -477,6 +537,7 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parent
     out_root = (repo_root / args.output_dir).resolve()
     cache_root = (repo_root / "build" / "resampling_compare_octree_cache").resolve()
+    topology_cache_root = (repo_root / "build" / "resampling_compare_topology_cache").resolve()
 
     cases = [
         DatasetCase("example", "3d__var_1_n00000000.plt"),
@@ -495,6 +556,7 @@ def main() -> None:
         data_path = resolve_data_file(repo_root, case.file_name)
         ds = Dataset.from_file(str(data_path))
         tree = _load_or_build_octree(ds, data_path, cache_root)
+        _load_or_build_full_topology(tree, data_path, topology_cache_root)
         interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
         ray = OctreeRayInterpolator(interp)
 
