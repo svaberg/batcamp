@@ -24,7 +24,7 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-  "batread>=1.0",
+  "batread>=1.0.0",
   "numpy",
   "numba",
 ]
