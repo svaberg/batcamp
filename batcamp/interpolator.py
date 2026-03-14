@@ -348,9 +348,6 @@ class OctreeInterpolator:
       Cartesian uses normalized `(x, y, z)` from per-cell axis-aligned min/max.
     - Evaluate trilinear interpolation from the 8 corner nodes of that cell.
 
-    Ray methods additionally split cells into a fixed 6-tet decomposition and
-    produce piecewise-linear functions along the ray.
-
     Note:
     - For ``tree_coord="xyz"``, Cartesian cell geometry is treated as
       axis-aligned boxes; skewed/non-axis-aligned cells are not modeled exactly.

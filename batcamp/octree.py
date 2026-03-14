@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Core octree data structures and shared lookup/ray utilities."""
+"""Core octree data structures and shared lookup utilities."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> T
 
 @dataclass
 class Octree:
-    """Adaptive octree summary plus bound lookup/ray-query entrypoints.
+    """Adaptive octree summary plus bound lookup entrypoints.
 
     `level_counts` rows are
     `(level, leaf_count, fine_equivalent_count)`.
@@ -152,7 +152,7 @@ class Octree:
         *,
         axis_rho_tol: float | None = None,
     ) -> None:
-        """Attach a dataset to this tree so lookup and ray methods can run."""
+        """Attach a dataset to this tree so lookup methods can run."""
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")
         next_axis_rho_tol = float(self.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
