@@ -45,7 +45,7 @@ license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
 addopts = "-m 'not slow'"
-pythonpath = ["tests"]
+pythonpath = [".", "tests"]
 markers = [
   "slow: expensive tests excluded from the default unit-test run",
   "design_lockin: implementation-locking tests",
