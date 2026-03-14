@@ -147,3 +147,72 @@ def test_example_specific_failing_ray_trace_midpoints_match_lookup() -> None:
         hit = tree.lookup_point(origin + float(t_mid) * direction, coord="xyz")
         assert hit is not None
         assert int(hit.cell_id) == int(cell_id)
+
+
+def _plane_lookup_cell_ids(tracer: OctreeRayTracer, point_xyz: np.ndarray) -> np.ndarray:
+    """Private test helper: brute-force plane-cell lookup in xyz."""
+    plane = tracer._cell_plane_state
+    assert plane is not None
+    p = np.asarray(point_xyz, dtype=float).reshape(3)
+    signed = np.einsum("cfi,i->cf", plane.face_normals, p) - plane.face_offsets
+    inside = np.all((~plane.face_valid) | (signed <= 1.0e-10), axis=1)
+    return np.flatnonzero(inside).astype(np.int64)
+
+
+def _plane_oracle_sequence(
+    tracer: OctreeRayTracer,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    t_end: float,
+    *,
+    n_samples: int,
+) -> list[int]:
+    """Private test helper: sample the xyz plane model and compress cell ids."""
+    d = np.asarray(direction_xyz, dtype=float).reshape(3)
+    d = d / np.linalg.norm(d)
+    seq: list[int] = []
+    for t in np.linspace(0.0, float(t_end), int(n_samples), dtype=float):
+        ids = _plane_lookup_cell_ids(tracer, np.asarray(origin_xyz, dtype=float) + float(t) * d)
+        cid = int(ids[0]) if ids.size == 1 else -1
+        if cid >= 0 and (not seq or seq[-1] != cid):
+            seq.append(cid)
+    return seq
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        np.array([-48.000096, 3.2, -41.6], dtype=float),
+        np.array([-48.000096, 41.6, 22.4], dtype=float),
+    ],
+)
+def test_example_specific_rays_match_xyz_plane_oracle(origin: np.ndarray) -> None:
+    """Provided example: traced cell sequence should match the xyz plane-cell oracle."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_dataset(ds)
+    tracer = OctreeRayTracer(tree)
+
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    dmin, dmax = tree.domain_bounds(coord="xyz")
+    t_end = float((float(dmax[0]) - float(origin[0])) * 0.999999)
+
+    traced = [int(c) for c in tracer.trace(origin, direction, 0.0, t_end)[0]]
+    oracle = _plane_oracle_sequence(tracer, origin, direction, t_end, n_samples=4001)
+    assert traced == oracle
+
+
+def test_example_zero_ray_is_empty_in_xyz_plane_oracle() -> None:
+    """Provided example: a zero-output ray should also be empty in xyz plane geometry."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_dataset(ds)
+    tracer = OctreeRayTracer(tree)
+
+    origin = np.array([-48.000096, -23.225806451612904, -41.806451612903224], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    dmin, dmax = tree.domain_bounds(coord="xyz")
+    t_end = float((float(dmax[0]) - float(origin[0])) * 0.999999)
+
+    traced = [int(c) for c in tracer.trace(origin, direction, 0.0, t_end)[0]]
+    oracle = _plane_oracle_sequence(tracer, origin, direction, t_end, n_samples=1001)
+    assert traced == []
+    assert oracle == []
