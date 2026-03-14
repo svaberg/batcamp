@@ -37,12 +37,14 @@ Issues = "https://github.com/svaberg/batcamp/issues"
 [project.optional-dependencies]
 tests = [
   "pytest",
+  "pytest-cov",
   "pooch",
   "nbclient",
   "nbformat",
   "ipykernel",
   "matplotlib",
   "scipy",
+  "vulture",
 ]
 examples = [
   "scipy",
