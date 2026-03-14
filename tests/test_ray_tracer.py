@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from batread.dataset import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeRayTracer
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from sample_data_helper import data_file
 
 
 def _build_regular_fake_dataset(
@@ -122,3 +124,26 @@ def test_zero_direction_raises() -> None:
             t_start=0.0,
             t_end=1.0,
         )
+
+
+def test_example_specific_failing_ray_trace_midpoints_match_lookup() -> None:
+    """Provided example: traced segments should stay on oracle cells for the bad 16x16 ray."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_dataset(ds)
+    tracer = OctreeRayTracer(tree)
+
+    origin = np.array([-48.000096, 3.2, -41.6], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    dmin, dmax = tree.domain_bounds(coord="xyz")
+    t_end = float((float(dmax[0]) - origin[0]) * 0.999999)
+
+    cell_ids, enters, exits = tracer.trace(origin, direction, 0.0, t_end)
+
+    assert cell_ids.size > 0
+    if cell_ids.size > 1:
+        assert np.all(cell_ids[1:] != cell_ids[:-1])
+    midpoints = 0.5 * (enters + exits)
+    for cell_id, t_mid in zip(cell_ids, midpoints, strict=True):
+        hit = tree.lookup_point(origin + float(t_mid) * direction, coord="xyz")
+        assert hit is not None
+        assert int(hit.cell_id) == int(cell_id)
