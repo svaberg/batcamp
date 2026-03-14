@@ -21,7 +21,7 @@ class FakeDataset:
         self.variables = list(variables.keys())
         self.aux = {} if aux is None else dict(aux)
 
-    def variable(self, name: str) -> np.ndarray:
+    def __getitem__(self, name: str) -> np.ndarray:
         """Return one variable array by name."""
         return self._variables[name]
 

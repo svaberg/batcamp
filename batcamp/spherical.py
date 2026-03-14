@@ -194,9 +194,9 @@ class _SphericalCellLookup:
         self._corners = np.array(corners, dtype=np.int64)
         self._points = np.column_stack(
             (
-                np.array(ds.variable(Octree.X_VAR), dtype=float),
-                np.array(ds.variable(Octree.Y_VAR), dtype=float),
-                np.array(ds.variable(Octree.Z_VAR), dtype=float),
+                np.array(ds[Octree.X_VAR], dtype=float),
+                np.array(ds[Octree.Y_VAR], dtype=float),
+                np.array(ds[Octree.Z_VAR], dtype=float),
             )
         )
         self._cell_centers = np.mean(self._points[self._corners], axis=1)
