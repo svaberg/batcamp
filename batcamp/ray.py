@@ -353,9 +353,26 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     tiny = 1.0e-24
     tree_coord = str(tree.tree_coord)
 
-    point_r = np.linalg.norm(points, axis=1)
-    point_theta = np.arccos(np.clip(points[:, 2] / np.maximum(point_r, np.finfo(float).tiny), -1.0, 1.0))
-    point_phi = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
+    if tree_coord == "rpa":
+        if not isinstance(lookup_state, SphericalLookupKernelState):
+            raise TypeError(
+                "Spherical cell-plane construction requires SphericalLookupKernelState; "
+                f"got {type(lookup_state).__name__}."
+            )
+        ordered_corners = np.empty_like(corners)
+        for cid in range(n_cells):
+            point_ids = np.asarray(corners[cid], dtype=np.int64)
+            ordered_corners[cid, :] = _ordered_spherical_corners_from_targets(
+                point_ids,
+                np.asarray(points[point_ids], dtype=float),
+                float(lookup_state.cell_r_min[cid]),
+                float(lookup_state.cell_r_max[cid]),
+                float(lookup_state.cell_theta_min[cid]),
+                float(lookup_state.cell_theta_max[cid]),
+                float(lookup_state.cell_phi_start[cid]),
+                float(lookup_state.cell_phi_start[cid] + lookup_state.cell_phi_width[cid]),
+            )
+        return _build_plane_state_from_ordered_corners(points, ordered_corners, centers)
 
     def _closest_four(values: np.ndarray, target: float, tol: float) -> np.ndarray:
         mask = np.abs(values - target) <= tol
@@ -364,13 +381,6 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
             return idx
         order = np.argsort(np.abs(values - target))
         return np.asarray(order[:4], dtype=np.int64)
-
-    def _unwrap_cell_phi(phi_values: np.ndarray, start: float, width: float) -> np.ndarray:
-        center = start + 0.5 * width
-        out = np.array(phi_values, dtype=float, copy=True)
-        out[out < (center - math.pi)] += 2.0 * math.pi
-        out[out > (center + math.pi)] -= 2.0 * math.pi
-        return out
 
     for cid in range(n_cells):
         cell_pts = np.asarray(points[corners[cid]], dtype=float)
@@ -395,32 +405,6 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
                 _closest_four(cy, float(lookup_state.cell_y_max[cid]), ty),
                 _closest_four(cz, float(lookup_state.cell_z_min[cid]), tz),
                 _closest_four(cz, float(lookup_state.cell_z_max[cid]), tz),
-            )
-        elif tree_coord == "rpa":
-            if not isinstance(lookup_state, SphericalLookupKernelState):
-                raise TypeError(
-                    "Spherical cell-plane construction requires SphericalLookupKernelState; "
-                    f"got {type(lookup_state).__name__}."
-                )
-            cr = point_r[cell_corner_ids]
-            ctheta = point_theta[cell_corner_ids]
-            cphi = _unwrap_cell_phi(
-                point_phi[cell_corner_ids],
-                float(lookup_state.cell_phi_start[cid]),
-                float(lookup_state.cell_phi_width[cid]),
-            )
-            tr = max(1e-10, 1e-8 * float(lookup_state.cell_r_max[cid] - lookup_state.cell_r_min[cid]))
-            tt = max(1e-10, 1e-8 * float(lookup_state.cell_theta_max[cid] - lookup_state.cell_theta_min[cid]))
-            tp = max(1e-10, 1e-8 * float(lookup_state.cell_phi_width[cid]))
-            phi_lo = float(lookup_state.cell_phi_start[cid])
-            phi_hi = phi_lo + float(lookup_state.cell_phi_width[cid])
-            face_corner_sets = (
-                _closest_four(cr, float(lookup_state.cell_r_min[cid]), tr),
-                _closest_four(cr, float(lookup_state.cell_r_max[cid]), tr),
-                _closest_four(ctheta, float(lookup_state.cell_theta_min[cid]), tt),
-                _closest_four(ctheta, float(lookup_state.cell_theta_max[cid]), tt),
-                _closest_four(cphi, phi_lo, tp),
-                _closest_four(cphi, phi_hi, tp),
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
@@ -973,7 +957,7 @@ def _candidate_nodes_after_exit(
     work0: np.ndarray,
     work1: np.ndarray,
 ) -> tuple[int, int]:
-    """Return nodes reachable across any non-empty subset of exited faces."""
+    """Return next nodes reachable across any non-empty subset of exited faces."""
     work0[0] = int(current_node_id)
     n_reachable = 1
     for face in range(6):
@@ -982,7 +966,14 @@ def _candidate_nodes_after_exit(
         n_new = _expand_topology_nodes_for_face(work0, n_reachable, face, topo_state, work1)
         for i in range(n_new):
             n_reachable = _append_unique_node(work0, n_reachable, int(work1[i]))
-    return n_reachable, 0
+    n_candidates = 0
+    for i in range(n_reachable):
+        node_id = int(work0[i])
+        if node_id == int(current_node_id):
+            continue
+        work0[n_candidates] = node_id
+        n_candidates += 1
+    return n_candidates, 0
 
 
 @njit(cache=True)
