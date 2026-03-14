@@ -39,7 +39,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 ## Release execution
 
 - [x] Decide how publishing will happen: manual `twine upload`.
-- [ ] Make sure the PyPI token or other `twine` credentials are ready before the release tag is pushed.
+- [x] Make sure the PyPI token or other `twine` credentials are ready before the release tag is pushed.
 - [ ] Upload to TestPyPI first.
 - [ ] In a fresh environment, verify `pip install -i https://test.pypi.org/simple batcamp` works as expected.
 - [ ] Upload the same validated artifacts to PyPI.
