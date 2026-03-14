@@ -18,7 +18,7 @@ Install with `pip`:
 ```bash
 pip install batcamp
 ```
-The examples below use `batread` to read BATSRUS/Tecplot files; install that loader separately if needed.
+The examples below use `batread` to read BATSRUS/Tecplot files.
 
 The following code plots a two dimensional density slice.
 ```python
