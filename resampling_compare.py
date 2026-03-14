@@ -529,8 +529,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compare 3D grid-sum vs ray integration resampling.")
     parser.add_argument(
         "--resolutions",
-        default="2,4,8,16,32,64,128,256",
-        help="Comma-separated plane resolutions (default: 2,4,8,16,32,64,128,256).",
+        default="8,16,32,64,128,256,512,1024",
+        help="Comma-separated plane resolutions (default: 8,16,32,64,128,256,512,1024).",
     )
     parser.add_argument(
         "--nx-sum",
