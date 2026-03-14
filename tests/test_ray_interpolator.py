@@ -6,6 +6,7 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
+from batcamp.ray import _ray_cell_geometry_for_maxdepth
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -132,6 +133,12 @@ def _build_root_cartesian_dataset() -> _FakeDataset:
             "Curved": x * x + y + 0.5 * z,
         },
     )
+
+
+def _corner_point_multiset(points: np.ndarray, corner_ids: np.ndarray) -> tuple[tuple[float, float, float], ...]:
+    """Private test helper: canonical corner-point multiset with duplicates preserved."""
+    pts = np.asarray(points[np.asarray(corner_ids, dtype=np.int64)], dtype=float)
+    return tuple(sorted(tuple(np.round(p, 12)) for p in pts))
 
 
 def test_sample_rejects_bad_args() -> None:
@@ -359,6 +366,19 @@ def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
 
     assert np.array_equal(cut_counts, root_counts)
     assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
+
+
+def test_spherical_maxdepth_zero_geometry_matches_root_cells() -> None:
+    """Spherical `maxdepth=0` geometry should reproduce the true root-cell corners."""
+    fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
+    coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
+    tree = Octree.from_dataset(fine, tree_coord="rpa")
+    geometry = _ray_cell_geometry_for_maxdepth(tree, 0)
+
+    grouped = sorted(_corner_point_multiset(fine.points, geometry.corners[node_id]) for node_id in range(8))
+    root = sorted(_corner_point_multiset(coarse.points, coarse.corners[cell_id]) for cell_id in range(8))
+
+    assert grouped == root
 
 
 def test_spherical_maxdepth_full_matches_default() -> None:
