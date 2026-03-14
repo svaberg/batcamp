@@ -34,7 +34,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [x] Make the README use the `batread` import path in examples.
 - [x] Update `environment.yml` to install `batread` from PyPI instead of a Git URL.
 - [x] Read the rendered README once more with PyPI in mind and make sure the install instructions still match the final dependency story.
-- [ ] Make sure any notebooks or examples you expect users to copy still run with the published dependency names.
+- [x] Make sure any notebooks or examples you expect users to copy still run with the published dependency names.
 
 ## Release execution
 
