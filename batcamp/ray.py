@@ -2039,11 +2039,7 @@ class OctreeRayTracer:
         _r_lo, r_hi = tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
         self._seed_lookup_state = tree.lookup.lookup_state
-        plane_state = getattr(tree, "_ray_cell_plane_state", None)
-        if plane_state is None:
-            plane_state = _build_cell_plane_kernel_state(tree)
-            tree._ray_cell_plane_state = plane_state
-        self._seed_cell_plane_state = plane_state
+        self._seed_cell_plane_state = None
 
         if int(self.maxdepth) >= int(tree.depth):
             topology = getattr(tree, "_ray_topology_full", None)
@@ -2061,6 +2057,11 @@ class OctreeRayTracer:
                 self._cell_lookup_state = self._seed_lookup_state
                 self._cell_plane_state = None
             elif self._tree_coord == "rpa":
+                plane_state = getattr(tree, "_ray_cell_plane_state", None)
+                if plane_state is None:
+                    plane_state = _build_cell_plane_kernel_state(tree)
+                    tree._ray_cell_plane_state = plane_state
+                self._seed_cell_plane_state = plane_state
                 self._cell_lookup_state = None
                 self._cell_plane_state = self._seed_cell_plane_state
             else:
