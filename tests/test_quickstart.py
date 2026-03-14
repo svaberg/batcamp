@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from batcamp import Octree, OctreeInterpolator
 from batcamp.interpolator import _infer_tree_coord_from_geometry

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import numpy as np
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive

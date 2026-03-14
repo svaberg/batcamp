@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator

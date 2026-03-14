@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import pytest
-from starwinds_readplt.dataset import Dataset
+from batread.dataset import Dataset
 
 from batcamp import Octree
 from batcamp.topological import build_topological_neighborhood
