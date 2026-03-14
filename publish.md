@@ -27,7 +27,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [ ] Verify `pip install batcamp` pulls `batread` automatically from PyPI.
 - [x] Smoke-test `import batcamp` after that clean install.
 - [x] Run a small runtime smoke test that exercises `batread.dataset.Dataset` with `batcamp`, not just imports.
-- [ ] Run the relevant automated tests in a clean environment after installing from built artifacts.
+- [x] Run the relevant automated tests in a clean environment after installing from built artifacts.
 
 ## Docs and install story
 
