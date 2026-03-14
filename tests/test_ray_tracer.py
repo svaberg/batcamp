@@ -7,6 +7,7 @@ from batread.dataset import Dataset
 from batcamp import Octree
 from batcamp import OctreeRayTracer
 from fake_dataset import FakeDataset as _FakeDataset
+from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 from sample_data_helper import data_file
 
@@ -29,6 +30,29 @@ def _build_regular_fake_dataset(
     y = points[:, 1]
     z = points[:, 2]
     scalar = 2.0 * x - 1.0 * y + 0.5 * z + 7.0
+    return _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Scalar": scalar,
+        },
+    )
+
+
+def _build_cartesian_fake_dataset() -> _FakeDataset:
+    """Private test helper: build a small Cartesian mesh dataset."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+        y_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+        z_edges=np.array([0.0, 1.0, 2.0], dtype=float),
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    scalar = x + 2.0 * y + 3.0 * z
     return _FakeDataset(
         points=points,
         corners=corners,
@@ -124,6 +148,19 @@ def test_zero_direction_raises() -> None:
             t_start=0.0,
             t_end=1.0,
         )
+
+
+def test_cartesian_tracer_init_does_not_build_unused_plane_state() -> None:
+    """Cartesian tracer init should not build spherical-style plane geometry."""
+    ds = _build_cartesian_fake_dataset()
+    tree = Octree.from_dataset(ds, tree_coord="xyz")
+    assert not hasattr(tree, "_ray_cell_plane_state")
+
+    tracer = OctreeRayTracer(tree)
+
+    assert tracer._cell_plane_state is None
+    assert tracer._seed_cell_plane_state is None
+    assert not hasattr(tree, "_ray_cell_plane_state")
 
 
 def test_example_specific_failing_ray_trace_midpoints_match_lookup() -> None:
