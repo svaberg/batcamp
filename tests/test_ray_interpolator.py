@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from batread.dataset import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
@@ -10,6 +11,7 @@ from batcamp.ray import _ray_cell_geometry_for_maxdepth
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from sample_data_helper import data_file
 
 
 def _build_fake_dataset(
@@ -139,6 +141,24 @@ def _corner_point_multiset(points: np.ndarray, corner_ids: np.ndarray) -> tuple[
     """Private test helper: canonical corner-point multiset with duplicates preserved."""
     pts = np.asarray(points[np.asarray(corner_ids, dtype=np.int64)], dtype=float)
     return tuple(sorted(tuple(np.round(p, 12)) for p in pts))
+
+
+def _dense_ray_oracle(
+    interp: OctreeInterpolator,
+    origin: np.ndarray,
+    direction: np.ndarray,
+    t_start: float,
+    t_end: float,
+    *,
+    n_samples: int,
+) -> float:
+    """Private test helper: dense line-sampling oracle for one ray."""
+    t = np.linspace(float(t_start), float(t_end), int(n_samples), dtype=float)
+    d = np.asarray(direction, dtype=float).reshape(1, 3)
+    pts = np.asarray(origin, dtype=float).reshape(1, 3) + t[:, None] * d
+    vals = np.asarray(interp(pts, query_coord="xyz", log_outside_domain=False), dtype=float).reshape(-1)
+    finite = np.isfinite(vals)
+    return float(np.trapezoid(np.where(finite, vals, 0.0), x=t))
 
 
 def test_sample_rejects_bad_args() -> None:
@@ -427,6 +447,26 @@ def test_spherical_maxdepth_one_matches_depth_one_mesh() -> None:
 
     assert np.array_equal(cut_counts, ref_counts)
     assert np.allclose(cut_vals, ref_vals, atol=1e-12, rtol=1e-12)
+
+
+def test_example_specific_failing_ray_matches_dense_oracle() -> None:
+    """Provided example: known bad 8x8 ray should match a dense line-sampling oracle."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    ray = OctreeRayInterpolator(interp)
+
+    dmin, dmax = interp.tree.domain_bounds(coord="xyz")
+    y = np.linspace(float(dmin[1]), float(dmax[1]), 8, dtype=float)
+    z = np.linspace(float(dmin[2]), float(dmax[2]), 8, dtype=float)
+    x_span = float(dmax[0] - dmin[0])
+    x0 = float(dmin[0] - 1.0e-6 * max(1.0, x_span))
+    origin = np.array([x0, y[1], z[4]], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    t_end = float((float(dmax[0]) - x0) * 0.999999)
+
+    direct = float(np.asarray(ray.integrate_field_along_rays(origin[None, :], direction, 0.0, t_end), dtype=float)[0])
+    oracle = _dense_ray_oracle(interp, origin, direction, 0.0, t_end, n_samples=16384)
+    assert np.isclose(direct, oracle, rtol=1e-2, atol=0.0)
 
 
 def test_vector_integrals_shape_on_all_miss() -> None:
