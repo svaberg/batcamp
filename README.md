@@ -6,7 +6,7 @@
 
 - Rebuilds a usable octree from simulation output
 - Supports saving and loading reconstructed octrees
-- Fast, octree-aware resampling to e.g. planes, spheres, and rays
+- Fast, octree-aware resampling to e.g. planes and spheres
 
 ## Why
 

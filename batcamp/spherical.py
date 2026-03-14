@@ -563,15 +563,6 @@ class _SphericalCellLookup:
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
         return self._contains_rpa_cell(int(cell_id), r, polar, azimuth, tol=float(tol))
 
-    def cell_step_hint(self, cell_id: int) -> float:
-        """Return an initial step-size hint for Python ray tracing."""
-        cid = int(cell_id)
-        r_span = float(self._cell_r_max[cid] - self._cell_r_min[cid])
-        theta_span = float(self._cell_theta_max[cid] - self._cell_theta_min[cid])
-        phi_span = float(min(self._cell_phi_width[cid], 2.0 * math.pi))
-        length_scale = max(float(self._cell_r_max[cid]), 1.0)
-        return float(max(r_span, length_scale * theta_span, length_scale * phi_span, 1e-6))
-
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
         if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):

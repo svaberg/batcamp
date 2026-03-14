@@ -14,7 +14,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 
 ## Repo hygiene
 
-- [ ] Remove the ray feature from the public API, tests, docs, and examples before release.
+- [x] Remove the ray feature from the public API, tests, docs, and examples before release.
 - [ ] Remove generated build artifacts before the release commit. There is currently an untracked `build/` directory in this worktree.
 - [x] Make sure generated artifacts such as `build/` and `dist/` are ignored if they should never be committed.
 - [ ] Commit the release-ready state on `main`.

@@ -64,7 +64,6 @@ A short, practical guide for writing maintainable scientific/technical code.
 
 ## Project-specific ownership and debt logging
 - Keep canonical geometry variable names centralized in `Octree` constants (`X_VAR`, `Y_VAR`, `Z_VAR`, `XY_VARS`, `XYZ_VARS`); do not hard-code `X [R]`/`Y [R]`/`Z [R]` outside `batcamp/octree.py`.
-- Keep ray-related implementation in `batcamp/ray.py` whenever possible.
 - Keep spherical-related implementation in `batcamp/spherical.py` whenever possible.
 - Do not expose spherical-specific methods on coord-agnostic/general classes; keep them on spherical classes/modules only.
 - For polar/azimuth plots, use angular grids/ticks that are clean divisors of 180 degrees (for example 5, 10, 15, 30, 45).

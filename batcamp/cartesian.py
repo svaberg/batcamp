@@ -3,7 +3,7 @@
 
 Important modeling assumption for ``tree_coord="xyz"``:
 leaf cells are treated as axis-aligned Cartesian slabs from
-per-cell corner min/max values. Lookup/ray/interpolation kernels in the
+per-cell corner min/max values. Lookup/interpolation kernels in the
 Cartesian backend are exact under this axis-aligned representation.
 """
 
@@ -369,11 +369,6 @@ class _CartesianCellLookup:
                 float(tol),
             )
         )
-
-    def cell_step_hint(self, cell_id: int) -> float:
-        """Return an initial step size hint for Python ray tracing."""
-        cid = int(cell_id)
-        return float(max(float(self._cell_dx[cid]), float(self._cell_dy[cid]), float(self._cell_dz[cid]), 1e-6))
 
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""

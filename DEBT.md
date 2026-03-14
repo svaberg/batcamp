@@ -1,6 +1,6 @@
 # DEBT
 
-Use this file to record ray-related code that cannot be moved to `batcamp/ray.py`.
+Use this file to record ownership debt that cannot yet be moved to the owning module.
 Each entry should include:
 - the current file/path,
 - why moving is not currently possible,

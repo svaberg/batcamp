@@ -230,7 +230,7 @@ class OctreeBuilder:
     ) -> Octree:
         """Build and bind an octree from a dataset.
 
-        The returned tree is ready for lookup and ray methods.
+        The returned tree is ready for lookup methods.
         """
         return self._build(
             ds,

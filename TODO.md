@@ -7,11 +7,10 @@
 - [x] De-duplicate expensive test setup by sharing one cached dataset/tree fixture across modules that use `3d__var_4_n00005000`.
 - [x] Reduce test lock-in on private internals (`_cell_*`, `_lookup_state`, `_bin_to_corner`) unless there is no public API alternative.
 - [x] Rename `batcamp/base.py` to `batcamp/octree.py` and update imports.
-- [x] Consolidate duplicated XYZ<->RPA conversion helpers shared across `interpolator.py`, `spherical.py`, and `ray.py`.
 - [x] Keep interpolation backend type/cache naming parallel (`SphericalInterpKernelState` vs `CartesianInterpKernelState`, with matching `_interp_state_*` and `_lookup_state_*` attributes).
 - [x] Unify tree auto-build fallback logic so there is one source of truth instead of split behavior paths.
 - [x] Reassess and eventually remove stale-module numba cache cleanup paths once legacy cache compatibility is no longer needed.
-- [x] Reduce complexity in oversized modules (`interpolator.py`, `ray.py`) in-place (no new modules for now).
+- [x] Reduce complexity in oversized modules in-place (no new modules for now).
 - [x] Apply default-`xyz` naming consistently in interpolation internals: default path keeps base name, non-default path gets explicit suffix; rename `_trilinear_from_cell` / `_trilinear_from_cell_xyz` accordingly.
 - [x] Align lookup-state type names between backends: `spherical.LookupKernelState` should mirror `cartesian.CartesianLookupKernelState` naming (for example `SphericalLookupKernelState`).
 - [x] Align per-cell index field naming between backends (`_i0/_i1/_i2` in cartesian vs `_ir/_itheta/_iphi` in spherical) to one consistent convention.
@@ -19,16 +18,12 @@
 - [x] Align `hit_from_chosen` local index variable names between backends (`cell_i0/i1/i2` vs `cell_ir/cell_ipolar/cell_iazimuth`).
 - [x] Align lookup tuning constant naming between backends (cartesian uses inline literals where spherical uses named constants like `_LOOKUP_CONTAIN_TOL` / `_DEFAULT_LOOKUP_MAX_RADIUS`).
 - [x] Remove implicit coord fallback in `Octree.from_dataset(...)` (when coord is omitted and first build fails); make fallback an explicit opt-in policy instead of hidden behavior.
-- [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
-- [x] Fix Cartesian ray boundary-start behavior in compiled kernels (`_trace_segments_xyz_kernel`, `_integrate_xyz_scalar_exact_kernel`, `_integrate_xyz_scalar_midpoint_kernel`) so outward rays starting on a face do not integrate/trace as interior; add regression tests.
 - [x] Add missing runtime dependency declaration for `batread` in `pyproject.toml` to match imports from core modules.
 - [ ] Expand `[project.optional-dependencies].tests` to include non-pytest test imports (at least `pooch`) and verify tests run in a clean `. [tests]` environment.
 - [ ] Investigate and suppress/resolve intermittent runtime warning: `OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.`
 - [ ] Investigate and suppress/resolve notebook warning from `tqdm.auto`: `TqdmWarning: IProgress not found. Please update jupyter and ipywidgets.`
-- [ ] Investigate if `RaySegment` and `RayLinearPiece` should be NumPy arrays (for performance reasons).
-- [ ] Add a ray-tracing test that explicitly checks `RaySegment` intervals do not overlap.
 - [ ] Fix `examples/octree.ipynb` for current builder API: replace removed `OctreeBuilder.compute_phi_levels(...)` usage with `SphericalOctreeBuilder.compute_delta_phi_and_levels(...)` (or equivalent current public API) so executed notebook tests pass.
 - [ ] Audit polar/azimuth plotting across examples: use angular grids/ticks that divide 180 cleanly and orient polar-angle axes so minimum polar is not shown at the top.
 - [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
@@ -38,15 +33,13 @@
 - [x] Apply the same naming rule to dispatch slots/helpers (remove `_..._impl` naming when direct `name`/`_name` dispatch is sufficient).
 - [x] Run a repo-wide public-docstring audit and flag jargon/vague phrasing (for example "cache", "state", "kernel", "facade") when the term is not user-facing behavior.
 - [x] Rewrite public docstrings in `batcamp/builder.py` and `batcamp/octree.py` in plain language.
-- [x] Rewrite public docstrings in `batcamp/interpolator.py` and `batcamp/ray.py` in plain language.
+- [x] Rewrite public docstrings in interpolation and lookup modules in plain language.
 - [x] Rewrite public docstrings in `batcamp/cartesian.py` and `batcamp/spherical.py` in plain language.
 - [ ] Remove thin pass-through docstrings by removing the wrapper method or moving the useful behavior to one canonical method.
 - [ ] Ensure every remaining public docstring states plain behavior: required inputs, returned value shape/type, and failure conditions.
-- [x] Use "slab" terminology consistently for ray entry-interval naming in tests/docs (avoid mixed terms like "slab entry" vs "entry interval").
 - [x] Remove remaining test-only knobs from public APIs (for example `OctreeBuilder.build(cell_levels=..., bind=...)`) and move this control to private/test helpers.
-- [x] Remove private-state coupling between ray/interpolator/lookup (`_lookup_state`, `_interp_state_xyz`, `hasattr` guards) by introducing explicit public interfaces/contracts.
 - [x] Revisit stale cache-compatibility paths: remove `InterpKernelState` alias in `batcamp/interpolator.py` once cache migration policy is explicit (the old-name shim is still live).
-- [x] Slim package import surface in `batcamp/__init__.py` (avoid eager heavy imports of numba/ray/interpolator on plain `import batcamp`; prefer lazy or narrower exports).
+- [x] Slim package import surface in `batcamp/__init__.py` (avoid eager heavy imports of numba/interpolator on plain `import batcamp`; prefer lazy or narrower exports).
 - [x] Consolidate duplicate builder utilities across `batcamp/builder_cartesian.py` and `batcamp/builder_spherical.py` (shared level-shape types and positive-median helper).
 - [x] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
 - [x] Centralize `X [R]` / `Y [R]` / `Z [R]` names in `Octree` constants only and reference those constants everywhere else.
@@ -57,8 +50,6 @@
 - [x] Purge public `SphericalOctree.xyz_to_rpa`; keep scalar xyz->rpa conversion kernel-internal only.
 - [x] Rename scalar kernel lookup functions `lookup_xyz_cell_id_kernel` / `lookup_rpa_cell_id_kernel` to private module helpers.
 - [x] Remove scalar lookup helpers from effective public surface (`lookup_xyz_cell_id`, `lookup_rpa_cell_id`, `contains_xyz_cell`, `contains_rpa_cell`) or make them explicitly private.
-- [x] In `batcamp/ray.py`, centralize repeated ray input validation (`origins`, `direction`, `t_start/t_end`) used by `integrate_field_along_rays`, `adaptive_midpoint_rule`, and `integrate_field_along_rays_midpoint`.
-- [x] In `batcamp/ray.py`, centralize repeated fast-path gating and magic tuning numbers (`200000`, `16384`, `1e-9`) into named policy/constants.
 - [x] Deduplicate test data scaffolding across `tests/test_builder.py`, `tests/test_interpolator_edges.py`, and `tests/test_fake_inputs.py` by sharing one `FakeDataset` helper class.
 - [x] Deduplicate remaining synthetic dataset builder helpers across edge-case/lookup test modules.
 - [x] Label every private test helper clearly as a private test helper (via helper name and/or docstring).
