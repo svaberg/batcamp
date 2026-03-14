@@ -72,6 +72,7 @@ class SphericalRayCellGeometry(NamedTuple):
 
     topology_state: TopologicalKernelState
     plane_state: CellPlaneKernelState
+    cell_centers: np.ndarray
     corners: np.ndarray
     bin_to_corner: np.ndarray
     cell_r0: np.ndarray
@@ -255,6 +256,40 @@ def _ordered_corners_from_unit_coords(point_ids: np.ndarray, unit_coords: np.nda
     d2 = np.sum((unit_coords[:, None, :] - _TARGET_UNIT_CORNERS[None, :, :]) ** 2, axis=2)
     picks = np.argmin(d2, axis=0).astype(np.int64)
     return np.asarray(point_ids[picks], dtype=np.int64)
+
+
+def _ordered_spherical_corners_from_targets(
+    point_ids: np.ndarray,
+    point_xyz: np.ndarray,
+    r0: float,
+    r1: float,
+    theta0: float,
+    theta1: float,
+    phi0: float,
+    phi1: float,
+) -> np.ndarray:
+    """Pick 8 spherical logical corners by nearest exact coarse-corner target in `xyz`."""
+    out = np.empty(8, dtype=np.int64)
+    r_targets = (float(r0), float(r1))
+    theta_targets = (float(theta0), float(theta1))
+    phi_targets = (float(phi0), float(phi1))
+
+    for k in range(8):
+        r = r_targets[k & 1]
+        theta = theta_targets[(k >> 1) & 1]
+        phi = phi_targets[(k >> 2) & 1]
+        s = math.sin(theta)
+        target = np.array(
+            [
+                r * s * math.cos(phi),
+                r * s * math.sin(phi),
+                r * math.cos(theta),
+            ],
+            dtype=np.float64,
+        )
+        d2 = np.sum((point_xyz - target[None, :]) ** 2, axis=1)
+        out[k] = int(point_ids[int(np.argmin(d2))])
+    return out
 
 
 def _build_plane_state_from_ordered_corners(
@@ -531,6 +566,7 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
 
     for node_id in range(n_cells):
         point_ids = np.asarray(point_groups[node_id], dtype=np.int64)
+        cell_pts = np.asarray(points[point_ids], dtype=float)
         depth = int(topology.levels[node_id])
         _nr, ntheta, nphi = _shape_for_ray_depth(tree, depth)
         dtheta = math.pi / float(ntheta)
@@ -554,11 +590,16 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
         dp = max(phi_width, tiny)
         p_rel = np.clip(cp - phi_start, 0.0, phi_width)
 
-        unit = np.empty((int(point_ids.size), 3), dtype=np.float64)
-        unit[:, 0] = np.clip((cr - r0) / dr, 0.0, 1.0)
-        unit[:, 1] = np.clip((ct - theta0) / dt, 0.0, 1.0)
-        unit[:, 2] = np.clip(p_rel / dp, 0.0, 1.0)
-        corners[node_id, :] = _ordered_corners_from_unit_coords(point_ids, unit)
+        corners[node_id, :] = _ordered_spherical_corners_from_targets(
+            point_ids,
+            cell_pts,
+            r0,
+            r1,
+            theta0,
+            theta1,
+            phi_start,
+            phi_start + phi_width,
+        )
         centers[node_id, :] = np.mean(points[corners[node_id]], axis=0)
 
         cell_r0[node_id] = r0
@@ -575,6 +616,7 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
     return SphericalRayCellGeometry(
         topology_state=_topology_state_for_node_cells(topology),
         plane_state=plane_state,
+        cell_centers=centers,
         corners=corners,
         bin_to_corner=bin_to_corner,
         cell_r0=cell_r0,
@@ -586,6 +628,133 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
         cell_pden=cell_pden,
         cell_phi_full=cell_phi_full,
         cell_phi_tiny=cell_phi_tiny,
+    )
+
+
+def _build_sparse_seed_plane_state(
+    rep_cell_ids: np.ndarray,
+    n_leaf_cells: int,
+    dense_plane_state: CellPlaneKernelState,
+) -> CellPlaneKernelState:
+    """Expand dense node-indexed plane faces onto representative leaf ids for seed lookup."""
+    face_normals = np.zeros((int(n_leaf_cells), 6, 3), dtype=np.float64)
+    face_offsets = np.zeros((int(n_leaf_cells), 6), dtype=np.float64)
+    face_valid = np.zeros((int(n_leaf_cells), 6), dtype=np.bool_)
+    for node_id, rep_cid in enumerate(np.asarray(rep_cell_ids, dtype=np.int64)):
+        cid = int(rep_cid)
+        face_normals[cid, :, :] = dense_plane_state.face_normals[int(node_id), :, :]
+        face_offsets[cid, :] = dense_plane_state.face_offsets[int(node_id), :]
+        face_valid[cid, :] = dense_plane_state.face_valid[int(node_id), :]
+    return CellPlaneKernelState(
+        face_normals=face_normals,
+        face_offsets=face_offsets,
+        face_valid=face_valid,
+    )
+
+
+def _build_sparse_spherical_seed_lookup_state(
+    tree: Octree,
+    topology,
+    geometry: SphericalRayCellGeometry,
+) -> SphericalLookupKernelState:
+    """Build one sparse coarse spherical lookup state keyed by representative leaf ids."""
+    n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
+    rep_cell_ids = np.asarray(topology.node_cell_ids, dtype=np.int64)
+    depths = np.asarray(topology.levels, dtype=np.int64)
+    depth_levels = np.array(sorted(set(int(v) for v in depths.tolist())), dtype=np.int64)
+    levels_desc = depth_levels[::-1].copy()
+    depth_cap = int(np.max(depth_levels)) + 1
+
+    shape_table = np.full((depth_cap, 3), -1, dtype=np.int64)
+    dtheta_table = np.full(depth_cap, np.nan, dtype=np.float64)
+    dphi_table = np.full(depth_cap, np.nan, dtype=np.float64)
+    bin_level_offset = np.full(depth_cap, -1, dtype=np.int64)
+    running_offset = 0
+    for depth in depth_levels:
+        d = int(depth)
+        nr, ntheta, nphi = _shape_for_ray_depth(tree, d)
+        shape_table[d, 0] = int(nr)
+        shape_table[d, 1] = int(ntheta)
+        shape_table[d, 2] = int(nphi)
+        dtheta_table[d] = math.pi / float(ntheta)
+        dphi_table[d] = 2.0 * math.pi / float(nphi)
+        bin_level_offset[d] = running_offset
+        running_offset += int(ntheta) * int(nphi)
+
+    bin_lists: list[list[int]] = [[] for _ in range(int(running_offset))]
+    cell_r_center = np.linalg.norm(np.asarray(geometry.cell_centers, dtype=np.float64), axis=1)
+    for node_id, rep_cid in enumerate(rep_cell_ids):
+        depth = int(depths[node_id])
+        nphi = int(shape_table[depth, 2])
+        key = int(bin_level_offset[depth] + int(topology.i1[node_id]) * nphi + int(topology.i2[node_id]))
+        bin_lists[key].append(int(rep_cid))
+
+    bin_counts = np.zeros(int(running_offset), dtype=np.int64)
+    for key, ids in enumerate(bin_lists):
+        if not ids:
+            continue
+        arr = np.array(ids, dtype=np.int64)
+        node_ids = np.array([int(topology.cell_to_node_id[cid]) for cid in arr], dtype=np.int64)
+        order = np.argsort(cell_r_center[node_ids])
+        sorted_ids = arr[order]
+        bin_lists[key] = sorted_ids.tolist()
+        bin_counts[key] = int(sorted_ids.size)
+
+    bin_offsets = np.zeros(int(running_offset) + 1, dtype=np.int64)
+    if int(running_offset) > 0:
+        np.cumsum(bin_counts, out=bin_offsets[1:])
+    bin_cell_ids = np.empty(int(bin_offsets[-1]), dtype=np.int64)
+    for key in range(int(running_offset)):
+        start = int(bin_offsets[key])
+        end = int(bin_offsets[key + 1])
+        if end <= start:
+            continue
+        bin_cell_ids[start:end] = np.array(bin_lists[key], dtype=np.int64)
+
+    cell_r_min = np.zeros(n_leaf_cells, dtype=np.float64)
+    cell_r_max = np.zeros(n_leaf_cells, dtype=np.float64)
+    cell_theta_min = np.zeros(n_leaf_cells, dtype=np.float64)
+    cell_theta_max = np.zeros(n_leaf_cells, dtype=np.float64)
+    cell_phi_start = np.zeros(n_leaf_cells, dtype=np.float64)
+    cell_phi_width = np.zeros(n_leaf_cells, dtype=np.float64)
+    cell_valid = np.zeros(n_leaf_cells, dtype=np.bool_)
+    cell_centers = np.zeros((n_leaf_cells, 3), dtype=np.float64)
+    for node_id, rep_cid in enumerate(rep_cell_ids):
+        cid = int(rep_cid)
+        cell_r_min[cid] = float(geometry.cell_r0[node_id])
+        cell_r_max[cid] = float(geometry.cell_r0[node_id] + geometry.cell_rden[node_id])
+        cell_theta_min[cid] = float(geometry.cell_t0[node_id])
+        cell_theta_max[cid] = float(geometry.cell_t0[node_id] + geometry.cell_tden[node_id])
+        cell_phi_start[cid] = float(geometry.cell_p_start[node_id])
+        cell_phi_width[cid] = float(geometry.cell_p_width[node_id])
+        cell_valid[cid] = True
+        cell_centers[cid, :] = geometry.cell_centers[node_id, :]
+
+    seed_lookup = tree.lookup.lookup_state
+    if not isinstance(seed_lookup, SphericalLookupKernelState):
+        raise TypeError(
+            "Spherical truncated ray geometry requires SphericalLookupKernelState; "
+            f"got {type(seed_lookup).__name__}."
+        )
+    return SphericalLookupKernelState(
+        levels_desc=levels_desc,
+        shape_table=shape_table,
+        dtheta_table=dtheta_table,
+        dphi_table=dphi_table,
+        bin_level_offset=bin_level_offset,
+        bin_offsets=bin_offsets,
+        bin_cell_ids=bin_cell_ids,
+        cell_r_min=cell_r_min,
+        cell_r_max=cell_r_max,
+        cell_theta_min=cell_theta_min,
+        cell_theta_max=cell_theta_max,
+        cell_phi_start=cell_phi_start,
+        cell_phi_width=cell_phi_width,
+        cell_valid=cell_valid,
+        cell_centers=cell_centers,
+        r_min=float(np.min(geometry.cell_r0)),
+        r_max=float(np.max(geometry.cell_r0 + geometry.cell_rden)),
+        max_radius=int(seed_lookup.max_radius),
     )
 
 
@@ -1921,6 +2090,13 @@ class OctreeRayTracer:
                     "Spherical ray tracing requires SphericalRayCellGeometry; "
                     f"got {type(geometry).__name__}."
                 )
+            topology = _topology_for_ray_maxdepth(tree, int(self.maxdepth))
+            self._seed_lookup_state = _build_sparse_spherical_seed_lookup_state(tree, topology, geometry)
+            self._seed_cell_plane_state = _build_sparse_seed_plane_state(
+                topology.node_cell_ids,
+                int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0]),
+                geometry.plane_state,
+            )
             self._cell_lookup_state = None
             self._cell_plane_state = geometry.plane_state
         else:
