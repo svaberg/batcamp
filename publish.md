@@ -21,7 +21,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 ## Packaging validation
 
 - [x] Build both sdist and wheel with `python -m build`.
-- [ ] Run `twine check dist/*`.
+- [x] Run `twine check dist/*`.
 - [ ] Test installation from the built wheel in a clean environment that does not see the local `/Users/dagfev/Documents/starwinds/batread` checkout on `sys.path`.
 - [ ] Verify `pip install batcamp` pulls `batread` automatically from PyPI.
 - [ ] Smoke-test `import batcamp` after that clean install.
