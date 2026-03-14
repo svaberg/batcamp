@@ -562,8 +562,8 @@ def main() -> None:
 
     cases = [
         DatasetCase("example", "3d__var_1_n00000000.plt"),
-        DatasetCase("sc", "3d__var_4_n00044000.plt"),
         DatasetCase("ih", "3d__var_4_n00005000.plt"),
+        DatasetCase("sc", "3d__var_4_n00044000.plt"),
     ]
 
     _progress(f"output_dir={out_root}", log_path=progress_log_path)
