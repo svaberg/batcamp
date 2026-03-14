@@ -16,6 +16,7 @@ import numpy as np
 import pooch
 from batread.dataset import Dataset
 
+from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 
@@ -73,6 +74,25 @@ def resolve_data_file(repo_root: Path, name: str) -> Path:
         return _find_in_example_data(repo_root / "example_data", name)
     except FileNotFoundError:
         return _fetch_from_g2211_archive(name)
+
+
+def _octree_cache_path(cache_root: Path, data_path: Path) -> Path:
+    """Return one persistent octree cache path keyed by file contents."""
+    stat = data_path.stat()
+    cache_name = f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}.octree.npz"
+    return cache_root / cache_name
+
+
+def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> Octree:
+    """Load one cached octree or build and persist it once."""
+    cache_path = _octree_cache_path(cache_root, data_path)
+    if cache_path.exists():
+        return Octree.load(cache_path, ds=ds)
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tree = Octree.from_dataset(ds)
+    tree.save(cache_path)
+    return tree
 
 
 def parse_resolutions(raw: str) -> list[int]:
@@ -456,6 +476,7 @@ def main() -> None:
     resolutions = parse_resolutions(args.resolutions)
     repo_root = Path(__file__).resolve().parent
     out_root = (repo_root / args.output_dir).resolve()
+    cache_root = (repo_root / "build" / "resampling_compare_octree_cache").resolve()
 
     cases = [
         DatasetCase("example", "3d__var_1_n00000000.plt"),
@@ -473,7 +494,8 @@ def main() -> None:
 
         data_path = resolve_data_file(repo_root, case.file_name)
         ds = Dataset.from_file(str(data_path))
-        interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+        tree = _load_or_build_octree(ds, data_path, cache_root)
+        interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
         ray = OctreeRayInterpolator(interp)
 
         dmin, dmax = interp.tree.domain_bounds(coord="xyz")
