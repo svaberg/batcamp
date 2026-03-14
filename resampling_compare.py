@@ -496,7 +496,7 @@ def _save_runtime_plot(rows: list[dict[str, float | int]], out_path: Path, *, ti
     fig, ax = plt.subplots(figsize=(7.0, 4.5), constrained_layout=True)
     ax.plot(pixels, grid_t, "o-", label="plot0: 3D grid-sum")
     ax.plot(pixels, ray_t, "o-", label="plot1: ray integration")
-    ax.set_xscale("log", base=2)
+    ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Pixel count (N x N)")
     ax.set_ylabel("Runtime [s]")
