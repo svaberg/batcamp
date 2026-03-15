@@ -350,6 +350,8 @@ def _save_four_panel_figure(
     both_pos = pos0 & pos1
     plot0_only = pos0 & np.isfinite(img1) & (img1 == 0.0)
     plot1_only = np.isfinite(img0) & (img0 == 0.0) & pos1
+    plot0_nan = pos0 & np.isnan(img1)
+    plot1_nan = np.isnan(img0) & pos1
     pos_vals = np.concatenate((img0[pos0], img1[pos1])) if (np.any(pos0) or np.any(pos1)) else np.array(
         [],
         dtype=float,
@@ -413,8 +415,9 @@ def _save_four_panel_figure(
         hi = hi_data * pad
         x_boundary_transform = blended_transform_factory(axes[1, 0].transAxes, axes[1, 0].transData)
         y_boundary_transform = blended_transform_factory(axes[1, 0].transData, axes[1, 0].transAxes)
-        boundary_frac = 0.015
-        r_mask = both_pos | plot0_only | plot1_only
+        boundary_frac_zero = 0.015
+        boundary_frac_nan = 0.045
+        r_mask = both_pos | plot0_only | plot1_only | plot0_nan | plot1_nan
         r_vals = pixel_r[r_mask].reshape(-1) if np.any(r_mask) else np.array([0.0], dtype=float)
         r_lo = float(np.min(r_vals))
         r_hi = float(np.max(r_vals))
@@ -439,7 +442,7 @@ def _save_four_panel_figure(
         if np.any(plot0_only):
             scatter_artist = axes[1, 0].scatter(
                 img0[plot0_only].reshape(-1),
-                np.full(int(np.count_nonzero(plot0_only)), boundary_frac, dtype=float),
+                np.full(int(np.count_nonzero(plot0_only)), boundary_frac_zero, dtype=float),
                 c=pixel_r[plot0_only].reshape(-1),
                 cmap="cividis",
                 norm=r_norm,
@@ -451,13 +454,39 @@ def _save_four_panel_figure(
             )
         if np.any(plot1_only):
             scatter_artist = axes[1, 0].scatter(
-                np.full(int(np.count_nonzero(plot1_only)), boundary_frac, dtype=float),
+                np.full(int(np.count_nonzero(plot1_only)), boundary_frac_zero, dtype=float),
                 img1[plot1_only].reshape(-1),
                 c=pixel_r[plot1_only].reshape(-1),
                 cmap="cividis",
                 norm=r_norm,
                 marker="<",
                 s=22,
+                alpha=0.95,
+                linewidths=0.0,
+                transform=x_boundary_transform,
+            )
+        if np.any(plot0_nan):
+            scatter_artist = axes[1, 0].scatter(
+                img0[plot0_nan].reshape(-1),
+                np.full(int(np.count_nonzero(plot0_nan)), boundary_frac_nan, dtype=float),
+                c=pixel_r[plot0_nan].reshape(-1),
+                cmap="cividis",
+                norm=r_norm,
+                marker="^",
+                s=24,
+                alpha=0.95,
+                linewidths=0.0,
+                transform=y_boundary_transform,
+            )
+        if np.any(plot1_nan):
+            scatter_artist = axes[1, 0].scatter(
+                np.full(int(np.count_nonzero(plot1_nan)), boundary_frac_nan, dtype=float),
+                img1[plot1_nan].reshape(-1),
+                c=pixel_r[plot1_nan].reshape(-1),
+                cmap="cividis",
+                norm=r_norm,
+                marker=">",
+                s=24,
                 alpha=0.95,
                 linewidths=0.0,
                 transform=x_boundary_transform,
@@ -491,7 +520,9 @@ def _save_four_panel_figure(
         f"log10 RMSE={log_rmse_text}\n"
         f"positive overlap={eq_pos_overlap}\n"
         f"plot0>0, plot1=0: {int(np.count_nonzero(plot0_only))}\n"
-        f"plot1>0, plot0=0: {int(np.count_nonzero(plot1_only))}",
+        f"plot1>0, plot0=0: {int(np.count_nonzero(plot1_only))}\n"
+        f"plot0>0, plot1=nan: {int(np.count_nonzero(plot0_nan))}\n"
+        f"plot1>0, plot0=nan: {int(np.count_nonzero(plot1_nan))}",
         transform=axes[1, 0].transAxes,
         va="top",
         ha="left",
