@@ -2382,6 +2382,21 @@ def _coerce_origins_xyz(origins_xyz: np.ndarray) -> np.ndarray:
     return origins
 
 
+def _coerce_directions_xyz(direction_xyz: np.ndarray, *, n_rays: int) -> tuple[np.ndarray, bool]:
+    """Validate directions and return `(directions, shared)`."""
+    direction = np.asarray(direction_xyz, dtype=float)
+    if direction.ndim == 1:
+        return _normalize_direction(direction), True
+    if direction.ndim != 2 or direction.shape[1] != 3:
+        raise ValueError("direction_xyz must have shape (3,) or (n_rays, 3).")
+    if int(direction.shape[0]) != int(n_rays):
+        raise ValueError("direction_xyz with shape (n_rays, 3) must match origins_xyz.")
+    norms = np.linalg.norm(direction, axis=1)
+    if not np.all(np.isfinite(direction)) or np.any(norms == 0.0):
+        raise ValueError("direction_xyz must be finite and non-zero.")
+    return direction / norms[:, None], False
+
+
 def _coerce_ray_interval(t_start: float, t_end: float) -> tuple[float, float]:
     """Validate and normalize ray interval."""
     t0 = float(t_start)
@@ -2894,15 +2909,33 @@ class OctreeRayInterpolator:
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """Return per-ray segment counts."""
-        return self.ray_tracer.segment_counts(
-            origins_xyz,
-            direction_xyz,
-            t_start,
-            t_end,
-            chunk_size=chunk_size,
-            max_steps=max_steps,
-            boundary_tol=boundary_tol,
-        )
+        origins = _coerce_origins_xyz(origins_xyz)
+        directions, shared = _coerce_directions_xyz(direction_xyz, n_rays=int(origins.shape[0]))
+        if shared:
+            return self.ray_tracer.segment_counts(
+                origins,
+                directions,
+                t_start,
+                t_end,
+                chunk_size=chunk_size,
+                max_steps=max_steps,
+                boundary_tol=boundary_tol,
+            )
+
+        t0, t1 = _coerce_ray_interval(t_start, t_end)
+        max_steps = _coerce_positive_int("max_steps", max_steps)
+        counts = np.zeros(int(origins.shape[0]), dtype=np.int64)
+        for i in range(int(origins.shape[0])):
+            cell_ids, _t_enter, _t_exit = self.ray_tracer.trace_prepared(
+                origins[i],
+                directions[i],
+                t0,
+                t1,
+                max_steps=max_steps,
+                boundary_tol=boundary_tol,
+            )
+            counts[i] = int(cell_ids.size)
+        return counts
 
     def adaptive_midpoint_rule(
         self,
@@ -2917,7 +2950,7 @@ class OctreeRayInterpolator:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build flattened midpoint quadrature arrays for many rays."""
         origins = _coerce_origins_xyz(origins_xyz)
-        d = _normalize_direction(direction_xyz)
+        directions, shared = _coerce_directions_xyz(direction_xyz, n_rays=int(origins.shape[0]))
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         chunk = _coerce_positive_chunk_size(chunk_size)
         max_steps = _coerce_positive_int("max_steps", max_steps)
@@ -2926,19 +2959,46 @@ class OctreeRayInterpolator:
         weights_chunks: list[np.ndarray] = []
         offsets = np.zeros(int(origins.shape[0]) + 1, dtype=np.int64)
 
+        if not shared:
+            written = 0
+            for i in range(int(origins.shape[0])):
+                _cell_ids, t_enter, t_exit = self.ray_tracer.trace_prepared(
+                    origins[i],
+                    directions[i],
+                    t0,
+                    t1,
+                    max_steps=max_steps,
+                    boundary_tol=boundary_tol,
+                )
+                n_seg = int(t_enter.size)
+                if n_seg > 0:
+                    mids_sub = origins[i][None, :] + (0.5 * (t_enter + t_exit))[:, None] * directions[i][None, :]
+                    weights_sub = np.maximum(0.0, t_exit - t_enter)
+                    mids_chunks.append(np.asarray(mids_sub, dtype=float))
+                    weights_chunks.append(np.asarray(weights_sub, dtype=float))
+                written += n_seg
+                offsets[i + 1] = written
+            if written == 0:
+                return (
+                    np.empty((0, 3), dtype=float),
+                    np.empty((0,), dtype=float),
+                    offsets,
+                )
+            return np.vstack(mids_chunks), np.concatenate(weights_chunks), offsets
+
         written = 0
         for start in range(0, int(origins.shape[0]), chunk):
             stop = min(int(origins.shape[0]), start + chunk)
             sub = origins[start:stop]
             cids, t_enter, t_exit, sub_offsets = self.ray_tracer.trace_many(
                 sub,
-                d,
+                directions,
                 t0,
                 t1,
                 max_steps=max_steps,
                 boundary_tol=boundary_tol,
             )
-            mids_sub, weights_sub = _midpoints_from_segments_kernel(sub, d, t_enter, t_exit, sub_offsets)
+            mids_sub, weights_sub = _midpoints_from_segments_kernel(sub, directions, t_enter, t_exit, sub_offsets)
             mids_chunks.append(mids_sub)
             weights_chunks.append(weights_sub)
 
@@ -3053,7 +3113,7 @@ class OctreeRayInterpolator:
     ) -> np.ndarray:
         """Integrate interpolated fields along many rays using compiled kernels."""
         origins = _coerce_origins_xyz(origins_xyz)
-        d = _normalize_direction(direction_xyz)
+        directions, shared = _coerce_directions_xyz(direction_xyz, n_rays=int(origins.shape[0]))
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         chunk = _coerce_positive_chunk_size(chunk_size)
         max_steps = _coerce_positive_int("max_steps", max_steps)
@@ -3061,6 +3121,26 @@ class OctreeRayInterpolator:
         n_rays = int(origins.shape[0])
         ncomp = int(self.interpolator.n_value_components)
         out = np.full((n_rays, ncomp), np.nan, dtype=float)
+
+        if not shared:
+            for i in range(n_rays):
+                one = np.asarray(
+                    self.integrate_field_along_rays(
+                        origins[i : i + 1],
+                        directions[i],
+                        t0,
+                        t1,
+                        chunk_size=1,
+                        scale=scale,
+                        max_steps=max_steps,
+                        boundary_tol=boundary_tol,
+                    ),
+                    dtype=float,
+                )
+                out[i] = one.reshape(1, -1)[0]
+            if ncomp == 1:
+                return out[:, 0]
+            return out
 
         tree_coord = str(self.tree.tree_coord)
         topo_state = self.ray_tracer._topology_state
@@ -3088,7 +3168,7 @@ class OctreeRayInterpolator:
                     )
                 out[start:stop] = _integrate_rays_xyz_kernel(
                     sub,
-                    d,
+                    directions,
                     t0,
                     t1,
                     int(max_steps),
@@ -3126,7 +3206,7 @@ class OctreeRayInterpolator:
                     )
                 out[start:stop] = _integrate_rays_rpa_kernel(
                     sub,
-                    d,
+                    directions,
                     t0,
                     t1,
                     int(max_steps),

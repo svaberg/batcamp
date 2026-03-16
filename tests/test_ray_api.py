@@ -8,8 +8,11 @@ from batread.dataset import Dataset
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 from batcamp import OctreeRayTracer
+from batcamp.octree import Octree
 from batcamp.ray import FlatCamera
 from batcamp.ray import FovCamera
+from fake_dataset import FakeDataset as _FakeDataset
+from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from sample_data_helper import data_file
 
 
@@ -89,6 +92,28 @@ def _integrate_rho2_resample_baseline(
     ).reshape(origins_xyz.shape[0], t.size)
     rho2 = np.where(np.isfinite(rho), rho * rho, 0.0)
     return np.sum(rho2, axis=1) * dt
+
+
+def _build_single_cell_trilinear_dataset() -> _FakeDataset:
+    """Private test helper: one Cartesian cell with trilinear field `x*y`."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0], dtype=float),
+        y_edges=np.array([0.0, 1.0], dtype=float),
+        z_edges=np.array([0.0, 1.0], dtype=float),
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    return _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "TrilinearXY": x * y,
+        },
+    )
 
 
 @pytest.mark.pooch
@@ -218,3 +243,26 @@ def test_fov_camera_vertical_extent_matches_requested_fov() -> None:
     angle = math.degrees(math.acos(np.clip(float(np.dot(d_top, d_bot)), -1.0, 1.0)))
 
     assert angle == pytest.approx(60.0, rel=0.0, abs=1e-12)
+
+
+def test_ray_interpolator_accepts_one_direction_per_ray() -> None:
+    """Ray contract: per-ray directions from FOV camera go through the ray interpolator."""
+    ds = _build_single_cell_trilinear_dataset()
+    interp = OctreeInterpolator(ds, ["TrilinearXY"], tree_coord="xyz")
+    ray = OctreeRayInterpolator(interp)
+    camera = FovCamera(
+        eye_xyz=np.array([-1.0, 0.5, 0.5], dtype=float),
+        target_xyz=np.array([0.5, 0.5, 0.5], dtype=float),
+        up_hint_xyz=np.array([0.0, 0.0, 1.0], dtype=float),
+        vertical_fov_degrees=30.0,
+        t_end=3.0,
+    )
+
+    origins, directions, t_end, image_shape = camera.rays(ny=1, nz=1)
+    per_ray = np.asarray(ray.integrate_field_along_rays(origins, directions, 0.0, t_end), dtype=float)
+    shared = np.asarray(ray.integrate_field_along_rays(origins, directions[0], 0.0, t_end), dtype=float)
+    counts = np.asarray(ray.segment_counts(origins, directions, 0.0, t_end), dtype=np.int64)
+
+    assert image_shape == (1, 1)
+    assert counts.tolist() == [1]
+    np.testing.assert_allclose(per_ray, shared, rtol=0.0, atol=1e-12, equal_nan=True)
