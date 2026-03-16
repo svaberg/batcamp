@@ -269,16 +269,6 @@ def _pixel_plane_coordinates(
     return yg, zg, rg
 
 
-def _pixel_radius_image(
-    *,
-    n_plane: int,
-    bounds: tuple[float, float, float, float, float, float],
-) -> np.ndarray:
-    """Return per-pixel `r = sqrt(y^2 + z^2)` on the image plane as `(z, y)`."""
-    _yg, _zg, rg = _pixel_plane_coordinates(n_plane=n_plane, bounds=bounds)
-    return rg
-
-
 def _ray_segment_counts(
     ray: OctreeRayInterpolator,
     *,
@@ -506,7 +496,7 @@ def _save_four_panel_figure(
         fontsize=9,
     )
 
-    im1 = axes[0, 1].imshow(img1_disp, origin="lower", cmap=cmap, norm=norm, aspect="equal")
+    axes[0, 1].imshow(img1_disp, origin="lower", cmap=cmap, norm=norm, aspect="equal")
     axes[0, 1].set_title("Plot 1: Ray integration")
     axes[0, 1].text(
         0.02,

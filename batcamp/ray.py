@@ -508,7 +508,6 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     for cid in range(n_cells):
         cell_pts = np.asarray(points[corners[cid]], dtype=float)
         center = np.asarray(centers[cid], dtype=float)
-        cell_corner_ids = corners[cid]
         if tree_coord == "xyz":
             if not isinstance(lookup_state, CartesianLookupKernelState):
                 raise TypeError(
@@ -653,7 +652,6 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
     points = np.asarray(tree.lookup.points, dtype=float)
     point_groups = _node_point_candidates(tree, topology)
     point_r = np.linalg.norm(points, axis=1)
-    point_theta = np.arccos(np.clip(points[:, 2] / np.maximum(point_r, np.finfo(float).tiny), -1.0, 1.0))
     point_phi = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
 
     n_cells = int(topology.node_count)
@@ -684,7 +682,6 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
         phi_width = float(dphi)
 
         cr = point_r[point_ids]
-        ct = point_theta[point_ids]
         cp = np.array(point_phi[point_ids], dtype=float, copy=True)
         center_phi = phi_start + 0.5 * phi_width
         cp[cp < (center_phi - math.pi)] += 2.0 * math.pi
