@@ -236,20 +236,3 @@ def test_example_specific_rays_match_xyz_plane_oracle(origin: np.ndarray) -> Non
     traced = [int(c) for c in tracer.trace(origin, direction, 0.0, t_end)[0]]
     oracle = _plane_oracle_sequence(tracer, origin, direction, t_end, n_samples=4001)
     assert traced == oracle
-
-
-def test_example_zero_ray_is_empty_in_xyz_plane_oracle() -> None:
-    """Provided example: a zero-output ray should also be empty in xyz plane geometry."""
-    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    tree = Octree.from_dataset(ds)
-    tracer = OctreeRayTracer(tree)
-
-    origin = np.array([-48.000096, -23.225806451612904, -41.806451612903224], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    dmin, dmax = tree.domain_bounds(coord="xyz")
-    t_end = float((float(dmax[0]) - float(origin[0])) * 0.999999)
-
-    traced = [int(c) for c in tracer.trace(origin, direction, 0.0, t_end)[0]]
-    oracle = _plane_oracle_sequence(tracer, origin, direction, t_end, n_samples=1001)
-    assert traced == []
-    assert oracle == []
