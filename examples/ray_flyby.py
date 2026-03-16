@@ -35,8 +35,8 @@ _DEFAULT_RESOLUTION = 256
 _DEFAULT_STEPS = 48
 _DEFAULT_OUTPUT = _REPO_ROOT / "artifacts" / "ray_flyby"
 _DEFAULT_VERTICAL_FOV_DEGREES = 70.0
-_DEFAULT_CLOSEST_DISTANCE_FRACTION = 1.03
-_DEFAULT_PATH_HALF_LENGTH_FRACTION = 1.8
+_DEFAULT_CLOSEST_DISTANCE_FACTOR = 1.15
+_DEFAULT_PATH_HALF_LENGTH_FACTOR = 6.0
 _DEFAULT_CHUNK_SIZE = 4096
 
 
@@ -93,13 +93,13 @@ def _resolve_sc_data_file() -> Path:
     return Path(extracted)
 
 
-def _flyby_eye_positions(center_xyz: np.ndarray, r_max: float, n_steps: int) -> np.ndarray:
-    """Return a straight flyby path that stays just outside the star."""
-    impact = float(_DEFAULT_CLOSEST_DISTANCE_FRACTION) * float(r_max)
+def _flyby_eye_positions(center_xyz: np.ndarray, star_radius: float, n_steps: int) -> np.ndarray:
+    """Return a straight flyby path that passes close to the stellar surface."""
+    impact = float(_DEFAULT_CLOSEST_DISTANCE_FACTOR) * float(star_radius)
     tilt = np.deg2rad(18.0)
     y0 = impact * np.cos(tilt)
     z0 = impact * np.sin(tilt)
-    x_half = float(_DEFAULT_PATH_HALF_LENGTH_FRACTION) * float(r_max)
+    x_half = float(_DEFAULT_PATH_HALF_LENGTH_FACTOR) * float(star_radius)
     x = np.linspace(-x_half, x_half, int(n_steps), dtype=float)
     eyes = np.column_stack(
         (
@@ -287,11 +287,12 @@ def main() -> None:
     interp, ray, setup_timing = _load_ray_context()
     dmin, dmax = interp.tree.domain_bounds(coord="xyz")
     center_xyz = 0.5 * (np.asarray(dmin, dtype=float).reshape(3) + np.asarray(dmax, dtype=float).reshape(3))
-    _r_lo, r_hi = interp.tree.domain_bounds(coord="rpa")
+    r_lo, r_hi = interp.tree.domain_bounds(coord="rpa")
+    r_star = float(np.asarray(r_lo, dtype=float).reshape(3)[0])
     r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
     extent = _image_extent(resolution=resolution)
 
-    eyes_xyz = _flyby_eye_positions(center_xyz, r_max, steps)
+    eyes_xyz = _flyby_eye_positions(center_xyz, r_star, steps)
     frames: list[np.ndarray] = []
     frame_render_s: list[float] = []
     for i, eye_xyz in enumerate(eyes_xyz):
