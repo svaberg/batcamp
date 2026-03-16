@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 import sys
 import tarfile
+import time
 
 import matplotlib
 
@@ -47,12 +48,26 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_ray_context() -> tuple[OctreeInterpolator, OctreeRayInterpolator]:
-    data_path = _resolve_sc_data_file()
-    ds = Dataset.from_file(str(data_path))
-    interp = OctreeInterpolator(ds, [_DEFAULT_FIELD])
-    ray = OctreeRayInterpolator(interp)
-    return interp, ray
+def _time_call(fn, *args):
+    """Return `(result, seconds)` for one call."""
+    start = time.perf_counter()
+    out = fn(*args)
+    return out, time.perf_counter() - start
+
+
+def _load_ray_context() -> tuple[OctreeInterpolator, OctreeRayInterpolator, dict[str, float | str]]:
+    data_path, resolve_s = _time_call(_resolve_sc_data_file)
+    ds, read_s = _time_call(Dataset.from_file, str(data_path))
+    interp, interp_s = _time_call(OctreeInterpolator, ds, [_DEFAULT_FIELD])
+    ray, ray_s = _time_call(OctreeRayInterpolator, interp)
+    timing = {
+        "data_path": str(data_path),
+        "resolve_s": resolve_s,
+        "read_s": read_s,
+        "interp_s": interp_s,
+        "ray_s": ray_s,
+    }
+    return interp, ray, timing
 
 
 def _resolve_sc_data_file() -> Path:
@@ -202,7 +217,60 @@ def _save_frame(
     plt.close(fig)
 
 
+def _write_timing_report(
+    output_path: Path,
+    *,
+    resolution: int,
+    steps: int,
+    setup: dict[str, float | str],
+    scale_probe_s: float,
+    frame_render_s: list[float],
+    frame_save_s: list[float],
+    total_s: float,
+) -> None:
+    """Write one markdown timing report."""
+    render = np.asarray(frame_render_s, dtype=float)
+    save = np.asarray(frame_save_s, dtype=float)
+    lines = [
+        "# Flyby Timing Report",
+        "",
+        f"- resolution: `{resolution}x{resolution}`",
+        f"- steps: `{steps}`",
+        f"- data_path: `{setup['data_path']}`",
+        "",
+        "## Setup",
+        "",
+        f"- resolve_s: `{float(setup['resolve_s']):.6f}`",
+        f"- read_s: `{float(setup['read_s']):.6f}`",
+        f"- interp_s: `{float(setup['interp_s']):.6f}`",
+        f"- ray_s: `{float(setup['ray_s']):.6f}`",
+        f"- scale_probe_s: `{float(scale_probe_s):.6f}`",
+        "",
+        "## Frame Loop",
+        "",
+        "- octree/interpolator/ray objects are built once before the frame loop",
+        "- per-frame work only builds camera rays, integrates, and saves the image",
+        "",
+        f"- render_mean_s: `{float(np.mean(render)):.6f}`",
+        f"- render_max_s: `{float(np.max(render)):.6f}`",
+        f"- save_mean_s: `{float(np.mean(save)):.6f}`",
+        f"- save_max_s: `{float(np.max(save)):.6f}`",
+        f"- total_render_s: `{float(np.sum(render)):.6f}`",
+        f"- total_save_s: `{float(np.sum(save)):.6f}`",
+        f"- total_wall_s: `{float(total_s):.6f}`",
+        "",
+        "## Per Frame",
+        "",
+        "| frame | render_s | save_s | total_s |",
+        "|---:|---:|---:|---:|",
+    ]
+    for i, (r_s, s_s) in enumerate(zip(frame_render_s, frame_save_s, strict=True)):
+        lines.append(f"| {i} | {float(r_s):.6f} | {float(s_s):.6f} | {float(r_s + s_s):.6f} |")
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
+    total_start = time.perf_counter()
     args = _parse_args()
     resolution = int(args.resolution)
     steps = int(args.steps)
@@ -214,13 +282,14 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    interp, ray = _load_ray_context()
+    interp, ray, setup_timing = _load_ray_context()
     dmin, dmax = interp.tree.domain_bounds(coord="xyz")
     center_xyz = 0.5 * (np.asarray(dmin, dtype=float).reshape(3) + np.asarray(dmax, dtype=float).reshape(3))
     _r_lo, r_hi = interp.tree.domain_bounds(coord="rpa")
     r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
 
     eyes_xyz = _flyby_eye_positions(center_xyz, r_max, steps)
+    scale_start = time.perf_counter()
     vmin, vmax = _estimate_log_limits(
         ray,
         eyes_xyz=eyes_xyz,
@@ -228,10 +297,14 @@ def main() -> None:
         r_max=r_max,
         resolution=resolution,
     )
+    scale_probe_s = time.perf_counter() - scale_start
     print(f"Using log10 scale [{vmin:.3f}, {vmax:.3f}]")
 
+    frame_render_s: list[float] = []
+    frame_save_s: list[float] = []
     for i, eye_xyz in enumerate(eyes_xyz):
         print(f"Rendering frame {i + 1}/{steps}", flush=True)
+        render_start = time.perf_counter()
         values = _render_frame_values(
             ray,
             eye_xyz=eye_xyz,
@@ -239,6 +312,8 @@ def main() -> None:
             r_max=r_max,
             resolution=resolution,
         )
+        frame_render_s.append(time.perf_counter() - render_start)
+        save_start = time.perf_counter()
         _save_frame(
             values,
             eye_xyz=eye_xyz,
@@ -249,6 +324,18 @@ def main() -> None:
             frame_index=i,
             n_steps=steps,
         )
+        frame_save_s.append(time.perf_counter() - save_start)
+
+    _write_timing_report(
+        output_dir / "timing_report.md",
+        resolution=resolution,
+        steps=steps,
+        setup=setup_timing,
+        scale_probe_s=scale_probe_s,
+        frame_render_s=frame_render_s,
+        frame_save_s=frame_save_s,
+        total_s=time.perf_counter() - total_start,
+    )
 
 
 if __name__ == "__main__":
