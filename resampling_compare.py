@@ -19,6 +19,7 @@ import pooch
 from batread.dataset import Dataset
 
 from batcamp import Octree
+from batcamp import FlatCamera
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 from batcamp.topological import build_topological_neighborhood
@@ -243,15 +244,8 @@ def _ray_setup(
     bounds: tuple[float, float, float, float, float, float],
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Build origins/direction/extent for one (z, y) ray image plane."""
-    xmin, xmax, ymin, ymax, zmin, zmax = bounds
-    y = np.linspace(ymin, ymax, int(n_plane), dtype=float)
-    z = np.linspace(zmin, zmax, int(n_plane), dtype=float)
-    yg, zg = np.meshgrid(y, z, indexing="xy")
-    x_span = float(xmax - xmin)
-    x0 = float(xmin - 1.0e-6 * max(1.0, x_span))
-    origins = np.column_stack((np.full(yg.size, x0, dtype=float), yg.ravel(), zg.ravel()))
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    t_end = float((xmax - x0) * 0.999999)
+    camera = FlatCamera.from_domain_x(bounds)
+    origins, direction, t_end, _shape = camera.rays(ny=int(n_plane), nz=int(n_plane))
     return origins, direction, t_end
 
 

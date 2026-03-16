@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
 from typing import NamedTuple
@@ -85,6 +86,134 @@ class SphericalRayCellGeometry(NamedTuple):
     cell_pden: np.ndarray
     cell_phi_full: np.ndarray
     cell_phi_tiny: np.ndarray
+
+
+def _camera_xyz(value: np.ndarray, *, name: str) -> np.ndarray:
+    """Return one finite Cartesian 3-vector for camera setup."""
+    xyz = np.asarray(value, dtype=float).reshape(3)
+    if not np.all(np.isfinite(xyz)):
+        raise ValueError(f"{name} must be finite.")
+    return xyz
+
+
+def _normalize_camera_xyz(value: np.ndarray, *, name: str) -> np.ndarray:
+    """Return one normalized finite Cartesian 3-vector for camera setup."""
+    xyz = _camera_xyz(value, name=name)
+    norm = float(np.linalg.norm(xyz))
+    if norm == 0.0:
+        raise ValueError(f"{name} must be non-zero.")
+    return xyz / norm
+
+
+def _camera_basis(forward_xyz: np.ndarray, up_hint_xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return orthonormal `(forward, right, up)` camera axes."""
+    forward = _normalize_camera_xyz(forward_xyz, name="forward_xyz")
+    up_hint = _normalize_camera_xyz(up_hint_xyz, name="up_hint_xyz")
+    right = np.cross(up_hint, forward)
+    right_norm = float(np.linalg.norm(right))
+    if right_norm == 0.0:
+        raise ValueError("up_hint_xyz must not be parallel to forward_xyz.")
+    right = right / right_norm
+    up = np.cross(forward, right)
+    up = up / float(np.linalg.norm(up))
+    return forward, right, up
+
+
+@dataclass(frozen=True)
+class FlatCamera:
+    """Orthographic camera with one rectangular launch plane and shared ray direction."""
+
+    plane_center_xyz: np.ndarray
+    forward_xyz: np.ndarray
+    up_hint_xyz: np.ndarray
+    width: float
+    height: float
+    t_end: float
+
+    @classmethod
+    def from_domain_x(
+        cls,
+        bounds: tuple[float, float, float, float, float, float],
+        *,
+        pad_fraction: float = 1.0e-6,
+        t_scale: float = 0.999999,
+    ) -> "FlatCamera":
+        """Build the current compare-style `+x` flat camera from XYZ bounds."""
+        xmin, xmax, ymin, ymax, zmin, zmax = bounds
+        x_span = float(xmax - xmin)
+        x0 = float(xmin - float(pad_fraction) * max(1.0, x_span))
+        return cls(
+            plane_center_xyz=np.array([x0, 0.5 * (ymin + ymax), 0.5 * (zmin + zmax)], dtype=float),
+            forward_xyz=np.array([1.0, 0.0, 0.0], dtype=float),
+            up_hint_xyz=np.array([0.0, 0.0, 1.0], dtype=float),
+            width=float(ymax - ymin),
+            height=float(zmax - zmin),
+            t_end=float((xmax - x0) * float(t_scale)),
+        )
+
+    def rays(self, *, ny: int, nz: int) -> tuple[np.ndarray, np.ndarray, float, tuple[int, int]]:
+        """Return `(origins, direction, t_end, image_shape)` for one `(z, y)` image."""
+        ny = int(ny)
+        nz = int(nz)
+        if ny <= 0 or nz <= 0:
+            raise ValueError("ny and nz must be positive.")
+        if float(self.width) <= 0.0 or float(self.height) <= 0.0:
+            raise ValueError("Flat camera width and height must be positive.")
+        if float(self.t_end) <= 0.0:
+            raise ValueError("Flat camera t_end must be positive.")
+
+        center = _camera_xyz(self.plane_center_xyz, name="plane_center_xyz")
+        forward, right, up = _camera_basis(self.forward_xyz, self.up_hint_xyz)
+        y = np.linspace(-0.5 * float(self.width), 0.5 * float(self.width), ny, dtype=float)
+        z = np.linspace(-0.5 * float(self.height), 0.5 * float(self.height), nz, dtype=float)
+        yg, zg = np.meshgrid(y, z, indexing="xy")
+        origins = (
+            center[None, None, :]
+            + yg[:, :, None] * right[None, None, :]
+            + zg[:, :, None] * up[None, None, :]
+        ).reshape(-1, 3)
+        return origins, forward, float(self.t_end), (nz, ny)
+
+
+@dataclass(frozen=True)
+class FovCamera:
+    """Perspective camera with one pinhole eye and per-pixel ray directions."""
+
+    eye_xyz: np.ndarray
+    target_xyz: np.ndarray
+    up_hint_xyz: np.ndarray
+    vertical_fov_degrees: float
+    t_end: float
+
+    def rays(self, *, ny: int, nz: int) -> tuple[np.ndarray, np.ndarray, float, tuple[int, int]]:
+        """Return `(origins, directions, t_end, image_shape)` for one `(z, y)` image."""
+        ny = int(ny)
+        nz = int(nz)
+        if ny <= 0 or nz <= 0:
+            raise ValueError("ny and nz must be positive.")
+        vfov = float(self.vertical_fov_degrees)
+        if vfov <= 0.0 or vfov >= 180.0:
+            raise ValueError("vertical_fov_degrees must be in (0, 180).")
+        if float(self.t_end) <= 0.0:
+            raise ValueError("FOV camera t_end must be positive.")
+
+        eye = _camera_xyz(self.eye_xyz, name="eye_xyz")
+        target = _camera_xyz(self.target_xyz, name="target_xyz")
+        forward, right, up = _camera_basis(target - eye, self.up_hint_xyz)
+
+        half_height = math.tan(0.5 * math.radians(vfov))
+        half_width = (float(ny) / float(nz)) * half_height
+        y = np.linspace(-half_width, half_width, ny, dtype=float)
+        z = np.linspace(-half_height, half_height, nz, dtype=float)
+        yg, zg = np.meshgrid(y, z, indexing="xy")
+        directions = (
+            forward[None, None, :]
+            + yg[:, :, None] * right[None, None, :]
+            + zg[:, :, None] * up[None, None, :]
+        )
+        directions = directions / np.linalg.norm(directions, axis=2, keepdims=True)
+        origins = np.broadcast_to(eye.reshape(1, 1, 3), directions.shape).reshape(-1, 3).copy()
+        return origins, directions.reshape(-1, 3), float(self.t_end), (nz, ny)
 
 
 _TARGET_UNIT_CORNERS = np.array(
