@@ -149,35 +149,25 @@ def _render_frame_values(
     return values
 
 
-def _estimate_log_limits(
-    ray: OctreeRayInterpolator,
-    *,
-    eyes_xyz: np.ndarray,
-    center_xyz: np.ndarray,
-    r_max: float,
-    resolution: int,
-) -> tuple[float, float]:
-    """Estimate one stable log scale from a small probe of flyby frames."""
-    probe_resolution = min(int(resolution), 64)
-    sample_count = min(int(eyes_xyz.shape[0]), 9)
-    sample_ids = np.linspace(0, int(eyes_xyz.shape[0]) - 1, sample_count, dtype=int)
+def _image_extent(*, resolution: int) -> tuple[float, float, float, float]:
+    """Return image-plane extent in camera coordinates."""
+    half_height = float(np.tan(0.5 * np.deg2rad(_DEFAULT_VERTICAL_FOV_DEGREES)))
+    half_width = (float(resolution) / float(resolution)) * half_height
+    return (-half_width, half_width, -half_height, half_height)
+
+
+def _true_log_limits(frames: list[np.ndarray]) -> tuple[float, float]:
+    """Return exact global log10 min/max over all positive finite frame values."""
     logs: list[np.ndarray] = []
-    for idx in sample_ids:
-        frame = _render_frame_values(
-            ray,
-            eye_xyz=eyes_xyz[int(idx)],
-            center_xyz=center_xyz,
-            r_max=r_max,
-            resolution=probe_resolution,
-        )
+    for frame in frames:
         positive = frame[np.isfinite(frame) & (frame > 0.0)]
         if positive.size > 0:
             logs.append(np.log10(positive))
     if not logs:
         return -30.0, -10.0
     merged = np.concatenate(logs)
-    vmin = float(np.nanpercentile(merged, 1.0))
-    vmax = float(np.nanpercentile(merged, 99.5))
+    vmin = float(np.min(merged))
+    vmax = float(np.max(merged))
     if vmax <= vmin:
         vmax = vmin + 1.0
     return vmin, vmax
@@ -193,6 +183,7 @@ def _save_frame(
     output_path: Path,
     frame_index: int,
     n_steps: int,
+    extent: tuple[float, float, float, float],
 ) -> None:
     """Save one rendered frame."""
     positive = np.isfinite(values) & (values > 0.0)
@@ -204,15 +195,23 @@ def _save_frame(
 
     fig, ax = plt.subplots(figsize=(7.0, 7.0))
     ax.set_facecolor("black")
-    ax.imshow(plot, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.set_xticks([])
-    ax.set_yticks([])
+    fig.patch.set_facecolor("black")
+    im = ax.imshow(plot, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax, extent=extent, aspect="equal")
+    ax.set_xlabel("image x", color="white")
+    ax.set_ylabel("image y", color="white")
+    ax.tick_params(colors="white")
+    for spine in ax.spines.values():
+        spine.set_color("white")
     distance = float(np.linalg.norm(np.asarray(eye_xyz, dtype=float) - np.asarray(center_xyz, dtype=float)))
     ax.set_title(
         f"Flyby frame {frame_index + 1}/{n_steps}  |  eye distance {distance:.2f} R",
         color="white",
         pad=10.0,
     )
+    cb = fig.colorbar(im, ax=ax, orientation="horizontal", pad=0.08, fraction=0.05)
+    cb.set_label("log10(column density)", color="white")
+    cb.ax.xaxis.set_tick_params(color="white", labelcolor="white")
+    cb.outline.set_edgecolor("white")
     fig.savefig(output_path, dpi=160, bbox_inches="tight", facecolor="black")
     plt.close(fig)
 
@@ -223,7 +222,8 @@ def _write_timing_report(
     resolution: int,
     steps: int,
     setup: dict[str, float | str],
-    scale_probe_s: float,
+    vmin: float,
+    vmax: float,
     frame_render_s: list[float],
     frame_save_s: list[float],
     total_s: float,
@@ -237,6 +237,8 @@ def _write_timing_report(
         f"- resolution: `{resolution}x{resolution}`",
         f"- steps: `{steps}`",
         f"- data_path: `{setup['data_path']}`",
+        f"- log10_vmin: `{float(vmin):.6f}`",
+        f"- log10_vmax: `{float(vmax):.6f}`",
         "",
         "## Setup",
         "",
@@ -244,12 +246,12 @@ def _write_timing_report(
         f"- read_s: `{float(setup['read_s']):.6f}`",
         f"- interp_s: `{float(setup['interp_s']):.6f}`",
         f"- ray_s: `{float(setup['ray_s']):.6f}`",
-        f"- scale_probe_s: `{float(scale_probe_s):.6f}`",
         "",
         "## Frame Loop",
         "",
         "- octree/interpolator/ray objects are built once before the frame loop",
         "- per-frame work only builds camera rays, integrates, and saves the image",
+        "- color scale uses the true global min/max over the rendered frames",
         "",
         f"- render_mean_s: `{float(np.mean(render)):.6f}`",
         f"- render_max_s: `{float(np.max(render)):.6f}`",
@@ -287,21 +289,11 @@ def main() -> None:
     center_xyz = 0.5 * (np.asarray(dmin, dtype=float).reshape(3) + np.asarray(dmax, dtype=float).reshape(3))
     _r_lo, r_hi = interp.tree.domain_bounds(coord="rpa")
     r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
+    extent = _image_extent(resolution=resolution)
 
     eyes_xyz = _flyby_eye_positions(center_xyz, r_max, steps)
-    scale_start = time.perf_counter()
-    vmin, vmax = _estimate_log_limits(
-        ray,
-        eyes_xyz=eyes_xyz,
-        center_xyz=center_xyz,
-        r_max=r_max,
-        resolution=resolution,
-    )
-    scale_probe_s = time.perf_counter() - scale_start
-    print(f"Using log10 scale [{vmin:.3f}, {vmax:.3f}]")
-
+    frames: list[np.ndarray] = []
     frame_render_s: list[float] = []
-    frame_save_s: list[float] = []
     for i, eye_xyz in enumerate(eyes_xyz):
         print(f"Rendering frame {i + 1}/{steps}", flush=True)
         render_start = time.perf_counter()
@@ -313,6 +305,14 @@ def main() -> None:
             resolution=resolution,
         )
         frame_render_s.append(time.perf_counter() - render_start)
+        frames.append(values)
+
+    vmin, vmax = _true_log_limits(frames)
+    print(f"Using log10 scale [{vmin:.3f}, {vmax:.3f}]")
+
+    frame_save_s: list[float] = []
+    for i, (eye_xyz, values) in enumerate(zip(eyes_xyz, frames, strict=True)):
+        print(f"Saving frame {i + 1}/{steps}", flush=True)
         save_start = time.perf_counter()
         _save_frame(
             values,
@@ -323,6 +323,7 @@ def main() -> None:
             output_path=output_dir / f"frame_{i:04d}.png",
             frame_index=i,
             n_steps=steps,
+            extent=extent,
         )
         frame_save_s.append(time.perf_counter() - save_start)
 
@@ -331,7 +332,8 @@ def main() -> None:
         resolution=resolution,
         steps=steps,
         setup=setup_timing,
-        scale_probe_s=scale_probe_s,
+        vmin=vmin,
+        vmax=vmax,
         frame_render_s=frame_render_s,
         frame_save_s=frame_save_s,
         total_s=time.perf_counter() - total_start,
