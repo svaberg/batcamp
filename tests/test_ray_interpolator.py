@@ -469,6 +469,31 @@ def test_example_specific_failing_ray_matches_dense_oracle() -> None:
     assert np.isclose(direct, oracle, rtol=1e-2, atol=0.0)
 
 
+def test_example_nan_ray_should_not_miss_finite_grid_signal() -> None:
+    """Provided example: known `grid_pos_ray_nan` ray should stay finite."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    ray = OctreeRayInterpolator(interp)
+
+    dmin, dmax = interp.tree.domain_bounds(coord="xyz")
+    x_span = float(dmax[0] - dmin[0])
+    x0 = float(dmin[0] - 1.0e-6 * max(1.0, x_span))
+    origin = np.array(
+        [x0, -8.961876832844574, -47.15542521994135],
+        dtype=float,
+    )
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    t_end = float((float(dmax[0]) - x0) * 0.999999)
+
+    direct = float(np.asarray(ray.integrate_field_along_rays(origin[None, :], direction, 0.0, t_end), dtype=float)[0])
+    oracle = _dense_ray_oracle(interp, origin, direction, 0.0, t_end, n_samples=16384)
+
+    assert np.isfinite(oracle)
+    assert oracle > 0.0
+    assert np.isfinite(direct)
+    assert np.isclose(direct, oracle, rtol=1e-2, atol=0.0)
+
+
 def test_vector_integrals_shape_on_all_miss() -> None:
     """Vector ray integration should keep `(n_rays, n_components)` shape on all misses."""
     ds = _build_fake_cartesian_dataset()
