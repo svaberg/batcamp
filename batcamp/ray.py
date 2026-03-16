@@ -2020,7 +2020,8 @@ def _trace_segments_rpa_kernel(
 @njit(cache=True, parallel=True)
 def _segment_counts_xyz_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_start: float,
     t_end: float,
     max_steps: int,
@@ -2032,26 +2033,43 @@ def _segment_counts_xyz_kernel(
     """Count traced segments for each ray on Cartesian trees."""
     n_rays = int(origins_xyz.shape[0])
     counts = np.zeros(n_rays, dtype=np.int64)
-    for i in prange(n_rays):
-        n_seg, _cids, _enters, _exits = _trace_segments_xyz_kernel(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            max_steps,
-            boundary_tol,
-            seed_lookup_state,
-            cell_lookup_state,
-            topo_state,
-        )
-        counts[i] = int(n_seg)
+    if shared_direction:
+        d = directions_xyz_unit[0]
+        for i in prange(n_rays):
+            n_seg, _cids, _enters, _exits = _trace_segments_xyz_kernel(
+                origins_xyz[i],
+                d,
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                cell_lookup_state,
+                topo_state,
+            )
+            counts[i] = int(n_seg)
+    else:
+        for i in prange(n_rays):
+            n_seg, _cids, _enters, _exits = _trace_segments_xyz_kernel(
+                origins_xyz[i],
+                directions_xyz_unit[i],
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                cell_lookup_state,
+                topo_state,
+            )
+            counts[i] = int(n_seg)
     return counts
 
 
 @njit(cache=True, parallel=True)
 def _segment_counts_rpa_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_start: float,
     t_end: float,
     max_steps: int,
@@ -2064,27 +2082,45 @@ def _segment_counts_rpa_kernel(
     """Count traced segments for each ray on spherical trees."""
     n_rays = int(origins_xyz.shape[0])
     counts = np.zeros(n_rays, dtype=np.int64)
-    for i in prange(n_rays):
-        n_seg, _cids, _enters, _exits = _trace_segments_rpa_kernel(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            max_steps,
-            boundary_tol,
-            seed_lookup_state,
-            topo_state,
-            seed_plane_state,
-            plane_state,
-        )
-        counts[i] = int(n_seg)
+    if shared_direction:
+        d = directions_xyz_unit[0]
+        for i in prange(n_rays):
+            n_seg, _cids, _enters, _exits = _trace_segments_rpa_kernel(
+                origins_xyz[i],
+                d,
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                topo_state,
+                seed_plane_state,
+                plane_state,
+            )
+            counts[i] = int(n_seg)
+    else:
+        for i in prange(n_rays):
+            n_seg, _cids, _enters, _exits = _trace_segments_rpa_kernel(
+                origins_xyz[i],
+                directions_xyz_unit[i],
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                topo_state,
+                seed_plane_state,
+                plane_state,
+            )
+            counts[i] = int(n_seg)
     return counts
 
 
 @njit(cache=True)
 def _fill_traces_xyz_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_start: float,
     t_end: float,
     max_steps: int,
@@ -2099,29 +2135,50 @@ def _fill_traces_xyz_kernel(
 ) -> None:
     """Fill flattened trace arrays from per-ray offsets on Cartesian trees."""
     n_rays = int(origins_xyz.shape[0])
-    for i in range(n_rays):
-        n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            max_steps,
-            boundary_tol,
-            seed_lookup_state,
-            cell_lookup_state,
-            topo_state,
-        )
-        base = int(ray_offsets[i])
-        for j in range(int(n_seg)):
-            out_cell_ids[base + j] = int(cids[j])
-            out_t_enter[base + j] = float(enters[j])
-            out_t_exit[base + j] = float(exits[j])
+    if shared_direction:
+        d = directions_xyz_unit[0]
+        for i in range(n_rays):
+            n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+                origins_xyz[i],
+                d,
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                cell_lookup_state,
+                topo_state,
+            )
+            base = int(ray_offsets[i])
+            for j in range(int(n_seg)):
+                out_cell_ids[base + j] = int(cids[j])
+                out_t_enter[base + j] = float(enters[j])
+                out_t_exit[base + j] = float(exits[j])
+    else:
+        for i in range(n_rays):
+            n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+                origins_xyz[i],
+                directions_xyz_unit[i],
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                cell_lookup_state,
+                topo_state,
+            )
+            base = int(ray_offsets[i])
+            for j in range(int(n_seg)):
+                out_cell_ids[base + j] = int(cids[j])
+                out_t_enter[base + j] = float(enters[j])
+                out_t_exit[base + j] = float(exits[j])
 
 
 @njit(cache=True)
 def _fill_traces_rpa_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_start: float,
     t_end: float,
     max_steps: int,
@@ -2137,30 +2194,52 @@ def _fill_traces_rpa_kernel(
 ) -> None:
     """Fill flattened trace arrays from per-ray offsets on spherical trees."""
     n_rays = int(origins_xyz.shape[0])
-    for i in range(n_rays):
-        n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            max_steps,
-            boundary_tol,
-            seed_lookup_state,
-            topo_state,
-            seed_plane_state,
-            plane_state,
-        )
-        base = int(ray_offsets[i])
-        for j in range(int(n_seg)):
-            out_cell_ids[base + j] = int(cids[j])
-            out_t_enter[base + j] = float(enters[j])
-            out_t_exit[base + j] = float(exits[j])
+    if shared_direction:
+        d = directions_xyz_unit[0]
+        for i in range(n_rays):
+            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                origins_xyz[i],
+                d,
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                topo_state,
+                seed_plane_state,
+                plane_state,
+            )
+            base = int(ray_offsets[i])
+            for j in range(int(n_seg)):
+                out_cell_ids[base + j] = int(cids[j])
+                out_t_enter[base + j] = float(enters[j])
+                out_t_exit[base + j] = float(exits[j])
+    else:
+        for i in range(n_rays):
+            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                origins_xyz[i],
+                directions_xyz_unit[i],
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                topo_state,
+                seed_plane_state,
+                plane_state,
+            )
+            base = int(ray_offsets[i])
+            for j in range(int(n_seg)):
+                out_cell_ids[base + j] = int(cids[j])
+                out_t_enter[base + j] = float(enters[j])
+                out_t_exit[base + j] = float(exits[j])
 
 
 @njit(cache=True, parallel=True)
 def _midpoints_from_segments_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_enter: np.ndarray,
     t_exit: np.ndarray,
     ray_offsets: np.ndarray,
@@ -2169,31 +2248,51 @@ def _midpoints_from_segments_kernel(
     n_seg_total = int(t_enter.shape[0])
     mids = np.empty((n_seg_total, 3), dtype=np.float64)
     weights = np.empty(n_seg_total, dtype=np.float64)
-    d0 = float(direction_xyz_unit[0])
-    d1 = float(direction_xyz_unit[1])
-    d2 = float(direction_xyz_unit[2])
     n_rays = int(origins_xyz.shape[0])
-    for i in prange(n_rays):
-        base = int(ray_offsets[i])
-        end = int(ray_offsets[i + 1])
-        ox = float(origins_xyz[i, 0])
-        oy = float(origins_xyz[i, 1])
-        oz = float(origins_xyz[i, 2])
-        for k in range(base, end):
-            ta = float(t_enter[k])
-            tb = float(t_exit[k])
-            tm = 0.5 * (ta + tb)
-            mids[k, 0] = ox + tm * d0
-            mids[k, 1] = oy + tm * d1
-            mids[k, 2] = oz + tm * d2
-            weights[k] = max(0.0, tb - ta)
+    if shared_direction:
+        d0 = float(directions_xyz_unit[0, 0])
+        d1 = float(directions_xyz_unit[0, 1])
+        d2 = float(directions_xyz_unit[0, 2])
+        for i in prange(n_rays):
+            base = int(ray_offsets[i])
+            end = int(ray_offsets[i + 1])
+            ox = float(origins_xyz[i, 0])
+            oy = float(origins_xyz[i, 1])
+            oz = float(origins_xyz[i, 2])
+            for k in range(base, end):
+                ta = float(t_enter[k])
+                tb = float(t_exit[k])
+                tm = 0.5 * (ta + tb)
+                mids[k, 0] = ox + tm * d0
+                mids[k, 1] = oy + tm * d1
+                mids[k, 2] = oz + tm * d2
+                weights[k] = max(0.0, tb - ta)
+    else:
+        for i in prange(n_rays):
+            base = int(ray_offsets[i])
+            end = int(ray_offsets[i + 1])
+            ox = float(origins_xyz[i, 0])
+            oy = float(origins_xyz[i, 1])
+            oz = float(origins_xyz[i, 2])
+            d0 = float(directions_xyz_unit[i, 0])
+            d1 = float(directions_xyz_unit[i, 1])
+            d2 = float(directions_xyz_unit[i, 2])
+            for k in range(base, end):
+                ta = float(t_enter[k])
+                tb = float(t_exit[k])
+                tm = 0.5 * (ta + tb)
+                mids[k, 0] = ox + tm * d0
+                mids[k, 1] = oy + tm * d1
+                mids[k, 2] = oz + tm * d2
+                weights[k] = max(0.0, tb - ta)
     return mids, weights
 
 
 @njit(cache=True, parallel=True)
 def _integrate_rays_xyz_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_start: float,
     t_end: float,
     max_steps: int,
@@ -2208,73 +2307,109 @@ def _integrate_rays_xyz_kernel(
     n_rays = int(origins_xyz.shape[0])
     ncomp = int(interp_state.point_values_2d.shape[1])
     out = np.full((n_rays, ncomp), np.nan, dtype=np.float64)
-    d0 = float(direction_xyz_unit[0])
-    d1 = float(direction_xyz_unit[1])
-    d2 = float(direction_xyz_unit[2])
-    for i in prange(n_rays):
-        n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            max_steps,
-            boundary_tol,
-            seed_lookup_state,
-            cell_lookup_state,
-            topo_state,
-        )
-        if n_seg <= 0:
-            continue
-        acc = np.zeros(ncomp, dtype=np.float64)
-        row = np.empty(ncomp, dtype=np.float64)
-        ox = float(origins_xyz[i, 0])
-        oy = float(origins_xyz[i, 1])
-        oz = float(origins_xyz[i, 2])
-        used = False
-        for j in range(int(n_seg)):
-            ta = float(enters[j])
-            tb = float(exits[j])
-            dt = tb - ta
-            if dt <= 0.0:
+    if shared_direction:
+        d0 = float(directions_xyz_unit[0, 0])
+        d1 = float(directions_xyz_unit[0, 1])
+        d2 = float(directions_xyz_unit[0, 2])
+        d = directions_xyz_unit[0]
+        for i in prange(n_rays):
+            n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+                origins_xyz[i],
+                d,
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                cell_lookup_state,
+                topo_state,
+            )
+            if n_seg <= 0:
                 continue
-            tm = 0.5 * (ta + tb)
-            th = 0.5 * dt
-            tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
-            tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
-            x = ox + tg0 * d0
-            y = oy + tg0 * d1
-            z = oz + tg0 * d2
-            _trilinear_from_cell(
-                row,
-                int(cids[j]),
-                x,
-                y,
-                z,
-                interp_state,
+            acc = np.zeros(ncomp, dtype=np.float64)
+            row = np.empty(ncomp, dtype=np.float64)
+            ox = float(origins_xyz[i, 0])
+            oy = float(origins_xyz[i, 1])
+            oz = float(origins_xyz[i, 2])
+            used = False
+            for j in range(int(n_seg)):
+                ta = float(enters[j])
+                tb = float(exits[j])
+                dt = tb - ta
+                if dt <= 0.0:
+                    continue
+                tm = 0.5 * (ta + tb)
+                th = 0.5 * dt
+                tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
+                tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
+                x = ox + tg0 * d0
+                y = oy + tg0 * d1
+                z = oz + tg0 * d2
+                _trilinear_from_cell(row, int(cids[j]), x, y, z, interp_state)
+                acc += row * th
+                x = ox + tg1 * d0
+                y = oy + tg1 * d1
+                z = oz + tg1 * d2
+                _trilinear_from_cell(row, int(cids[j]), x, y, z, interp_state)
+                acc += row * th
+                used = True
+            if used:
+                out[i, :] = scale * acc
+    else:
+        for i in prange(n_rays):
+            d0 = float(directions_xyz_unit[i, 0])
+            d1 = float(directions_xyz_unit[i, 1])
+            d2 = float(directions_xyz_unit[i, 2])
+            n_seg, cids, enters, exits = _trace_segments_xyz_kernel(
+                origins_xyz[i],
+                directions_xyz_unit[i],
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                cell_lookup_state,
+                topo_state,
             )
-            acc += row * th
-            x = ox + tg1 * d0
-            y = oy + tg1 * d1
-            z = oz + tg1 * d2
-            _trilinear_from_cell(
-                row,
-                int(cids[j]),
-                x,
-                y,
-                z,
-                interp_state,
-            )
-            acc += row * th
-            used = True
-        if used:
-            out[i, :] = scale * acc
+            if n_seg <= 0:
+                continue
+            acc = np.zeros(ncomp, dtype=np.float64)
+            row = np.empty(ncomp, dtype=np.float64)
+            ox = float(origins_xyz[i, 0])
+            oy = float(origins_xyz[i, 1])
+            oz = float(origins_xyz[i, 2])
+            used = False
+            for j in range(int(n_seg)):
+                ta = float(enters[j])
+                tb = float(exits[j])
+                dt = tb - ta
+                if dt <= 0.0:
+                    continue
+                tm = 0.5 * (ta + tb)
+                th = 0.5 * dt
+                tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
+                tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
+                x = ox + tg0 * d0
+                y = oy + tg0 * d1
+                z = oz + tg0 * d2
+                _trilinear_from_cell(row, int(cids[j]), x, y, z, interp_state)
+                acc += row * th
+                x = ox + tg1 * d0
+                y = oy + tg1 * d1
+                z = oz + tg1 * d2
+                _trilinear_from_cell(row, int(cids[j]), x, y, z, interp_state)
+                acc += row * th
+                used = True
+            if used:
+                out[i, :] = scale * acc
     return out
 
 
 @njit(cache=True, parallel=True)
 def _integrate_rays_rpa_kernel(
     origins_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
+    directions_xyz_unit: np.ndarray,
+    shared_direction: bool,
     t_start: float,
     t_end: float,
     max_steps: int,
@@ -2290,69 +2425,107 @@ def _integrate_rays_rpa_kernel(
     n_rays = int(origins_xyz.shape[0])
     ncomp = int(interp_state.point_values_2d.shape[1])
     out = np.full((n_rays, ncomp), np.nan, dtype=np.float64)
-    d0 = float(direction_xyz_unit[0])
-    d1 = float(direction_xyz_unit[1])
-    d2 = float(direction_xyz_unit[2])
-    for i in prange(n_rays):
-        n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
-            origins_xyz[i],
-            direction_xyz_unit,
-            t_start,
-            t_end,
-            max_steps,
-            boundary_tol,
-            seed_lookup_state,
-            topo_state,
-            seed_plane_state,
-            plane_state,
-        )
-        if n_seg <= 0:
-            continue
-        acc = np.zeros(ncomp, dtype=np.float64)
-        row = np.empty(ncomp, dtype=np.float64)
-        ox = float(origins_xyz[i, 0])
-        oy = float(origins_xyz[i, 1])
-        oz = float(origins_xyz[i, 2])
-        used = False
-        for j in range(int(n_seg)):
-            ta = float(enters[j])
-            tb = float(exits[j])
-            dt = tb - ta
-            if dt <= 0.0:
+    if shared_direction:
+        d0 = float(directions_xyz_unit[0, 0])
+        d1 = float(directions_xyz_unit[0, 1])
+        d2 = float(directions_xyz_unit[0, 2])
+        d = directions_xyz_unit[0]
+        for i in prange(n_rays):
+            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                origins_xyz[i],
+                d,
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                topo_state,
+                seed_plane_state,
+                plane_state,
+            )
+            if n_seg <= 0:
                 continue
-            tm = 0.5 * (ta + tb)
-            th = 0.5 * dt
-            tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
-            tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
-            x = ox + tg0 * d0
-            y = oy + tg0 * d1
-            z = oz + tg0 * d2
-            r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-            _trilinear_from_cell_rpa(
-                row,
-                int(cids[j]),
-                r,
-                polar,
-                azimuth,
-                interp_state,
+            acc = np.zeros(ncomp, dtype=np.float64)
+            row = np.empty(ncomp, dtype=np.float64)
+            ox = float(origins_xyz[i, 0])
+            oy = float(origins_xyz[i, 1])
+            oz = float(origins_xyz[i, 2])
+            used = False
+            for j in range(int(n_seg)):
+                ta = float(enters[j])
+                tb = float(exits[j])
+                dt = tb - ta
+                if dt <= 0.0:
+                    continue
+                tm = 0.5 * (ta + tb)
+                th = 0.5 * dt
+                tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
+                tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
+                x = ox + tg0 * d0
+                y = oy + tg0 * d1
+                z = oz + tg0 * d2
+                r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+                _trilinear_from_cell_rpa(row, int(cids[j]), r, polar, azimuth, interp_state)
+                acc += row * th
+                x = ox + tg1 * d0
+                y = oy + tg1 * d1
+                z = oz + tg1 * d2
+                r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+                _trilinear_from_cell_rpa(row, int(cids[j]), r, polar, azimuth, interp_state)
+                acc += row * th
+                used = True
+            if used:
+                out[i, :] = scale * acc
+    else:
+        for i in prange(n_rays):
+            d0 = float(directions_xyz_unit[i, 0])
+            d1 = float(directions_xyz_unit[i, 1])
+            d2 = float(directions_xyz_unit[i, 2])
+            n_seg, cids, enters, exits = _trace_segments_rpa_kernel(
+                origins_xyz[i],
+                directions_xyz_unit[i],
+                t_start,
+                t_end,
+                max_steps,
+                boundary_tol,
+                seed_lookup_state,
+                topo_state,
+                seed_plane_state,
+                plane_state,
             )
-            acc += row * th
-            x = ox + tg1 * d0
-            y = oy + tg1 * d1
-            z = oz + tg1 * d2
-            r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-            _trilinear_from_cell_rpa(
-                row,
-                int(cids[j]),
-                r,
-                polar,
-                azimuth,
-                interp_state,
-            )
-            acc += row * th
-            used = True
-        if used:
-            out[i, :] = scale * acc
+            if n_seg <= 0:
+                continue
+            acc = np.zeros(ncomp, dtype=np.float64)
+            row = np.empty(ncomp, dtype=np.float64)
+            ox = float(origins_xyz[i, 0])
+            oy = float(origins_xyz[i, 1])
+            oz = float(origins_xyz[i, 2])
+            used = False
+            for j in range(int(n_seg)):
+                ta = float(enters[j])
+                tb = float(exits[j])
+                dt = tb - ta
+                if dt <= 0.0:
+                    continue
+                tm = 0.5 * (ta + tb)
+                th = 0.5 * dt
+                tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
+                tg1 = tm + th * _GAUSS_LEGENDRE_2_ABSCISSA
+                x = ox + tg0 * d0
+                y = oy + tg0 * d1
+                z = oz + tg0 * d2
+                r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+                _trilinear_from_cell_rpa(row, int(cids[j]), r, polar, azimuth, interp_state)
+                acc += row * th
+                x = ox + tg1 * d0
+                y = oy + tg1 * d1
+                z = oz + tg1 * d2
+                r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
+                _trilinear_from_cell_rpa(row, int(cids[j]), r, polar, azimuth, interp_state)
+                acc += row * th
+                used = True
+            if used:
+                out[i, :] = scale * acc
     return out
 
 
@@ -2386,9 +2559,11 @@ def _coerce_directions_xyz(direction_xyz: np.ndarray, *, n_rays: int) -> tuple[n
     """Validate directions and return `(directions, shared)`."""
     direction = np.asarray(direction_xyz, dtype=float)
     if direction.ndim == 1:
-        return _normalize_direction(direction), True
+        return _normalize_direction(direction).reshape(1, 3), True
     if direction.ndim != 2 or direction.shape[1] != 3:
         raise ValueError("direction_xyz must have shape (3,) or (n_rays, 3).")
+    if int(direction.shape[0]) == 1:
+        return _normalize_direction(direction[0]).reshape(1, 3), True
     if int(direction.shape[0]) != int(n_rays):
         raise ValueError("direction_xyz with shape (n_rays, 3) must match origins_xyz.")
     norms = np.linalg.norm(direction, axis=1)
@@ -2667,7 +2842,7 @@ class OctreeRayTracer:
     ) -> np.ndarray:
         """Return traced segment count for each ray."""
         origins = _coerce_origins_xyz(origins_xyz)
-        d = _normalize_direction(direction_xyz)
+        directions, shared = _coerce_directions_xyz(direction_xyz, n_rays=int(origins.shape[0]))
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         chunk = _coerce_positive_chunk_size(chunk_size)
         max_steps = _coerce_positive_int("max_steps", max_steps)
@@ -2690,9 +2865,11 @@ class OctreeRayTracer:
                         "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
                         f"got {type(cell_lookup_state).__name__}."
                     )
+                dir_sub = directions if shared else directions[start:stop]
                 counts[start:stop] = _segment_counts_xyz_kernel(
                     sub,
-                    d,
+                    dir_sub,
+                    shared,
                     t0,
                     t1,
                     int(max_steps),
@@ -2718,9 +2895,11 @@ class OctreeRayTracer:
                         "Spherical ray tracing requires CellPlaneKernelState for active cells; "
                         f"got {type(self._cell_plane_state).__name__}."
                     )
+                dir_sub = directions if shared else directions[start:stop]
                 counts[start:stop] = _segment_counts_rpa_kernel(
                     sub,
-                    d,
+                    dir_sub,
+                    shared,
                     t0,
                     t1,
                     int(max_steps),
@@ -2746,7 +2925,7 @@ class OctreeRayTracer:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Trace many rays and return flattened arrays plus `ray_offsets`."""
         origins = _coerce_origins_xyz(origins_xyz)
-        d = _normalize_direction(direction_xyz)
+        directions, shared = _coerce_directions_xyz(direction_xyz, n_rays=int(origins.shape[0]))
         t0, t1 = _coerce_ray_interval(t_start, t_end)
         max_steps = _coerce_positive_int("max_steps", max_steps)
 
@@ -2765,7 +2944,8 @@ class OctreeRayTracer:
                 )
             counts = _segment_counts_xyz_kernel(
                 origins,
-                d,
+                directions,
+                shared,
                 t0,
                 t1,
                 int(max_steps),
@@ -2793,7 +2973,8 @@ class OctreeRayTracer:
                 )
             counts = _segment_counts_rpa_kernel(
                 origins,
-                d,
+                directions,
+                shared,
                 t0,
                 t1,
                 int(max_steps),
@@ -2816,7 +2997,8 @@ class OctreeRayTracer:
         if self._tree_coord == "xyz":
             _fill_traces_xyz_kernel(
                 origins,
-                d,
+                directions,
+                shared,
                 t0,
                 t1,
                 int(max_steps),
@@ -2832,7 +3014,8 @@ class OctreeRayTracer:
         else:
             _fill_traces_rpa_kernel(
                 origins,
-                d,
+                directions,
+                shared,
                 t0,
                 t1,
                 int(max_steps),
@@ -2909,33 +3092,15 @@ class OctreeRayInterpolator:
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """Return per-ray segment counts."""
-        origins = _coerce_origins_xyz(origins_xyz)
-        directions, shared = _coerce_directions_xyz(direction_xyz, n_rays=int(origins.shape[0]))
-        if shared:
-            return self.ray_tracer.segment_counts(
-                origins,
-                directions,
-                t_start,
-                t_end,
-                chunk_size=chunk_size,
-                max_steps=max_steps,
-                boundary_tol=boundary_tol,
-            )
-
-        t0, t1 = _coerce_ray_interval(t_start, t_end)
-        max_steps = _coerce_positive_int("max_steps", max_steps)
-        counts = np.zeros(int(origins.shape[0]), dtype=np.int64)
-        for i in range(int(origins.shape[0])):
-            cell_ids, _t_enter, _t_exit = self.ray_tracer.trace_prepared(
-                origins[i],
-                directions[i],
-                t0,
-                t1,
-                max_steps=max_steps,
-                boundary_tol=boundary_tol,
-            )
-            counts[i] = int(cell_ids.size)
-        return counts
+        return self.ray_tracer.segment_counts(
+            origins_xyz,
+            direction_xyz,
+            t_start,
+            t_end,
+            chunk_size=chunk_size,
+            max_steps=max_steps,
+            boundary_tol=boundary_tol,
+        )
 
     def adaptive_midpoint_rule(
         self,
@@ -2959,33 +3124,6 @@ class OctreeRayInterpolator:
         weights_chunks: list[np.ndarray] = []
         offsets = np.zeros(int(origins.shape[0]) + 1, dtype=np.int64)
 
-        if not shared:
-            written = 0
-            for i in range(int(origins.shape[0])):
-                _cell_ids, t_enter, t_exit = self.ray_tracer.trace_prepared(
-                    origins[i],
-                    directions[i],
-                    t0,
-                    t1,
-                    max_steps=max_steps,
-                    boundary_tol=boundary_tol,
-                )
-                n_seg = int(t_enter.size)
-                if n_seg > 0:
-                    mids_sub = origins[i][None, :] + (0.5 * (t_enter + t_exit))[:, None] * directions[i][None, :]
-                    weights_sub = np.maximum(0.0, t_exit - t_enter)
-                    mids_chunks.append(np.asarray(mids_sub, dtype=float))
-                    weights_chunks.append(np.asarray(weights_sub, dtype=float))
-                written += n_seg
-                offsets[i + 1] = written
-            if written == 0:
-                return (
-                    np.empty((0, 3), dtype=float),
-                    np.empty((0,), dtype=float),
-                    offsets,
-                )
-            return np.vstack(mids_chunks), np.concatenate(weights_chunks), offsets
-
         written = 0
         for start in range(0, int(origins.shape[0]), chunk):
             stop = min(int(origins.shape[0]), start + chunk)
@@ -2998,7 +3136,15 @@ class OctreeRayInterpolator:
                 max_steps=max_steps,
                 boundary_tol=boundary_tol,
             )
-            mids_sub, weights_sub = _midpoints_from_segments_kernel(sub, directions, t_enter, t_exit, sub_offsets)
+            dir_sub = directions if shared else directions[start:stop]
+            mids_sub, weights_sub = _midpoints_from_segments_kernel(
+                sub,
+                dir_sub,
+                shared,
+                t_enter,
+                t_exit,
+                sub_offsets,
+            )
             mids_chunks.append(mids_sub)
             weights_chunks.append(weights_sub)
 
@@ -3122,26 +3268,6 @@ class OctreeRayInterpolator:
         ncomp = int(self.interpolator.n_value_components)
         out = np.full((n_rays, ncomp), np.nan, dtype=float)
 
-        if not shared:
-            for i in range(n_rays):
-                one = np.asarray(
-                    self.integrate_field_along_rays(
-                        origins[i : i + 1],
-                        directions[i],
-                        t0,
-                        t1,
-                        chunk_size=1,
-                        scale=scale,
-                        max_steps=max_steps,
-                        boundary_tol=boundary_tol,
-                    ),
-                    dtype=float,
-                )
-                out[i] = one.reshape(1, -1)[0]
-            if ncomp == 1:
-                return out[:, 0]
-            return out
-
         tree_coord = str(self.tree.tree_coord)
         topo_state = self.ray_tracer._topology_state
         for start in range(0, n_rays, chunk):
@@ -3166,9 +3292,11 @@ class OctreeRayInterpolator:
                         "Cartesian ray interpolation requires CartesianInterpKernelState; "
                         f"got {type(interp_state).__name__}."
                     )
+                dir_sub = directions if shared else directions[start:stop]
                 out[start:stop] = _integrate_rays_xyz_kernel(
                     sub,
-                    directions,
+                    dir_sub,
+                    shared,
                     t0,
                     t1,
                     int(max_steps),
@@ -3204,9 +3332,11 @@ class OctreeRayInterpolator:
                         "Spherical ray interpolation requires SphericalInterpKernelState; "
                         f"got {type(interp_state).__name__}."
                     )
+                dir_sub = directions if shared else directions[start:stop]
                 out[start:stop] = _integrate_rays_rpa_kernel(
                     sub,
-                    directions,
+                    dir_sub,
+                    shared,
                     t0,
                     t1,
                     int(max_steps),
