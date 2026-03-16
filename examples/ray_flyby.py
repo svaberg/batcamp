@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import tarfile
 
 import matplotlib
 
@@ -13,6 +14,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pooch
 from batread.dataset import Dataset
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -24,14 +26,16 @@ from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 
 
-_DEFAULT_DATA = _REPO_ROOT / "example_data" / "3d__var_1_n00000000.plt"
+_G2211_URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
+_G2211_SHA256 = "c31a32aab08cc20d5b643bba734fd7220e6b369e691f55f88a3a08cc5b2a2136"
+_DEFAULT_SC_MEMBER = "run-Sun-G2211/SC/IO2/3d__var_4_n00044000.plt"
 _DEFAULT_FIELD = "Rho [g/cm^3]"
 _DEFAULT_RESOLUTION = 256
 _DEFAULT_STEPS = 48
 _DEFAULT_OUTPUT = _REPO_ROOT / "artifacts" / "ray_flyby"
 _DEFAULT_VERTICAL_FOV_DEGREES = 70.0
-_DEFAULT_CLOSEST_DISTANCE_FRACTION = 1.7
-_DEFAULT_PATH_HALF_LENGTH_FRACTION = 3.0
+_DEFAULT_CLOSEST_DISTANCE_FRACTION = 1.15
+_DEFAULT_PATH_HALF_LENGTH_FRACTION = 2.4
 _DEFAULT_CHUNK_SIZE = 4096
 
 
@@ -44,13 +48,34 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _load_ray_context() -> tuple[OctreeInterpolator, OctreeRayInterpolator]:
-    data_path = _DEFAULT_DATA
-    if not data_path.exists():
-        raise FileNotFoundError(data_path)
+    data_path = _resolve_sc_data_file()
     ds = Dataset.from_file(str(data_path))
     interp = OctreeInterpolator(ds, [_DEFAULT_FIELD])
     ray = OctreeRayInterpolator(interp)
     return interp, ray
+
+
+def _resolve_sc_data_file() -> Path:
+    """Resolve the SC sample file from local cache or fetch it once via pooch."""
+    archive_path = Path(
+        pooch.retrieve(
+            url=_G2211_URL,
+            known_hash=_G2211_SHA256,
+            progressbar=False,
+        )
+    )
+    with tarfile.open(archive_path, "r:gz") as tar:
+        if _DEFAULT_SC_MEMBER not in {m.name for m in tar.getmembers() if m.isfile()}:
+            raise FileNotFoundError(_DEFAULT_SC_MEMBER)
+    extracted = pooch.retrieve(
+        url=_G2211_URL,
+        known_hash=_G2211_SHA256,
+        progressbar=False,
+        processor=pooch.Untar(members=[_DEFAULT_SC_MEMBER]),
+    )
+    if isinstance(extracted, (list, tuple)):
+        extracted = extracted[0]
+    return Path(extracted)
 
 
 def _flyby_eye_positions(center_xyz: np.ndarray, r_max: float, n_steps: int) -> np.ndarray:
