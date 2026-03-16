@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Render a simple perspective flyby of the sample star with the FOV camera."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import numpy as np
+from batread.dataset import Dataset
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from batcamp import FovCamera
+from batcamp import OctreeInterpolator
+from batcamp import OctreeRayInterpolator
+
+
+_DEFAULT_DATA = _REPO_ROOT / "example_data" / "3d__var_1_n00000000.plt"
+_DEFAULT_FIELD = "Rho [g/cm^3]"
+_DEFAULT_RESOLUTION = 256
+_DEFAULT_STEPS = 48
+_DEFAULT_OUTPUT = _REPO_ROOT / "artifacts" / "ray_flyby"
+_DEFAULT_VERTICAL_FOV_DEGREES = 70.0
+_DEFAULT_CLOSEST_DISTANCE_FRACTION = 1.7
+_DEFAULT_PATH_HALF_LENGTH_FRACTION = 3.0
+_DEFAULT_CHUNK_SIZE = 4096
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--resolution", type=int, default=_DEFAULT_RESOLUTION, help="square output resolution")
+    parser.add_argument("--steps", type=int, default=_DEFAULT_STEPS, help="number of flyby frames")
+    parser.add_argument("--output-dir", type=Path, default=_DEFAULT_OUTPUT, help="directory for output frames")
+    return parser.parse_args()
+
+
+def _load_ray_context() -> tuple[OctreeInterpolator, OctreeRayInterpolator]:
+    data_path = _DEFAULT_DATA
+    if not data_path.exists():
+        raise FileNotFoundError(data_path)
+    ds = Dataset.from_file(str(data_path))
+    interp = OctreeInterpolator(ds, [_DEFAULT_FIELD])
+    ray = OctreeRayInterpolator(interp)
+    return interp, ray
+
+
+def _flyby_eye_positions(center_xyz: np.ndarray, r_max: float, n_steps: int) -> np.ndarray:
+    """Return a straight flyby path that stays just outside the star."""
+    impact = float(_DEFAULT_CLOSEST_DISTANCE_FRACTION) * float(r_max)
+    tilt = np.deg2rad(18.0)
+    y0 = impact * np.cos(tilt)
+    z0 = impact * np.sin(tilt)
+    x_half = float(_DEFAULT_PATH_HALF_LENGTH_FRACTION) * float(r_max)
+    x = np.linspace(-x_half, x_half, int(n_steps), dtype=float)
+    eyes = np.column_stack(
+        (
+            center_xyz[0] + x,
+            np.full(x.shape, center_xyz[1] + y0, dtype=float),
+            np.full(x.shape, center_xyz[2] + z0, dtype=float),
+        )
+    )
+    return eyes
+
+
+def _frame_camera(eye_xyz: np.ndarray, center_xyz: np.ndarray, r_max: float) -> FovCamera:
+    """Build one perspective camera aimed at the star center."""
+    eye = np.asarray(eye_xyz, dtype=float).reshape(3)
+    center = np.asarray(center_xyz, dtype=float).reshape(3)
+    t_end = float(np.linalg.norm(eye - center) + 1.2 * float(r_max))
+    return FovCamera(
+        eye_xyz=eye,
+        target_xyz=center,
+        up_hint_xyz=np.array([0.0, 0.0, 1.0], dtype=float),
+        vertical_fov_degrees=float(_DEFAULT_VERTICAL_FOV_DEGREES),
+        t_end=t_end,
+    )
+
+
+def _render_frame_values(
+    ray: OctreeRayInterpolator,
+    *,
+    eye_xyz: np.ndarray,
+    center_xyz: np.ndarray,
+    r_max: float,
+    resolution: int,
+) -> np.ndarray:
+    """Return one `(z, y)` frame of integrated density."""
+    camera = _frame_camera(eye_xyz, center_xyz, r_max)
+    origins, directions, t_end, image_shape = camera.rays(ny=int(resolution), nz=int(resolution))
+    values = np.asarray(
+        ray.integrate_field_along_rays(
+            origins,
+            directions,
+            0.0,
+            t_end,
+            chunk_size=_DEFAULT_CHUNK_SIZE,
+        ),
+        dtype=float,
+    ).reshape(image_shape)
+    return values
+
+
+def _estimate_log_limits(
+    ray: OctreeRayInterpolator,
+    *,
+    eyes_xyz: np.ndarray,
+    center_xyz: np.ndarray,
+    r_max: float,
+    resolution: int,
+) -> tuple[float, float]:
+    """Estimate one stable log scale from a small probe of flyby frames."""
+    probe_resolution = min(int(resolution), 64)
+    sample_count = min(int(eyes_xyz.shape[0]), 9)
+    sample_ids = np.linspace(0, int(eyes_xyz.shape[0]) - 1, sample_count, dtype=int)
+    logs: list[np.ndarray] = []
+    for idx in sample_ids:
+        frame = _render_frame_values(
+            ray,
+            eye_xyz=eyes_xyz[int(idx)],
+            center_xyz=center_xyz,
+            r_max=r_max,
+            resolution=probe_resolution,
+        )
+        positive = frame[np.isfinite(frame) & (frame > 0.0)]
+        if positive.size > 0:
+            logs.append(np.log10(positive))
+    if not logs:
+        return -30.0, -10.0
+    merged = np.concatenate(logs)
+    vmin = float(np.nanpercentile(merged, 1.0))
+    vmax = float(np.nanpercentile(merged, 99.5))
+    if vmax <= vmin:
+        vmax = vmin + 1.0
+    return vmin, vmax
+
+
+def _save_frame(
+    values: np.ndarray,
+    *,
+    eye_xyz: np.ndarray,
+    center_xyz: np.ndarray,
+    vmin: float,
+    vmax: float,
+    output_path: Path,
+    frame_index: int,
+    n_steps: int,
+) -> None:
+    """Save one rendered frame."""
+    positive = np.isfinite(values) & (values > 0.0)
+    plot = np.full(values.shape, np.nan, dtype=float)
+    plot[positive] = np.log10(values[positive])
+
+    cmap = plt.colormaps["magma"].copy()
+    cmap.set_bad("black")
+
+    fig, ax = plt.subplots(figsize=(7.0, 7.0))
+    ax.set_facecolor("black")
+    ax.imshow(plot, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    distance = float(np.linalg.norm(np.asarray(eye_xyz, dtype=float) - np.asarray(center_xyz, dtype=float)))
+    ax.set_title(
+        f"Flyby frame {frame_index + 1}/{n_steps}  |  eye distance {distance:.2f} R",
+        color="white",
+        pad=10.0,
+    )
+    fig.savefig(output_path, dpi=160, bbox_inches="tight", facecolor="black")
+    plt.close(fig)
+
+
+def main() -> None:
+    args = _parse_args()
+    resolution = int(args.resolution)
+    steps = int(args.steps)
+    if resolution <= 0:
+        raise ValueError("resolution must be positive.")
+    if steps <= 1:
+        raise ValueError("steps must be greater than 1.")
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    interp, ray = _load_ray_context()
+    dmin, dmax = interp.tree.domain_bounds(coord="xyz")
+    center_xyz = 0.5 * (np.asarray(dmin, dtype=float).reshape(3) + np.asarray(dmax, dtype=float).reshape(3))
+    _r_lo, r_hi = interp.tree.domain_bounds(coord="rpa")
+    r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
+
+    eyes_xyz = _flyby_eye_positions(center_xyz, r_max, steps)
+    vmin, vmax = _estimate_log_limits(
+        ray,
+        eyes_xyz=eyes_xyz,
+        center_xyz=center_xyz,
+        r_max=r_max,
+        resolution=resolution,
+    )
+    print(f"Using log10 scale [{vmin:.3f}, {vmax:.3f}]")
+
+    for i, eye_xyz in enumerate(eyes_xyz):
+        print(f"Rendering frame {i + 1}/{steps}", flush=True)
+        values = _render_frame_values(
+            ray,
+            eye_xyz=eye_xyz,
+            center_xyz=center_xyz,
+            r_max=r_max,
+            resolution=resolution,
+        )
+        _save_frame(
+            values,
+            eye_xyz=eye_xyz,
+            center_xyz=center_xyz,
+            vmin=vmin,
+            vmax=vmax,
+            output_path=output_dir / f"frame_{i:04d}.png",
+            frame_index=i,
+            n_steps=steps,
+        )
+
+
+if __name__ == "__main__":
+    main()
