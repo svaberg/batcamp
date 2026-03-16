@@ -5,9 +5,9 @@ import pytest
 from batread.dataset import Dataset
 
 from sample_data_helper import data_file
-from batcamp import OCTREE_FILE_VERSION
 from batcamp import Octree
-from batcamp import SphericalOctree
+from batcamp.octree import OCTREE_FILE_VERSION
+from batcamp.spherical import SphericalOctree
 
 
 @pytest.fixture(scope="module")

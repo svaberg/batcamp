@@ -6,11 +6,11 @@ import math
 import numpy as np
 import pytest
 
-from batcamp import Octree
-from batcamp import CartesianOctree
 from batcamp import OctreeInterpolator
-from batcamp import OctreeBuilder
+from batcamp import Octree
+from batcamp.builder import OctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
+from batcamp.cartesian import CartesianOctree
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh

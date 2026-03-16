@@ -39,7 +39,7 @@
 - [ ] Ensure every remaining public docstring states plain behavior: required inputs, returned value shape/type, and failure conditions.
 - [x] Remove remaining test-only knobs from public APIs (for example `OctreeBuilder.build(cell_levels=..., bind=...)`) and move this control to private/test helpers.
 - [x] Revisit stale cache-compatibility paths: remove `InterpKernelState` alias in `batcamp/interpolator.py` once cache migration policy is explicit (the old-name shim is still live).
-- [x] Slim package import surface in `batcamp/__init__.py` (avoid eager heavy imports of numba/interpolator on plain `import batcamp`; prefer lazy or narrower exports).
+- [x] Slim package import surface in `batcamp/__init__.py` (keep only the main public entry points at top level).
 - [x] Consolidate duplicate builder utilities across `batcamp/builder_cartesian.py` and `batcamp/builder_spherical.py` (shared level-shape types and positive-median helper).
 - [x] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
 - [x] Centralize `X [R]` / `Y [R]` / `Z [R]` names in `Octree` constants only and reference those constants everywhere else.

@@ -3,9 +3,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
-from batcamp import format_histogram
-from batcamp import valid_cell_fraction
+from batcamp.builder import format_histogram
+from batcamp.builder import valid_cell_fraction
+from batcamp.octree import DEFAULT_MIN_VALID_CELL_FRACTION
 
 
 @pytest.fixture(scope="module")

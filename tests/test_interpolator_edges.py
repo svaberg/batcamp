@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
-from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.builder import OctreeBuilder
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -238,4 +238,3 @@ def test_invalid_level_cells_treated_as_misses() -> None:
     assert int(cids[0]) == -1
     assert int(cids[1]) >= 0
     assert np.isclose(float(vals[0]), -123.0, atol=0.0, rtol=0.0)
-

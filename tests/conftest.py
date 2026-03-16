@@ -4,10 +4,10 @@ import numpy as np
 import pytest
 from batread.dataset import Dataset
 
-from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree
-from batcamp import point_refinement_levels
+from batcamp.builder import point_refinement_levels
 from batcamp.builder_spherical import SphericalOctreeBuilder
+from batcamp.octree import DEFAULT_AXIS_RHO_TOL
 from sample_data_helper import data_file
 
 
