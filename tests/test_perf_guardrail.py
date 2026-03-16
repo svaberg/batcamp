@@ -34,9 +34,9 @@ def test_build_and_query_runtime_guardrail() -> None:
 
     xyz = np.column_stack(
         [
-            np.asarray(ds.variable(Octree.X_VAR), dtype=float),
-            np.asarray(ds.variable(Octree.Y_VAR), dtype=float),
-            np.asarray(ds.variable(Octree.Z_VAR), dtype=float),
+            np.asarray(ds[Octree.X_VAR], dtype=float),
+            np.asarray(ds[Octree.Y_VAR], dtype=float),
+            np.asarray(ds[Octree.Z_VAR], dtype=float),
         ]
     )
     n_query = min(4000, xyz.shape[0])
