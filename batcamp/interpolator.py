@@ -17,7 +17,6 @@ from batread.dataset import Dataset
 from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
-from .octree import infer_tree_coord_from_geometry as _infer_tree_coord_from_geometry
 from .cartesian import CartesianLookupKernelState
 from .cartesian import _lookup_xyz_cell_id_kernel
 from .spherical import SphericalLookupKernelState
