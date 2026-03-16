@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 import tarfile
@@ -254,17 +255,28 @@ def _ray_setup(
     return origins, direction, t_end
 
 
+def _pixel_plane_coordinates(
+    *,
+    n_plane: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return per-pixel `y`, `z`, and `r = sqrt(y^2 + z^2)` on the image plane as `(z, y)`."""
+    _xmin, _xmax, ymin, ymax, zmin, zmax = bounds
+    y = np.linspace(ymin, ymax, int(n_plane), dtype=float)
+    z = np.linspace(zmin, zmax, int(n_plane), dtype=float)
+    yg, zg = np.meshgrid(y, z, indexing="xy")
+    rg = np.sqrt(yg * yg + zg * zg)
+    return yg, zg, rg
+
+
 def _pixel_radius_image(
     *,
     n_plane: int,
     bounds: tuple[float, float, float, float, float, float],
 ) -> np.ndarray:
     """Return per-pixel `r = sqrt(y^2 + z^2)` on the image plane as `(z, y)`."""
-    _xmin, _xmax, ymin, ymax, zmin, zmax = bounds
-    y = np.linspace(ymin, ymax, int(n_plane), dtype=float)
-    z = np.linspace(zmin, zmax, int(n_plane), dtype=float)
-    yg, zg = np.meshgrid(y, z, indexing="xy")
-    return np.sqrt(yg * yg + zg * zg)
+    _yg, _zg, rg = _pixel_plane_coordinates(n_plane=n_plane, bounds=bounds)
+    return rg
 
 
 def _ray_segment_counts(
@@ -320,6 +332,111 @@ def _equality_deviation(
     log_l1 = float(np.sum(np.abs(log_diff)))
     log_rmse = float(np.sqrt(np.mean(log_diff * log_diff)))
     return finite_overlap, pos_overlap, abs_l1, abs_rmse, log_l1, log_rmse
+
+
+def _discrepancy_rows(
+    img0: np.ndarray,
+    img1: np.ndarray,
+    *,
+    pixel_y: np.ndarray,
+    pixel_z: np.ndarray,
+    pixel_r: np.ndarray,
+    log10_threshold: float = 0.1,
+    max_finite_rows: int = 256,
+) -> list[dict[str, float | int | str]]:
+    """Return one sorted discrepancy list for one comparison image pair."""
+    pos0 = np.isfinite(img0) & (img0 > 0.0)
+    pos1 = np.isfinite(img1) & (img1 > 0.0)
+
+    categories = [
+        ("grid_pos_ray_nan", pos0 & np.isnan(img1), np.inf),
+        ("grid_pos_ray_zero", pos0 & np.isfinite(img1) & (img1 == 0.0), np.inf),
+        ("grid_zero_ray_pos", np.isfinite(img0) & (img0 == 0.0) & pos1, np.inf),
+        ("grid_nan_ray_pos", np.isnan(img0) & pos1, np.inf),
+    ]
+
+    rows: list[dict[str, float | int | str]] = []
+    for kind, mask, log_mag in categories:
+        iz, iy = np.nonzero(mask)
+        for k in range(iz.size):
+            i = int(iz[k])
+            j = int(iy[k])
+            grid_val = float(img0[i, j])
+            ray_val = float(img1[i, j])
+            abs_diff = np.nan if (not np.isfinite(grid_val) or not np.isfinite(ray_val)) else abs(ray_val - grid_val)
+            rows.append(
+                {
+                    "kind": kind,
+                    "iz": i,
+                    "iy": j,
+                    "y": float(pixel_y[i, j]),
+                    "z": float(pixel_z[i, j]),
+                    "r": float(pixel_r[i, j]),
+                    "grid_value": grid_val,
+                    "ray_value": ray_val,
+                    "abs_diff": abs_diff,
+                    "abs_log10_diff": float(log_mag),
+                }
+            )
+
+    both_pos = pos0 & pos1
+    if np.any(both_pos):
+        abs_log10 = np.abs(np.log10(img1[both_pos]) - np.log10(img0[both_pos]))
+        if np.any(abs_log10 >= log10_threshold):
+            coords = np.column_stack(np.nonzero(both_pos))
+            selected = np.nonzero(abs_log10 >= log10_threshold)[0]
+            selected = selected[np.argsort(abs_log10[selected])[::-1]]
+            selected = selected[: int(max_finite_rows)]
+            for idx in selected:
+                i = int(coords[idx, 0])
+                j = int(coords[idx, 1])
+                rows.append(
+                    {
+                        "kind": "finite_log10_mismatch",
+                        "iz": i,
+                        "iy": j,
+                        "y": float(pixel_y[i, j]),
+                        "z": float(pixel_z[i, j]),
+                        "r": float(pixel_r[i, j]),
+                        "grid_value": float(img0[i, j]),
+                        "ray_value": float(img1[i, j]),
+                        "abs_diff": float(abs(img1[i, j] - img0[i, j])),
+                        "abs_log10_diff": float(abs_log10[idx]),
+                    }
+                )
+
+    rows.sort(
+        key=lambda row: (
+            str(row["kind"]) != "grid_pos_ray_nan",
+            str(row["kind"]) != "grid_pos_ray_zero",
+            str(row["kind"]) != "grid_zero_ray_pos",
+            str(row["kind"]) != "grid_nan_ray_pos",
+            -float(row["abs_log10_diff"]) if np.isfinite(float(row["abs_log10_diff"])) else float("inf"),
+            -float(row["r"]),
+        )
+    )
+    return rows
+
+
+def _write_discrepancy_csv(rows: list[dict[str, float | int | str]], out_path: Path) -> None:
+    """Write one CSV list of flagged discrepancies for one resolution."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "kind",
+        "iz",
+        "iy",
+        "y",
+        "z",
+        "r",
+        "grid_value",
+        "ray_value",
+        "abs_diff",
+        "abs_log10_diff",
+    ]
+    with out_path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _save_four_panel_figure(
@@ -774,7 +891,7 @@ def main() -> None:
             rows.append(row)
 
             figure_path = case_dir / f"resampling_compare_{n}x{n}.png"
-            pixel_r = _pixel_radius_image(n_plane=int(n), bounds=bounds)
+            pixel_y, pixel_z, pixel_r = _pixel_plane_coordinates(n_plane=int(n), bounds=bounds)
             _save_four_panel_figure(
                 figure_path,
                 dataset_label=f"{case.label}:{case.file_name}",
@@ -792,6 +909,17 @@ def main() -> None:
                 eq_log_l1=float(eq_log_l1),
                 eq_log_rmse=float(eq_log_rmse),
                 eq_pos_overlap=int(pos_overlap),
+            )
+            discrepancy_rows = _discrepancy_rows(
+                img0,
+                img1,
+                pixel_y=pixel_y,
+                pixel_z=pixel_z,
+                pixel_r=pixel_r,
+            )
+            _write_discrepancy_csv(
+                discrepancy_rows,
+                case_dir / f"discrepancies_{n}x{n}.csv",
             )
 
             _write_timing_table(rows, case_dir / "timing_report.md")
