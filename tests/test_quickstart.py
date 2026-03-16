@@ -3,7 +3,7 @@ import pytest
 from batread.dataset import Dataset
 
 from batcamp import Octree, OctreeInterpolator
-from batcamp.interpolator import _infer_tree_coord_from_geometry
+from batcamp.octree import infer_tree_coord_from_geometry
 from sample_data_helper import data_file
 
 
@@ -28,7 +28,7 @@ _CASES = [
 def test_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
     """Inference contract: geometry-based coord inference matches expected."""
     ds = Dataset.from_file(str(data_file(name)))
-    assert str(_infer_tree_coord_from_geometry(ds)) == tree_coord
+    assert str(infer_tree_coord_from_geometry(ds)) == tree_coord
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
