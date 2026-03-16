@@ -450,67 +450,6 @@ def _build_plane_state_from_ordered_corners_kernel(
     return face_normals, face_offsets, face_valid
 
 
-@njit(cache=True, parallel=True)
-def _patch_spherical_radial_boundary_planes_kernel(
-    points: np.ndarray,
-    corners: np.ndarray,
-    face_normals: np.ndarray,
-    face_offsets: np.ndarray,
-    face_valid: np.ndarray,
-    cell_r_min: np.ndarray,
-    cell_r_max: np.ndarray,
-    global_r_min: float,
-    global_r_max: float,
-) -> None:
-    """Replace global radial boundary faces with tangent planes.
-
-    The generic hexahedron fit uses secant planes on spherical radial faces.
-    At the global shell boundaries that cuts the valid spherical region inward
-    and can miss grazing rays entirely. Tangent planes keep the plane model
-    conservative at the domain boundary.
-    """
-    n_cells = int(corners.shape[0])
-    tiny = 1.0e-24
-    r_tol = max(1.0e-6, 1.0e-6 * max(abs(global_r_min), abs(global_r_max), 1.0))
-
-    for cid in prange(n_cells):
-        if abs(float(cell_r_max[cid]) - global_r_max) <= r_tol:
-            sx = 0.0
-            sy = 0.0
-            sz = 0.0
-            for local in range(4):
-                pid = int(corners[cid, int(_ORDERED_FACE_CORNERS_ARRAY[1, local])])
-                sx += float(points[pid, 0])
-                sy += float(points[pid, 1])
-                sz += float(points[pid, 2])
-            norm2 = sx * sx + sy * sy + sz * sz
-            if norm2 > tiny:
-                inv_norm = 1.0 / math.sqrt(norm2)
-                face_normals[cid, 1, 0] = sx * inv_norm
-                face_normals[cid, 1, 1] = sy * inv_norm
-                face_normals[cid, 1, 2] = sz * inv_norm
-                face_offsets[cid, 1] = float(global_r_max)
-                face_valid[cid, 1] = True
-
-        if global_r_min > 0.0 and abs(float(cell_r_min[cid]) - global_r_min) <= r_tol:
-            sx = 0.0
-            sy = 0.0
-            sz = 0.0
-            for local in range(4):
-                pid = int(corners[cid, int(_ORDERED_FACE_CORNERS_ARRAY[0, local])])
-                sx += float(points[pid, 0])
-                sy += float(points[pid, 1])
-                sz += float(points[pid, 2])
-            norm2 = sx * sx + sy * sy + sz * sz
-            if norm2 > tiny:
-                inv_norm = 1.0 / math.sqrt(norm2)
-                face_normals[cid, 0, 0] = -sx * inv_norm
-                face_normals[cid, 0, 1] = -sy * inv_norm
-                face_normals[cid, 0, 2] = -sz * inv_norm
-                face_offsets[cid, 0] = -float(global_r_min)
-                face_valid[cid, 0] = True
-
-
 def _build_plane_state_from_ordered_corners(
     points: np.ndarray,
     corners: np.ndarray,
@@ -518,35 +457,6 @@ def _build_plane_state_from_ordered_corners(
 ) -> CellPlaneKernelState:
     """Build plane faces from ordered hexahedron corner ids."""
     face_normals, face_offsets, face_valid = _build_plane_state_from_ordered_corners_kernel(points, corners, centers)
-    return CellPlaneKernelState(
-        face_normals=face_normals,
-        face_offsets=face_offsets,
-        face_valid=face_valid,
-    )
-
-
-def _build_spherical_plane_state_from_ordered_corners(
-    points: np.ndarray,
-    corners: np.ndarray,
-    centers: np.ndarray,
-    cell_r_min: np.ndarray,
-    cell_r_max: np.ndarray,
-    global_r_min: float,
-    global_r_max: float,
-) -> CellPlaneKernelState:
-    """Build spherical plane faces and make global radial boundaries conservative."""
-    face_normals, face_offsets, face_valid = _build_plane_state_from_ordered_corners_kernel(points, corners, centers)
-    _patch_spherical_radial_boundary_planes_kernel(
-        points,
-        corners,
-        face_normals,
-        face_offsets,
-        face_valid,
-        np.asarray(cell_r_min, dtype=np.float64),
-        np.asarray(cell_r_max, dtype=np.float64),
-        float(global_r_min),
-        float(global_r_max),
-    )
     return CellPlaneKernelState(
         face_normals=face_normals,
         face_offsets=face_offsets,
@@ -585,15 +495,7 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
             np.asarray(lookup_state.cell_phi_start, dtype=np.float64),
             np.asarray(lookup_state.cell_phi_width, dtype=np.float64),
         )
-        return _build_spherical_plane_state_from_ordered_corners(
-            points,
-            ordered_corners,
-            centers,
-            np.asarray(lookup_state.cell_r_min, dtype=np.float64),
-            np.asarray(lookup_state.cell_r_max, dtype=np.float64),
-            float(lookup_state.r_min),
-            float(lookup_state.r_max),
-        )
+        return _build_plane_state_from_ordered_corners(points, ordered_corners, centers)
 
     def _closest_four(values: np.ndarray, target: float, tol: float) -> np.ndarray:
         mask = np.abs(values - target) <= tol
@@ -817,15 +719,7 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
         cell_phi_full[node_id] = phi_width >= (2.0 * math.pi - 1e-10)
         cell_phi_tiny[node_id] = phi_width <= tiny
 
-    plane_state = _build_spherical_plane_state_from_ordered_corners(
-        points,
-        corners,
-        centers,
-        cell_r0,
-        cell_r0 + cell_rden,
-        float(tree.lookup.lookup_state.r_min),
-        float(tree.lookup.lookup_state.r_max),
-    )
+    plane_state = _build_plane_state_from_ordered_corners(points, corners, centers)
     return SphericalRayCellGeometry(
         topology_state=_topology_state_for_node_cells(topology),
         plane_state=plane_state,
@@ -1673,129 +1567,6 @@ def _approx_front_boundary_segments_rpa(
 
 
 @njit(cache=True)
-def _trace_segments_rpa_from_seed_kernel(
-    origin_xyz: np.ndarray,
-    direction_xyz_unit: np.ndarray,
-    t_end: float,
-    max_steps: int,
-    boundary_tol: float,
-    current_node: int,
-    cid: int,
-    topo_state: TopologicalKernelState,
-    plane_state: CellPlaneKernelState,
-) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace one connected spherical material interval from an interior seed."""
-    cell_ids = np.empty(max_steps, dtype=np.int64)
-    enters = np.empty(max_steps, dtype=np.float64)
-    exits = np.empty(max_steps, dtype=np.float64)
-
-    if t_end <= 0.0 or max_steps <= 0:
-        return 0, cell_ids, enters, exits
-
-    abs_eps = max(boundary_tol * (1.0 + abs(t_end)), 1e-12)
-    candidate_nodes0 = np.empty(_MAX_TOPOLOGY_CANDIDATES, dtype=np.int64)
-    candidate_nodes1 = np.empty(_MAX_TOPOLOGY_CANDIDATES, dtype=np.int64)
-    d0 = direction_xyz_unit[0]
-    d1 = direction_xyz_unit[1]
-    d2 = direction_xyz_unit[2]
-    t = 0.0
-    x = origin_xyz[0]
-    y = origin_xyz[1]
-    z = origin_xyz[2]
-    n_seg = 0
-
-    for _ in range(max_steps):
-        if t >= (t_end - abs_eps):
-            break
-        if not _contains_cell_from_xyz(cid, x, y, z, plane_state):
-            break
-
-        dt_exit, face_mask = _cell_exit_dt_and_mask(
-            cid,
-            x,
-            y,
-            z,
-            d0,
-            d1,
-            d2,
-            plane_state,
-            abs_eps,
-        )
-        if not math.isfinite(dt_exit):
-            dt_exit = t_end - t
-        if dt_exit <= abs_eps:
-            dt_exit = abs_eps
-        t_exit = t + dt_exit
-        if t_exit > t_end:
-            t_exit = t_end
-        if t_exit < t:
-            t_exit = t
-
-        cell_ids[n_seg] = cid
-        enters[n_seg] = t
-        exits[n_seg] = t_exit
-        n_seg += 1
-        if n_seg >= max_steps:
-            break
-        if t_exit >= (t_end - abs_eps):
-            break
-        if face_mask == 0:
-            break
-
-        t_next = t_exit + abs_eps
-        if t_next > t_end:
-            t_next = t_end
-        if t_next <= t + abs_eps * 0.25:
-            t_next = t + abs_eps
-            if t_next > t_end:
-                t_next = t_end
-
-        x_next = origin_xyz[0] + t_next * d0
-        y_next = origin_xyz[1] + t_next * d1
-        z_next = origin_xyz[2] + t_next * d2
-        next_node, cid_next = _select_next_cell_from_topology(
-            current_node,
-            face_mask,
-            x_next,
-            y_next,
-            z_next,
-            topo_state,
-            plane_state,
-            candidate_nodes0,
-            candidate_nodes1,
-        )
-        if cid_next < 0 and t_next < t_end:
-            t_next = t_next + 4.0 * abs_eps
-            if t_next > t_end:
-                t_next = t_end
-            x_next = origin_xyz[0] + t_next * d0
-            y_next = origin_xyz[1] + t_next * d1
-            z_next = origin_xyz[2] + t_next * d2
-            next_node, cid_next = _select_next_cell_from_topology(
-                current_node,
-                face_mask,
-                x_next,
-                y_next,
-                z_next,
-                topo_state,
-                plane_state,
-                candidate_nodes0,
-                candidate_nodes1,
-            )
-            if cid_next < 0:
-                break
-
-        t = t_next
-        x = x_next
-        y = y_next
-        z = z_next
-        cid = cid_next
-        current_node = next_node
-
-    return n_seg, cell_ids, enters, exits
-
-
-@njit(cache=True)
 def _trace_segments_xyz_kernel(
     origin_xyz: np.ndarray,
     direction_xyz_unit: np.ndarray,
@@ -1994,87 +1765,12 @@ def _trace_segments_rpa_kernel(
     if t_end <= t_start or max_steps <= 0:
         return 0, cell_ids, enters, exits
 
-    hit_front, t_front0, t_front1 = _front_material_interval_rpa(
+    abs_eps = max(boundary_tol * (1.0 + abs(t_end - t_start)), 1e-12)
+    found, t, cid, x, y, z, r, polar, azimuth = _seek_first_cell_rpa(
         origin_xyz,
         direction_xyz_unit,
         t_start,
         t_end,
-        float(seed_lookup_state.r_min),
-        float(seed_lookup_state.r_max),
-    )
-    if not hit_front or t_front1 <= t_front0:
-        return 0, cell_ids, enters, exits
-
-    abs_eps = max(boundary_tol * (1.0 + abs(t_front1 - t_front0)), 1e-12)
-    t_seed = t_front0 + 0.25 * (t_front1 - t_front0)
-    x_seed = origin_xyz[0] + t_seed * direction_xyz_unit[0]
-    y_seed = origin_xyz[1] + t_seed * direction_xyz_unit[1]
-    z_seed = origin_xyz[2] + t_seed * direction_xyz_unit[2]
-    r_seed, polar_seed, azimuth_seed = _xyz_to_rpa_components(x_seed, y_seed, z_seed)
-    cid_seed = _lookup_rpa_cell_id_kernel(r_seed, polar_seed, azimuth_seed, seed_lookup_state, -1)
-    if cid_seed >= 0 and _contains_cell_from_xyz(cid_seed, x_seed, y_seed, z_seed, seed_plane_state):
-        current_node = int(topo_state.cell_to_node_id[cid_seed])
-        if current_node >= 0:
-            cid_seed = int(topo_state.node_cell_ids[current_node])
-            if cid_seed >= 0:
-                seed_xyz = np.empty(3, dtype=np.float64)
-                seed_xyz[0] = x_seed
-                seed_xyz[1] = y_seed
-                seed_xyz[2] = z_seed
-                back_dir = np.empty(3, dtype=np.float64)
-                back_dir[0] = -direction_xyz_unit[0]
-                back_dir[1] = -direction_xyz_unit[1]
-                back_dir[2] = -direction_xyz_unit[2]
-                n_back, back_ids, back_enters, back_exits = _trace_segments_rpa_from_seed_kernel(
-                    seed_xyz,
-                    back_dir,
-                    t_seed - t_front0,
-                    max_steps,
-                    boundary_tol,
-                    current_node,
-                    cid_seed,
-                    topo_state,
-                    plane_state,
-                )
-                n_fwd, fwd_ids, fwd_enters, fwd_exits = _trace_segments_rpa_from_seed_kernel(
-                    seed_xyz,
-                    direction_xyz_unit,
-                    t_front1 - t_seed,
-                    max_steps,
-                    boundary_tol,
-                    current_node,
-                    cid_seed,
-                    topo_state,
-                    plane_state,
-                )
-                n_seg = 0
-                for k in range(n_back - 1, -1, -1):
-                    cell_ids[n_seg] = back_ids[k]
-                    enters[n_seg] = t_seed - back_exits[k]
-                    exits[n_seg] = t_seed - back_enters[k]
-                    n_seg += 1
-                    if n_seg >= max_steps:
-                        return n_seg, cell_ids, enters, exits
-                for k in range(n_fwd):
-                    t_enter = t_seed + fwd_enters[k]
-                    t_exit = t_seed + fwd_exits[k]
-                    cid_k = int(fwd_ids[k])
-                    if n_seg > 0 and int(cell_ids[n_seg - 1]) == cid_k and abs(t_enter - exits[n_seg - 1]) <= 4.0 * abs_eps:
-                        exits[n_seg - 1] = t_exit
-                        continue
-                    cell_ids[n_seg] = cid_k
-                    enters[n_seg] = t_enter
-                    exits[n_seg] = t_exit
-                    n_seg += 1
-                    if n_seg >= max_steps:
-                        return n_seg, cell_ids, enters, exits
-                return n_seg, cell_ids, enters, exits
-
-    found, t, cid, x, y, z, r, polar, azimuth = _seek_first_cell_rpa(
-        origin_xyz,
-        direction_xyz_unit,
-        t_front0,
-        t_front1,
         abs_eps,
         seed_lookup_state,
         seed_plane_state,
@@ -2083,8 +1779,8 @@ def _trace_segments_rpa_kernel(
         return _approx_front_boundary_segments_rpa(
             origin_xyz,
             direction_xyz_unit,
-            t_front0,
-            t_front1,
+            t_start,
+            t_end,
             seed_lookup_state,
             max_steps,
         )
@@ -2103,7 +1799,7 @@ def _trace_segments_rpa_kernel(
     d2 = direction_xyz_unit[2]
     n_seg = 0
     for _ in range(max_steps):
-        if t >= (t_front1 - abs_eps):
+        if t >= (t_end - abs_eps):
             break
 
         if not _contains_cell_from_xyz(cid, x, y, z, plane_state):
@@ -2121,12 +1817,12 @@ def _trace_segments_rpa_kernel(
             abs_eps,
         )
         if not math.isfinite(dt_exit):
-            dt_exit = t_front1 - t
+            dt_exit = t_end - t
         if dt_exit <= abs_eps:
             dt_exit = abs_eps
         t_exit = t + dt_exit
-        if t_exit > t_front1:
-            t_exit = t_front1
+        if t_exit > t_end:
+            t_exit = t_end
         if t_exit < t:
             t_exit = t
         cell_ids[n_seg] = cid
@@ -2135,19 +1831,19 @@ def _trace_segments_rpa_kernel(
         n_seg += 1
         if n_seg >= max_steps:
             break
-        if t_exit >= (t_front1 - abs_eps):
+        if t_exit >= (t_end - abs_eps):
             break
 
         if face_mask == 0:
             break
 
         t_next = t_exit + abs_eps
-        if t_next > t_front1:
-            t_next = t_front1
+        if t_next > t_end:
+            t_next = t_end
         if t_next <= t + abs_eps * 0.25:
             t_next = t + abs_eps
-            if t_next > t_front1:
-                t_next = t_front1
+            if t_next > t_end:
+                t_next = t_end
 
         x_next = origin_xyz[0] + t_next * d0
         y_next = origin_xyz[1] + t_next * d1
@@ -2163,10 +1859,10 @@ def _trace_segments_rpa_kernel(
             candidate_nodes0,
             candidate_nodes1,
         )
-        if cid_next < 0 and t_next < t_front1:
+        if cid_next < 0 and t_next < t_end:
             t_next = t_next + 4.0 * abs_eps
-            if t_next > t_front1:
-                t_next = t_front1
+            if t_next > t_end:
+                t_next = t_end
             x_next = origin_xyz[0] + t_next * d0
             y_next = origin_xyz[1] + t_next * d1
             z_next = origin_xyz[2] + t_next * d2

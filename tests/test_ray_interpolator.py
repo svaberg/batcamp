@@ -337,7 +337,7 @@ def test_cartesian_maxdepth_zero_matches_root_cell_interpolation() -> None:
 
     cut_vals = np.asarray(cut.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
     root_vals = np.asarray(root.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
-    assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12, equal_nan=True)
+    assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
 
 
 def test_cartesian_maxdepth_full_matches_default() -> None:
@@ -364,7 +364,7 @@ def test_cartesian_maxdepth_full_matches_default() -> None:
 
 
 def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
-    """`maxdepth=0` should preserve coarse spherical hit coverage."""
+    """`maxdepth=0` should match one-root-cell interpolation on a depth-1 spherical mesh."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
     fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
@@ -385,7 +385,7 @@ def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
     root_vals = np.asarray(root.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
 
     assert np.array_equal(cut_counts, root_counts)
-    assert np.array_equal(np.isfinite(cut_vals), np.isfinite(root_vals))
+    assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
 
 
 def test_spherical_maxdepth_zero_geometry_matches_root_cells() -> None:
