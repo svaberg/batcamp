@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+notebook_paths=()
+while IFS= read -r -d '' path; do
+  notebook_paths+=("$path")
+done < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.ipynb')
+if [ "${#notebook_paths[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+branch="$(git branch --show-current)"
+mode="strip"
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  mode="run"
+fi
+
+conda run -n batcamp python scripts/notebook_state.py "$mode" "${notebook_paths[@]}"
+git add -- "${notebook_paths[@]}"
