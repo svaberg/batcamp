@@ -18,7 +18,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [x] Remove generated build artifacts before the release commit.
 - [x] Make sure generated artifacts such as `build/` and `dist/` are ignored if they should never be committed.
 - [x] Commit the release-ready state on `main`.
-- [ ] Tag the release commit with the version that will be uploaded.
+- [x] Tag the release commit with the version that will be uploaded.
 
 ## Packaging validation
 
@@ -42,7 +42,6 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 
 - [x] Decide how publishing will happen: manual `twine upload`.
 - [x] Make sure the PyPI token or other `twine` credentials are ready before the release tag is pushed.
-- [ ] Upload to TestPyPI first.
-- [ ] In a fresh environment, verify `pip install -i https://test.pypi.org/simple batcamp` works as expected.
-- [ ] Upload the same validated artifacts to PyPI.
-- [ ] In one more fresh environment, verify `pip install batcamp` from real PyPI works.
+- [x] Decide to skip TestPyPI for `0.1.0` and upload directly to PyPI.
+- [x] Upload the validated tag artifacts to PyPI.
+- [x] In a fresh environment, verify `pip install batcamp` from real PyPI works.
