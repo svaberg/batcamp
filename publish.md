@@ -22,6 +22,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 
 ## Packaging validation
 
+- [x] Make the default pytest run pass against the local `sample_data/` files without needing `pooch`.
 - [x] Build both sdist and wheel with `python -m build`.
 - [x] Run `twine check dist/*`.
 - [x] Test installation from the built wheel in a clean environment that does not see the local `/Users/dagfev/Documents/starwinds/batread` checkout on `sys.path`.

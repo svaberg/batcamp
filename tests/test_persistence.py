@@ -13,7 +13,7 @@ from batcamp.spherical import SphericalOctree
 @pytest.fixture(scope="module")
 def tree_dataset_pair() -> tuple[Octree, Dataset]:
     """Return one built octree and source dataset for persistence tests."""
-    input_file = data_file("3d__var_4_n00005000.plt")
+    input_file = data_file("3d__var_2_n00060005.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
     tree = Octree.from_dataset(ds, tree_coord="rpa")

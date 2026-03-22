@@ -14,7 +14,7 @@ from sample_data_helper import data_file
 @lru_cache(maxsize=1)
 def _build_difflevels_rpa_context() -> dict[str, object]:
     """Private test helper: build and cache shared spherical test context."""
-    input_file = data_file("3d__var_4_n00005000.plt")
+    input_file = data_file("3d__var_2_n00060005.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
     assert ds.corners is not None
