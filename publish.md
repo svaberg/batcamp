@@ -10,12 +10,12 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [x] Rename runtime imports from `starwinds_readplt` to `batread`.
 - [x] Declare `batread` as a runtime dependency in `pyproject.toml`.
 - [x] Decide the minimum supported `batread` version and pin it as `batread>=1.0.0`.
-- [ ] Decide whether `version = "0.1.0"` is the actual first PyPI release version or if it should be bumped before release.
+- [x] Use `version = "0.1.0"` as the first PyPI release version.
 
 ## Repo hygiene
 
 - [x] Remove the ray feature from the public API, tests, docs, and examples before release.
-- [ ] Remove generated build artifacts before the release commit. There is currently an untracked `build/` directory in this worktree.
+- [x] Remove generated build artifacts before the release commit.
 - [x] Make sure generated artifacts such as `build/` and `dist/` are ignored if they should never be committed.
 - [ ] Commit the release-ready state on `main`.
 - [ ] Tag the release commit with the version that will be uploaded.
@@ -26,7 +26,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [x] Build both sdist and wheel with `python -m build`.
 - [x] Run `twine check dist/*`.
 - [x] Test installation from the built wheel in a clean environment that does not see the local `/Users/dagfev/Documents/starwinds/batread` checkout on `sys.path`.
-- [ ] Verify `pip install batcamp` pulls `batread` automatically from PyPI.
+- [x] Verify a clean install of the built wheel pulls `batread` automatically from PyPI.
 - [x] Smoke-test `import batcamp` after that clean install.
 - [x] Run a small runtime smoke test that exercises `batread.dataset.Dataset` with `batcamp`, not just imports.
 - [x] Run the relevant automated tests in a clean environment after installing from built artifacts.
