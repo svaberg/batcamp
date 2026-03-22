@@ -9,21 +9,10 @@ _EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
 _CELL_TIMEOUT_SECONDS = 1200
 
 _NOTEBOOK_CASES = [
-    pytest.param(
-        "quick_start.ipynb",
-        id="quick_start_notebook_exec",
-        marks=pytest.mark.slow,
-    ),
-    pytest.param(
-        "resampling.ipynb",
-        id="resampling_notebook_exec",
-        marks=pytest.mark.slow,
-    ),
-    pytest.param(
-        "octree.ipynb",
-        id="octree_notebook_exec",
-        marks=pytest.mark.slow,
-    ),
+    pytest.param("quick_start.ipynb", id="quick_start_notebook_exec", marks=pytest.mark.slow),
+    pytest.param("merge.ipynb", id="merge_notebook_exec", marks=pytest.mark.slow),
+    pytest.param("resampling.ipynb", id="resampling_notebook_exec", marks=pytest.mark.slow),
+    pytest.param("octree.ipynb", id="octree_notebook_exec", marks=pytest.mark.slow),
 ]
 
 
@@ -39,11 +28,13 @@ def test_execute_examples(notebook_name: str) -> None:
     with notebook_path.open(encoding="utf-8") as fh:
         notebook = nbformat.read(fh, as_version=4)
 
+    # Pooch-backed demo cells are tagged as user-run only.
     client = nbclient.NotebookClient(
         notebook,
         timeout=_CELL_TIMEOUT_SECONDS,
         kernel_name="python3",
         resources={"metadata": {"path": str(_EXAMPLES_DIR)}},
+        skip_cells_with_tag="skip-execution",
         allow_errors=False,
         interrupt_on_timeout=True,
     )

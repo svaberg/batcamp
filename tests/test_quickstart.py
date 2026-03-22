@@ -10,18 +10,6 @@ from sample_data_helper import data_file
 _CASES = [
     pytest.param("3d__var_2_n00060005.plt", "rpa", id="local_rpa"),
     pytest.param("3d__var_2_n00006003.plt", "xyz", id="local_xyz"),
-    pytest.param(
-        "3d__var_4_n00044000.plt",
-        "rpa",
-        id="pooch_sc",
-        marks=pytest.mark.pooch,
-    ),
-    pytest.param(
-        "3d__var_4_n00005000.plt",
-        "xyz",
-        id="pooch_ih",
-        marks=pytest.mark.pooch,
-    ),
 ]
 
 

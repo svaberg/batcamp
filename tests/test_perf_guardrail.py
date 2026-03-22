@@ -22,7 +22,7 @@ pytestmark = [
 
 def test_build_and_query_runtime_guardrail() -> None:
     """Performance guardrail for octree interpolator build/query on representative data."""
-    input_file = data_file("3d__var_4_n00005000.plt")
+    input_file = data_file("3d__var_2_n00006003.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
 
     ds = Dataset.from_file(str(input_file))
