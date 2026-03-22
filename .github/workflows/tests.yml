@@ -1,0 +1,49 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+
+      - name: Install batcamp with test dependencies
+        shell: bash -l {0}
+        run: pip install -e '.[tests]'
+
+      - name: Run default test suite
+        shell: bash -l {0}
+        run: pytest -q
+
+  slow:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+
+      - name: Install batcamp with test dependencies
+        shell: bash -l {0}
+        run: pip install -e '.[tests]'
+
+      - name: Run slow tests
+        shell: bash -l {0}
+        run: pytest -q -m slow -o addopts=''
