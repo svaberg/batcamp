@@ -17,7 +17,7 @@ This checklist is for publishing `batcamp` from `/Users/dagfev/Documents/starwin
 - [x] Remove the ray feature from the public API, tests, docs, and examples before release.
 - [x] Remove generated build artifacts before the release commit.
 - [x] Make sure generated artifacts such as `build/` and `dist/` are ignored if they should never be committed.
-- [ ] Commit the release-ready state on `main`.
+- [x] Commit the release-ready state on `main`.
 - [ ] Tag the release commit with the version that will be uploaded.
 
 ## Packaging validation
