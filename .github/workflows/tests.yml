@@ -25,7 +25,14 @@ jobs:
 
       - name: Run default test suite
         shell: bash -l {0}
-        run: pytest -q
+        run: pytest --cov=batcamp --cov-report=xml:pytest-cobertura.xml -q
+
+      - name: Codacy Coverage Reporter
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: pytest-cobertura.xml
 
   slow:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
