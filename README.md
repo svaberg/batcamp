@@ -3,6 +3,7 @@
 [![Tests](https://github.com/svaberg/batcamp/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/svaberg/batcamp/actions/workflows/tests.yml)
 [![PyPI version](https://badge.fury.io/py/batcamp.svg)](https://pypi.org/project/batcamp/)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 [![DOI](https://zenodo.org/badge/1177665095.svg)](https://doi.org/10.5281/zenodo.19163499)
 
 `batcamp` reconstructs octrees from BATSRUS-like outputs, with support for both spherical and cartesian data.
