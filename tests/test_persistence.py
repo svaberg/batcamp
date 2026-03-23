@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from batread.dataset import Dataset
+from batread import Dataset
 
 from sample_data_helper import data_file
 from batcamp import Octree

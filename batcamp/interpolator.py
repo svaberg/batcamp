@@ -12,7 +12,7 @@ from typing import NamedTuple
 from numba import njit
 from numba import prange
 import numpy as np
-from batread.dataset import Dataset
+from batread import Dataset
 
 from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import Octree

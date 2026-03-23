@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from batread.dataset import Dataset
+from batread import Dataset
 
 from batcamp import Octree, OctreeInterpolator
 from batcamp.interpolator import _infer_tree_coord_from_geometry

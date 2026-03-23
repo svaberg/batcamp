@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pooch
 import pytest
-from batread.dataset import Dataset
+from batread import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator

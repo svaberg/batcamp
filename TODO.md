@@ -46,6 +46,7 @@
 - [x] Replace dynamic attribute probing in `Octree.cell_bounds/domain_bounds` with explicit subclass hooks.
 - [x] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
 - [x] Make coordinate conversion/interpolation APIs NumPy-first for bulk arrays; keep scalar conversion helpers private and limited to kernel internals.
+- [ ] Post-release API pass: make `OctreeInterpolator` feel more like `scipy.interpolate.LinearNDInterpolator` where that fits the octree model. Target the call contract first: predictable query-shape handling, predictable return-shape handling for scalar/vector fields, and `NaN` for misses/outside-domain. Keep `tree=` as an advanced knob rather than part of the main mental model.
 - [x] Rename `spherical.xyz_to_rpa_components` to private `_xyz_to_rpa_components` and keep it kernel-internal.
 - [x] Purge public `SphericalOctree.xyz_to_rpa`; keep scalar xyz->rpa conversion kernel-internal only.
 - [x] Rename scalar kernel lookup functions `lookup_xyz_cell_id_kernel` / `lookup_rpa_cell_id_kernel` to private module helpers.
