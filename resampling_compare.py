@@ -54,8 +54,8 @@ def _unique_match(paths: list[Path], *, name: str) -> Path:
     return paths[0]
 
 
-def _find_in_example_data(root: Path, name: str) -> Path:
-    """Find one file by basename under example_data."""
+def _find_in_sample_data(root: Path, name: str) -> Path:
+    """Find one file by basename under sample_data."""
     return _unique_match(sorted(root.rglob(name)), name=name)
 
 
@@ -83,9 +83,9 @@ def _fetch_from_g2211_archive(name: str) -> Path:
 
 
 def resolve_data_file(repo_root: Path, name: str) -> Path:
-    """Resolve data file from example_data first, then pooch fallback."""
+    """Resolve data file from sample_data first, then pooch fallback."""
     try:
-        return _find_in_example_data(repo_root / "example_data", name)
+        return _find_in_sample_data(repo_root / "sample_data", name)
     except FileNotFoundError:
         return _fetch_from_g2211_archive(name)
 
