@@ -745,7 +745,6 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, topology) -> CartesianRayCe
             f"got {type(seed_lookup).__name__}."
         )
     lookup_state = CartesianLookupKernelState(
-        cell_centers=centers,
         cell_x_min=cell_x0,
         cell_x_max=cell_x1,
         cell_y_min=cell_y0,
@@ -755,20 +754,6 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, topology) -> CartesianRayCe
         cell_valid=np.ones(n_cells, dtype=np.bool_),
         xyz_min=np.asarray(seed_lookup.xyz_min, dtype=np.float64),
         xyz_max=np.asarray(seed_lookup.xyz_max, dtype=np.float64),
-        xyz_span=np.asarray(seed_lookup.xyz_span, dtype=np.float64),
-        bin_shape=np.array([1, 1, 1], dtype=np.int64),
-        bin_offsets=np.zeros(2, dtype=np.int64),
-        bin_cell_ids=np.empty((0,), dtype=np.int64),
-        max_radius=0,
-        leaf_shape=np.asarray(_shape_for_level(tree, int(topology.max_level)), dtype=np.int64),
-        tree_depth=int(topology.max_level),
-        cell_i0=np.asarray(topology.i0, dtype=np.int64),
-        cell_i1=np.asarray(topology.i1, dtype=np.int64),
-        cell_i2=np.asarray(topology.i2, dtype=np.int64),
-        node_depth=np.asarray(topology.levels, dtype=np.int64),
-        node_i0=np.asarray(topology.i0, dtype=np.int64),
-        node_i1=np.asarray(topology.i1, dtype=np.int64),
-        node_i2=np.asarray(topology.i2, dtype=np.int64),
         node_value=np.arange(n_cells, dtype=np.int64),
         node_child=np.full((n_cells, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_cells, dtype=np.int64),
@@ -911,57 +896,6 @@ def _build_sparse_spherical_seed_lookup_state(
     n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
     rep_cell_ids = np.asarray(topology.node_cell_ids, dtype=np.int64)
     n_nodes = int(rep_cell_ids.shape[0])
-    depths = np.asarray(topology.levels, dtype=np.int64)
-    depth_levels = np.array(sorted(set(int(v) for v in depths.tolist())), dtype=np.int64)
-    levels_desc = depth_levels[::-1].copy()
-    depth_cap = int(np.max(depth_levels)) + 1
-
-    shape_table = np.full((depth_cap, 3), -1, dtype=np.int64)
-    dtheta_table = np.full(depth_cap, np.nan, dtype=np.float64)
-    dphi_table = np.full(depth_cap, np.nan, dtype=np.float64)
-    bin_level_offset = np.full(depth_cap, -1, dtype=np.int64)
-    running_offset = 0
-    for depth in depth_levels:
-        d = int(depth)
-        nr, ntheta, nphi = _shape_for_level(tree, d)
-        shape_table[d, 0] = int(nr)
-        shape_table[d, 1] = int(ntheta)
-        shape_table[d, 2] = int(nphi)
-        dtheta_table[d] = math.pi / float(ntheta)
-        dphi_table[d] = 2.0 * math.pi / float(nphi)
-        bin_level_offset[d] = running_offset
-        running_offset += int(ntheta) * int(nphi)
-
-    bin_lists: list[list[int]] = [[] for _ in range(int(running_offset))]
-    cell_r_center = np.linalg.norm(np.asarray(geometry.cell_centers, dtype=np.float64), axis=1)
-    for node_id, rep_cid in enumerate(rep_cell_ids):
-        depth = int(depths[node_id])
-        nphi = int(shape_table[depth, 2])
-        key = int(bin_level_offset[depth] + int(topology.i1[node_id]) * nphi + int(topology.i2[node_id]))
-        bin_lists[key].append(int(rep_cid))
-
-    bin_counts = np.zeros(int(running_offset), dtype=np.int64)
-    for key, ids in enumerate(bin_lists):
-        if not ids:
-            continue
-        arr = np.array(ids, dtype=np.int64)
-        node_ids = np.array([int(topology.cell_to_node_id[cid]) for cid in arr], dtype=np.int64)
-        order = np.argsort(cell_r_center[node_ids])
-        sorted_ids = arr[order]
-        bin_lists[key] = sorted_ids.tolist()
-        bin_counts[key] = int(sorted_ids.size)
-
-    bin_offsets = np.zeros(int(running_offset) + 1, dtype=np.int64)
-    if int(running_offset) > 0:
-        np.cumsum(bin_counts, out=bin_offsets[1:])
-    bin_cell_ids = np.empty(int(bin_offsets[-1]), dtype=np.int64)
-    for key in range(int(running_offset)):
-        start = int(bin_offsets[key])
-        end = int(bin_offsets[key + 1])
-        if end <= start:
-            continue
-        bin_cell_ids[start:end] = np.array(bin_lists[key], dtype=np.int64)
-
     cell_r_min = np.zeros(n_leaf_cells, dtype=np.float64)
     cell_r_max = np.zeros(n_leaf_cells, dtype=np.float64)
     cell_theta_min = np.zeros(n_leaf_cells, dtype=np.float64)
@@ -981,21 +915,13 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_valid[cid] = True
         cell_centers[cid, :] = geometry.cell_centers[node_id, :]
 
-    seed_lookup = tree.lookup_state
-    if not isinstance(seed_lookup, SphericalLookupKernelState):
+    if not isinstance(tree.lookup_state, SphericalLookupKernelState):
         raise TypeError(
             "Spherical truncated ray geometry requires SphericalLookupKernelState; "
-            f"got {type(seed_lookup).__name__}."
+            f"got {type(tree.lookup_state).__name__}."
         )
 
     return SphericalLookupKernelState(
-        levels_desc=levels_desc,
-        shape_table=shape_table,
-        dtheta_table=dtheta_table,
-        dphi_table=dphi_table,
-        bin_level_offset=bin_level_offset,
-        bin_offsets=bin_offsets,
-        bin_cell_ids=bin_cell_ids,
         cell_r_min=cell_r_min,
         cell_r_max=cell_r_max,
         cell_theta_min=cell_theta_min,
@@ -1006,17 +932,6 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_centers=cell_centers,
         r_min=float(np.min(geometry.cell_r0)),
         r_max=float(np.max(geometry.cell_r0 + geometry.cell_rden)),
-        radial_edges=np.empty((0,), dtype=np.float64),
-        max_radius=int(seed_lookup.max_radius),
-        leaf_shape=np.zeros(3, dtype=np.int64),
-        tree_depth=-1,
-        cell_i0=np.full(n_leaf_cells, -1, dtype=np.int64),
-        cell_i1=np.full(n_leaf_cells, -1, dtype=np.int64),
-        cell_i2=np.full(n_leaf_cells, -1, dtype=np.int64),
-        node_depth=np.asarray(topology.levels, dtype=np.int64),
-        node_i0=np.asarray(topology.i0, dtype=np.int64),
-        node_i1=np.asarray(topology.i1, dtype=np.int64),
-        node_i2=np.asarray(topology.i2, dtype=np.int64),
         node_value=np.asarray(rep_cell_ids, dtype=np.int64),
         node_child=np.full((n_nodes, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_nodes, dtype=np.int64),

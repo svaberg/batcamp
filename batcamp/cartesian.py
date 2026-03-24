@@ -28,7 +28,6 @@ _MISSING_NODE_VALUE = -1
 class CartesianLookupKernelState(NamedTuple):
     """Arrays used by compiled Cartesian lookup code under a slab cell model."""
 
-    cell_centers: np.ndarray
     cell_x_min: np.ndarray
     cell_x_max: np.ndarray
     cell_y_min: np.ndarray
@@ -38,20 +37,6 @@ class CartesianLookupKernelState(NamedTuple):
     cell_valid: np.ndarray
     xyz_min: np.ndarray
     xyz_max: np.ndarray
-    xyz_span: np.ndarray
-    bin_shape: np.ndarray
-    bin_offsets: np.ndarray
-    bin_cell_ids: np.ndarray
-    max_radius: int
-    leaf_shape: np.ndarray
-    tree_depth: int
-    cell_i0: np.ndarray
-    cell_i1: np.ndarray
-    cell_i2: np.ndarray
-    node_depth: np.ndarray
-    node_i0: np.ndarray
-    node_i1: np.ndarray
-    node_i2: np.ndarray
     node_value: np.ndarray
     node_child: np.ndarray
     root_node_ids: np.ndarray
@@ -83,18 +68,6 @@ def _contains_xyz_cell(
         return False
     return True
 
-
-@njit(cache=True)
-def _lookup_fine_index(q: float, q_min: float, q_span: float, n_fine: int) -> int:
-    """Map one coordinate to its finest-grid index, clamped to valid range."""
-    idx = int(math.floor(((q - q_min) / q_span) * n_fine))
-    if idx < 0:
-        return 0
-    if idx >= n_fine:
-        return int(n_fine - 1)
-    return idx
-
-
 @njit(cache=True)
 def _contains_xyz_node(
     node_id: int,
@@ -113,57 +86,6 @@ def _contains_xyz_node(
     if z < (lookup_state.node_z_min[nid] - tol) or z > (lookup_state.node_z_max[nid] + tol):
         return False
     return True
-
-
-@njit(cache=True)
-def _find_node_value(
-    depth: int,
-    i0: int,
-    i1: int,
-    i2: int,
-    lookup_state: CartesianLookupKernelState,
-) -> int:
-    """Binary-search one occupied Cartesian node by `(depth, i0, i1, i2)`."""
-    lo = 0
-    hi = int(lookup_state.node_depth.shape[0]) - 1
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        m_depth = int(lookup_state.node_depth[mid])
-        if depth < m_depth:
-            hi = mid - 1
-            continue
-        if depth > m_depth:
-            lo = mid + 1
-            continue
-
-        m_i0 = int(lookup_state.node_i0[mid])
-        if i0 < m_i0:
-            hi = mid - 1
-            continue
-        if i0 > m_i0:
-            lo = mid + 1
-            continue
-
-        m_i1 = int(lookup_state.node_i1[mid])
-        if i1 < m_i1:
-            hi = mid - 1
-            continue
-        if i1 > m_i1:
-            lo = mid + 1
-            continue
-
-        m_i2 = int(lookup_state.node_i2[mid])
-        if i2 < m_i2:
-            hi = mid - 1
-            continue
-        if i2 > m_i2:
-            lo = mid + 1
-            continue
-
-        return int(lookup_state.node_value[mid])
-    return _MISSING_NODE_VALUE
-
-
 @njit(cache=True)
 def _lookup_xyz_cell_id_kernel(
     x: float,
@@ -274,7 +196,6 @@ class _CartesianCellLookup:
             ],
             dtype=float,
         )
-        self._xyz_span = np.maximum(self._xyz_max - self._xyz_min, tiny)
 
         n_cells = int(self._corners.shape[0])
         if tree.cell_levels is None or tree.cell_levels.shape[0] != n_cells:
@@ -282,8 +203,6 @@ class _CartesianCellLookup:
         self._cell_level = np.array(tree.cell_levels, dtype=np.int64)
         self._cell_valid = self._cell_level >= 0
 
-        self._leaf_shape = np.asarray(tree.leaf_shape, dtype=np.int64)
-        self._tree_depth = int(tree.depth)
         required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
         required += ("_node_child", "_root_node_ids", "_node_x_min", "_node_x_max", "_node_y_min", "_node_y_max", "_node_z_min", "_node_z_max")
         missing = [name for name in required if not hasattr(tree, name)]
@@ -305,12 +224,7 @@ class _CartesianCellLookup:
         self._node_y_max = np.asarray(tree._node_y_max, dtype=np.float64)
         self._node_z_min = np.asarray(tree._node_z_min, dtype=np.float64)
         self._node_z_max = np.asarray(tree._node_z_max, dtype=np.float64)
-        self._bin_shape = np.array([1, 1, 1], dtype=np.int64)
-        self._bin_offsets = np.zeros(2, dtype=np.int64)
-        self._bin_cell_ids = np.empty((0,), dtype=np.int64)
-        self._max_radius = 0
         self._lookup_state = CartesianLookupKernelState(
-            cell_centers=self._cell_centers,
             cell_x_min=self._cell_x_min,
             cell_x_max=self._cell_x_max,
             cell_y_min=self._cell_y_min,
@@ -320,20 +234,6 @@ class _CartesianCellLookup:
             cell_valid=self._cell_valid,
             xyz_min=self._xyz_min,
             xyz_max=self._xyz_max,
-            xyz_span=self._xyz_span,
-            bin_shape=self._bin_shape,
-            bin_offsets=self._bin_offsets,
-            bin_cell_ids=self._bin_cell_ids,
-            max_radius=int(self._max_radius),
-            leaf_shape=self._leaf_shape,
-            tree_depth=int(self._tree_depth),
-            cell_i0=self._i0,
-            cell_i1=self._i1,
-            cell_i2=self._i2,
-            node_depth=self._node_depth,
-            node_i0=self._node_i0,
-            node_i1=self._node_i1,
-            node_i2=self._node_i2,
             node_value=self._node_value,
             node_child=self._node_child,
             root_node_ids=self._root_node_ids,
