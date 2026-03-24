@@ -2882,6 +2882,9 @@ class OctreeRayInterpolator:
         boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
     ) -> np.ndarray:
         """One-shot midpoint integration (trace->midpoints->interpolate->sum)."""
+        # TODO: This is a second end-to-end ray-integration path alongside the
+        # compiled face-neighbor integrator below. Keep it only if we still want
+        # a slower oracle/reference path; otherwise delete the duplicate route.
         mids, weights, offsets = self.adaptive_midpoint_rule(
             origins_xyz,
             direction_xyz,
