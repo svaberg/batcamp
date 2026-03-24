@@ -53,6 +53,8 @@ class SphericalLookupKernelState(NamedTuple):
     node_value: np.ndarray
     node_child: np.ndarray
     root_node_ids: np.ndarray
+    node_parent: np.ndarray
+    cell_node_id: np.ndarray
     node_r_min: np.ndarray
     node_r_max: np.ndarray
     node_theta_min: np.ndarray
@@ -135,11 +137,18 @@ def _lookup_rpa_cell_id_kernel(
         return int(prev_cid)
 
     current = -1
-    for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
-        node_id = int(lookup_state.root_node_ids[root_pos])
-        if _contains_rpa_node(node_id, r, polar, azimuth, lookup_state):
-            current = node_id
-            break
+    if prev_cid >= 0:
+        current = int(lookup_state.cell_node_id[int(prev_cid)])
+        while current >= 0:
+            if _contains_rpa_node(current, r, polar, azimuth, lookup_state):
+                break
+            current = int(lookup_state.node_parent[current])
+    if current < 0:
+        for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
+            node_id = int(lookup_state.root_node_ids[root_pos])
+            if _contains_rpa_node(node_id, r, polar, azimuth, lookup_state):
+                current = node_id
+                break
     if current < 0:
         return -1
 
@@ -269,7 +278,8 @@ class _SphericalCellLookup:
 
         required = (
             "_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value", "_radial_edges",
-            "_node_child", "_root_node_ids", "_node_r_min", "_node_r_max", "_node_theta_min", "_node_theta_max", "_node_phi_start", "_node_phi_width",
+            "_node_child", "_root_node_ids", "_node_parent", "_cell_node_id",
+            "_node_r_min", "_node_r_max", "_node_theta_min", "_node_theta_max", "_node_phi_start", "_node_phi_width",
         )
         missing = [name for name in required if not hasattr(self.tree, name)]
         if missing:
@@ -284,6 +294,8 @@ class _SphericalCellLookup:
         self._node_value = np.asarray(self.tree._node_value, dtype=np.int64)
         self._node_child = np.asarray(self.tree._node_child, dtype=np.int64)
         self._root_node_ids = np.asarray(self.tree._root_node_ids, dtype=np.int64)
+        self._node_parent = np.asarray(self.tree._node_parent, dtype=np.int64)
+        self._cell_node_id = np.asarray(self.tree._cell_node_id, dtype=np.int64)
         self._node_r_min = np.asarray(self.tree._node_r_min, dtype=np.float64)
         self._node_r_max = np.asarray(self.tree._node_r_max, dtype=np.float64)
         self._node_theta_min = np.asarray(self.tree._node_theta_min, dtype=np.float64)
@@ -341,6 +353,8 @@ class _SphericalCellLookup:
             node_value=self._node_value,
             node_child=self._node_child,
             root_node_ids=self._root_node_ids,
+            node_parent=self._node_parent,
+            cell_node_id=self._cell_node_id,
             node_r_min=self._node_r_min,
             node_r_max=self._node_r_max,
             node_theta_min=self._node_theta_min,

@@ -512,13 +512,16 @@ class SphericalOctreeBuilder:
             tree_depth=tree_depth,
             label="Spherical",
         )
-        node_child, root_node_ids = _build_child_table(
+        node_child, root_node_ids, node_parent = _build_child_table(
             node_depth,
             node_i0,
             node_i1,
             node_i2,
             node_value,
         )
+        cell_node_id = np.full(levels.shape[0], -1, dtype=np.int64)
+        leaf_mask = node_value >= 0
+        cell_node_id[node_value[leaf_mask]] = np.flatnonzero(leaf_mask).astype(np.int64)
         node_shift = np.asarray(tree_depth - node_depth, dtype=np.int64)
         node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
         node_r0_f = np.left_shift(node_i0, node_shift)
@@ -545,6 +548,8 @@ class SphericalOctreeBuilder:
         tree._node_value = node_value
         tree._node_child = node_child
         tree._root_node_ids = root_node_ids
+        tree._node_parent = node_parent
+        tree._cell_node_id = cell_node_id
         tree._node_r_min = np.asarray(node_r_min, dtype=np.float64)
         tree._node_r_max = np.asarray(node_r_max, dtype=np.float64)
         tree._node_theta_min = np.asarray(node_theta_min, dtype=np.float64)
