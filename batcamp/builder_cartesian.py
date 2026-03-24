@@ -148,6 +148,27 @@ class CartesianOctreeBuilder:
         level_shapes = self.infer_xyz_level_shapes(ds, corners, levels)
         return level_shapes, levels, min_level, max_level
 
+    def infer_tree_geometry(
+        self,
+        ds: Dataset,
+        corners: np.ndarray,
+        *,
+        cell_levels: np.ndarray | None = None,
+    ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int, tuple[int, int, int]]:
+        """Infer Cartesian levels, per-level shapes, and finest leaf shape."""
+        level_shapes, levels, min_level, max_level = self.infer_level_shapes(
+            ds,
+            corners,
+            cell_levels=cell_levels,
+        )
+        leaf_shape = self.infer_leaf_shape(
+            ds,
+            corners,
+            levels,
+            max_level=max_level,
+        )
+        return level_shapes, levels, min_level, max_level, leaf_shape
+
     @staticmethod
     def infer_leaf_shape(
         ds: Dataset,

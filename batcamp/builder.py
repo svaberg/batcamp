@@ -197,30 +197,6 @@ class OctreeBuilder:
         counts = tuple((level, base * (8**level), base * (8**level)) for level in range(depth + 1))
         return counts, root_shape, depth
 
-    @staticmethod
-    def _infer_leaf_shape_from_levels(
-        level_shapes: LevelShapeStatsMap,
-    ) -> tuple[GridShape, int, int]:
-        """Infer finest leaf shape from per-level shape/count statistics."""
-        max_level = max(level_shapes)
-        n_axis1_f = int(level_shapes[max_level][0])
-        n_axis2_f = int(level_shapes[max_level][1])
-        weighted_cells = 0
-        for level, (_n_axis1, _n_axis2, _d_axis1, _d_axis2, count) in level_shapes.items():
-            weighted_cells += int(count) * (8 ** int(max_level - level))
-
-        denom = int(n_axis1_f * n_axis2_f)
-        if denom <= 0:
-            raise ValueError("Invalid finest angular denominator while inferring n_axis0.")
-        n_axis0_float = weighted_cells / float(denom)
-        n_axis0 = int(round(n_axis0_float))
-        if not np.isclose(n_axis0_float, float(n_axis0), rtol=0.0, atol=1e-9):
-            raise ValueError(
-                "Could not infer integer finest n_axis0 from weighted cell counts: "
-                f"weighted={weighted_cells}, n_axis1={n_axis1_f}, n_axis2={n_axis2_f}."
-            )
-        return (n_axis0, n_axis1_f, n_axis2_f), int(weighted_cells), max_level
-
     def build(
         self,
         ds: Dataset,
@@ -261,32 +237,23 @@ class OctreeBuilder:
 
         tree_cls = octree_class_for_coord(tree_coord)
         if tree_coord == "rpa":
-            level_shapes, levels, min_level, max_level = self._rpa_builder.infer_level_shapes(
+            level_shapes, levels, min_level, max_level, leaf_shape, weighted_cells = self._rpa_builder.infer_tree_geometry(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
                 axis_rho_tol=axis_rho_tol,
             )
         else:
-            level_shapes, levels, min_level, max_level = self._xyz_builder.infer_level_shapes(
+            level_shapes, levels, min_level, max_level, leaf_shape = self._xyz_builder.infer_tree_geometry(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
             )
+            weighted_cells = int(
+                sum(int(level_shapes[level][4]) * (8 ** int(max_level - level)) for level in level_shapes)
+            )
 
         _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
-        weighted_cells = int(
-            sum(int(level_shapes[level][4]) * (8 ** int(max_level - level)) for level in level_shapes)
-        )
-        if tree_coord == "xyz":
-            leaf_shape = self._xyz_builder.infer_leaf_shape(
-                ds,
-                corners_arr,
-                levels,
-                max_level=max_level,
-            )
-        else:
-            leaf_shape, weighted_cells, _max_level = self._infer_leaf_shape_from_levels(level_shapes)
         _counts_full, root_shape, _depth = self._full_tree_counts(leaf_shape)
         level_offset = int(_depth) - int(max_level)
         if level_offset < 0:

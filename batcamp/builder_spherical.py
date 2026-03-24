@@ -243,3 +243,45 @@ class SphericalOctreeBuilder:
         )
         level_shapes = self.infer_level_angular_shapes(ds, corners, delta_phi, levels)
         return level_shapes, levels, min_level, max_level
+
+    @staticmethod
+    def infer_leaf_shape(
+        level_shapes: LevelShapeStatsMap,
+    ) -> tuple[tuple[int, int, int], int]:
+        """Infer finest spherical leaf shape and weighted finest-cell count."""
+        max_level = max(level_shapes)
+        n_axis1_f = int(level_shapes[max_level][0])
+        n_axis2_f = int(level_shapes[max_level][1])
+        weighted_cells = 0
+        for level, (_n_axis1, _n_axis2, _d_axis1, _d_axis2, count) in level_shapes.items():
+            weighted_cells += int(count) * (8 ** int(max_level - level))
+
+        denom = int(n_axis1_f * n_axis2_f)
+        if denom <= 0:
+            raise ValueError("Invalid finest angular denominator while inferring n_axis0.")
+        n_axis0_float = weighted_cells / float(denom)
+        n_axis0 = int(round(n_axis0_float))
+        if not np.isclose(n_axis0_float, float(n_axis0), rtol=0.0, atol=1e-9):
+            raise ValueError(
+                "Could not infer integer finest n_axis0 from weighted cell counts: "
+                f"weighted={weighted_cells}, n_axis1={n_axis1_f}, n_axis2={n_axis2_f}."
+            )
+        return (n_axis0, n_axis1_f, n_axis2_f), int(weighted_cells)
+
+    def infer_tree_geometry(
+        self,
+        ds: Dataset,
+        corners: np.ndarray,
+        *,
+        cell_levels: np.ndarray | None = None,
+        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int, tuple[int, int, int], int]:
+        """Infer spherical levels, per-level shapes, and finest leaf shape."""
+        level_shapes, levels, min_level, max_level = self.infer_level_shapes(
+            ds,
+            corners,
+            cell_levels=cell_levels,
+            axis_rho_tol=axis_rho_tol,
+        )
+        leaf_shape, weighted_cells = self.infer_leaf_shape(level_shapes)
+        return level_shapes, levels, min_level, max_level, leaf_shape, weighted_cells
