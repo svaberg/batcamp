@@ -78,8 +78,7 @@ def _resample_xy_plane(
 def test_xy_plane_resample_preserves_ring_pattern() -> None:
     """Midplane resample of a synthetic ring field should peak on an annulus, not at the center."""
     ds = _build_ring_pattern_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["Pattern"], tree=tree)
+    interp = OctreeInterpolator(ds, ["Pattern"], tree_coord="xyz")
     xg, yg, img = _resample_xy_plane(interp)
 
     radius = np.sqrt(xg * xg + yg * yg)
@@ -100,8 +99,7 @@ def test_xy_plane_resample_preserves_ring_pattern() -> None:
 def test_xy_plane_resample_preserves_checkerboard_pattern() -> None:
     """Midplane resample of a synthetic checkerboard field should alternate tile brightness."""
     ds = _build_checkerboard_pattern_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["Pattern"], tree=tree)
+    interp = OctreeInterpolator(ds, ["Pattern"], tree_coord="xyz")
     xg, yg, img = _resample_xy_plane(interp)
 
     finite = np.isfinite(img)
