@@ -28,6 +28,8 @@ from batcamp.topological import TopologicalNeighborhood
 
 _G2211_URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
 _G2211_SHA256 = "c31a32aab08cc20d5b643bba734fd7220e6b369e691f55f88a3a08cc5b2a2136"
+_OCTREE_CACHE_VERSION = "v2"
+_TOPOLOGY_CACHE_VERSION = "v2"
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,10 @@ def resolve_data_file(repo_root: Path, name: str) -> Path:
 def _octree_cache_path(cache_root: Path, data_path: Path) -> Path:
     """Return one persistent octree cache path keyed by file contents."""
     stat = data_path.stat()
-    cache_name = f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}.octree.npz"
+    cache_name = (
+        f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}."
+        f"{_OCTREE_CACHE_VERSION}.octree.npz"
+    )
     return cache_root / cache_name
 
 
@@ -112,7 +117,10 @@ def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> tup
 def _topology_cache_path(cache_root: Path, data_path: Path) -> Path:
     """Return one persistent topology cache path keyed by file contents."""
     stat = data_path.stat()
-    cache_name = f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}.topology.npz"
+    cache_name = (
+        f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}."
+        f"{_TOPOLOGY_CACHE_VERSION}.topology.npz"
+    )
     return cache_root / cache_name
 
 
@@ -169,19 +177,18 @@ def _load_or_build_full_topology(tree: Octree, data_path: Path, cache_root: Path
     return topo, source
 
 
-def parse_resolutions(raw: str) -> list[int]:
-    """Parse comma-separated resolution integers."""
+def _resolution_ramp(min_resolution: int, max_resolution: int) -> list[int]:
+    """Return the doubled resolution ramp `min, 2*min, ...` up to `max`."""
+    if int(min_resolution) <= 0:
+        raise ValueError("min_resolution must be positive.")
+    if int(max_resolution) < int(min_resolution):
+        raise ValueError("max_resolution must be >= min_resolution.")
+
     out: list[int] = []
-    for token in raw.split(","):
-        part = token.strip()
-        if not part:
-            continue
-        n = int(part)
-        if n <= 0:
-            raise ValueError("All resolutions must be positive integers.")
+    n = int(min_resolution)
+    while n <= int(max_resolution):
         out.append(n)
-    if not out:
-        raise ValueError("No resolutions parsed.")
+        n *= 2
     return out
 
 
@@ -730,9 +737,22 @@ def _time_call(fn, /, *args, **kwargs):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare 3D grid-sum vs ray integration resampling.")
     parser.add_argument(
-        "--resolutions",
-        default="8,16,32,64,128,256,512,1024",
-        help="Comma-separated plane resolutions (default: 8,16,32,64,128,256,512,1024).",
+        "--min-resolution",
+        type=int,
+        default=2,
+        help="Smallest square plane resolution (default: 2).",
+    )
+    parser.add_argument(
+        "--max-resolution",
+        type=int,
+        default=1024,
+        help="Largest square plane resolution (default: 1024).",
+    )
+    parser.add_argument(
+        "--max-seconds-per-image",
+        type=float,
+        default=0.5,
+        help="Stop increasing resolution for one dataset once grid or ray time exceeds this many seconds.",
     )
     parser.add_argument(
         "--nx-sum",
@@ -753,7 +773,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    resolutions = parse_resolutions(args.resolutions)
+    resolutions = _resolution_ramp(int(args.min_resolution), int(args.max_resolution))
+    max_seconds_per_image = float(args.max_seconds_per_image)
+    if max_seconds_per_image <= 0.0:
+        raise ValueError("max_seconds_per_image must be positive.")
     repo_root = Path(__file__).resolve().parent
     out_root = (repo_root / args.output_dir).resolve()
     cache_root = (repo_root / "build" / "resampling_compare_octree_cache").resolve()
@@ -919,6 +942,15 @@ def main() -> None:
                 f"{pos_overlap},{eq_abs_l1:.6e},{eq_abs_rmse:.6e},{eq_log_l1:.6e},{eq_log_rmse:.6e}",
                 flush=True,
             )
+            if max(grid_s, ray_s) > max_seconds_per_image:
+                _progress(
+                    (
+                        f"[{case.label}] stop at {n}x{n}: "
+                        f"max(grid={grid_s:.2f}s, ray={ray_s:.2f}s) > {max_seconds_per_image:.2f}s"
+                    ),
+                    log_path=progress_log_path,
+                )
+                break
         _progress(f"[{case.label}] done -> {case_dir}", log_path=progress_log_path)
 
 
