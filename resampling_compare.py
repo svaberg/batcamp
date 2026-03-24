@@ -22,7 +22,6 @@ from batcamp import Octree
 from batcamp import FlatCamera
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
-from batcamp.face_neighbors import build_face_neighbors
 from batcamp.face_neighbors import OctreeFaceNeighbors
 
 
@@ -170,10 +169,10 @@ def _load_or_build_full_face_neighbors(tree: Octree, data_path: Path, cache_root
         topo = _load_face_neighbors_cache(cache_path)
         source = "cache"
     else:
-        topo = build_face_neighbors(tree, max_level=int(tree.max_level))
+        topo = tree.face_neighbors(max_level=int(tree.max_level))
         _save_face_neighbors_cache(cache_path, topo)
         source = "build"
-    tree._ray_face_neighbors_full = topo
+    tree._cache_face_neighbors(topo)
     return topo, source
 
 

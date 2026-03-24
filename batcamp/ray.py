@@ -23,9 +23,6 @@ from .spherical import SphericalLookupKernelState
 from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 from .face_neighbors import FaceNeighborKernelState
-from .face_neighbors import OctreeFaceNeighbors
-from .face_neighbors import build_face_neighbors_kernel
-from .face_neighbors import build_face_neighbors
 
 if TYPE_CHECKING:
     from .interpolator import OctreeInterpolator
@@ -252,97 +249,8 @@ def _shape_for_level(tree: Octree, level: int) -> tuple[int, int, int]:
     )
 
 
-def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np.ndarray:
-    """Return `(n0, n1, n2)` for every ray level in `[min_level, max_level]`."""
-    if max_level < min_level:
-        raise ValueError(f"Invalid level bounds: min_level={min_level}, max_level={max_level}.")
-    out = np.empty((int(max_level - min_level + 1), 3), dtype=np.int64)
-    for level in range(int(min_level), int(max_level) + 1):
-        out[int(level - min_level), :] = _shape_for_level(tree, level)
-    return out
-
-
-def _face_neighbors_for_ray_max_level(tree: Octree, max_level: int) -> OctreeFaceNeighbors:
-    """Build face-neighbor face_neighbors at one root-relative ray level cutoff."""
-    cache = getattr(tree, "_ray_face_neighbors_by_max_level", None)
-    if cache is None:
-        cache = {}
-        tree._ray_face_neighbors_by_max_level = cache
-    key = int(max_level)
-    if key in cache:
-        return cache[key]
-
-    if tree.cell_levels is None:
-        raise ValueError("Octree has no cell_levels; cannot build ray face_neighbors.")
-
-    levels_all = np.asarray(tree.cell_levels, dtype=np.int64)
-    valid = levels_all >= 0
-    if not np.any(valid):
-        raise ValueError("Octree contains no valid cells (all levels are < 0).")
-
-    cell_ids = np.flatnonzero(valid).astype(np.int64)
-    cell_levels = levels_all[valid]
-    active_levels = np.minimum(cell_levels, key)
-
-    if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
-        raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; ray face_neighbors requires built tree state.")
-    i0_valid = np.asarray(getattr(tree, "_i0"), dtype=np.int64)[valid]
-    i1_valid = np.asarray(getattr(tree, "_i1"), dtype=np.int64)[valid]
-    i2_valid = np.asarray(getattr(tree, "_i2"), dtype=np.int64)[valid]
-
-    shift = cell_levels - active_levels
-    active_i0 = np.right_shift(i0_valid, shift)
-    active_i1 = np.right_shift(i1_valid, shift)
-    active_i2 = np.right_shift(i2_valid, shift)
-
-    keys = np.column_stack((active_levels, active_i0, active_i1, active_i2)).astype(np.int64)
-    unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
-
-    node_cell_ids = np.full(int(unique_keys.shape[0]), -1, dtype=np.int64)
-    cell_to_node_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
-    for row, node_id in enumerate(inverse):
-        nid = int(node_id)
-        if node_cell_ids[nid] < 0:
-            node_cell_ids[nid] = int(cell_ids[row])
-        cell_to_node_id[int(cell_ids[row])] = nid
-
-    levels = np.asarray(unique_keys[:, 0], dtype=np.int64)
-    i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
-    i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
-    i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
-    min_level = int(np.min(levels))
-    level_shapes = _level_shapes_for_cutoff(tree, min_level, key)
-    periodic_i2 = str(tree.tree_coord) == "rpa"
-    face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
-        levels,
-        i0,
-        i1,
-        i2,
-        min_level,
-        key,
-        level_shapes,
-        periodic_i2,
-    )
-    face_neighbors = OctreeFaceNeighbors(
-        levels=levels,
-        i0=i0,
-        i1=i1,
-        i2=i2,
-        face_counts=face_counts,
-        face_offsets=face_offsets,
-        face_neighbors=face_neighbors,
-        node_cell_ids=node_cell_ids,
-        cell_to_node_id=cell_to_node_id,
-        min_level=min_level,
-        max_level=key,
-        periodic_i2=periodic_i2,
-    )
-    cache[key] = face_neighbors
-    return face_neighbors
-
-
 def _face_neighbor_state_for_node_cells(face_neighbors) -> FaceNeighborKernelState:
-    """Return one face_neighbors state whose active cell ids are the frontier node ids."""
+    """Return one face-neighbor state whose active cell ids are the frontier nodes."""
     node_ids = np.arange(int(face_neighbors.node_count), dtype=np.int64)
     return FaceNeighborKernelState(
         face_offsets=np.asarray(face_neighbors.face_offsets, dtype=np.int64),
@@ -988,7 +896,7 @@ def _ray_cell_geometry_for_max_level(tree: Octree, max_level: int) -> CartesianR
     if key in cache:
         return cache[key]
 
-    face_neighbors = _face_neighbors_for_ray_max_level(tree, key)
+    face_neighbors = tree.face_neighbors(max_level=key)
     if str(tree.tree_coord) == "xyz":
         geometry = _build_cartesian_ray_cell_geometry(tree, face_neighbors)
     elif str(tree.tree_coord) == "rpa":
@@ -2361,11 +2269,7 @@ class OctreeRayTracer:
         self._seed_cell_plane_state = None
 
         if int(self.max_level) >= int(tree.max_level):
-            face_neighbors = getattr(tree, "_ray_face_neighbors_full", None)
-            if face_neighbors is None or int(face_neighbors.max_level) != int(tree.max_level):
-                face_neighbors = build_face_neighbors(tree, max_level=int(tree.max_level))
-                tree._ray_face_neighbors_full = face_neighbors
-            self._face_neighbors = face_neighbors
+            face_neighbors = tree.face_neighbors(max_level=int(tree.max_level))
             self._face_neighbor_state = face_neighbors.kernel_state
             if self._tree_coord == "xyz":
                 if not isinstance(self._seed_lookup_state, CartesianLookupKernelState):
@@ -2390,7 +2294,6 @@ class OctreeRayTracer:
 
         geometry = _ray_cell_geometry_for_max_level(tree, int(self.max_level))
         self._ray_cell_geometry = geometry
-        self._face_neighbors = None
         self._face_neighbor_state = geometry.face_neighbor_state
         if self._tree_coord == "xyz":
             if not isinstance(geometry, CartesianRayCellGeometry):
@@ -2406,7 +2309,7 @@ class OctreeRayTracer:
                     "Spherical ray tracing requires SphericalRayCellGeometry; "
                     f"got {type(geometry).__name__}."
                 )
-            face_neighbors = _face_neighbors_for_ray_max_level(tree, int(self.max_level))
+            face_neighbors = tree.face_neighbors(max_level=int(self.max_level))
             self._seed_lookup_state = _build_sparse_spherical_seed_lookup_state(tree, face_neighbors, geometry)
             self._seed_cell_plane_state = _build_sparse_seed_plane_state(
                 face_neighbors.node_cell_ids,
