@@ -10,6 +10,10 @@ from batcamp import Octree
 from batcamp import CartesianOctree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeBuilder
+from batcamp import SphericalOctree
+from batcamp.builder import _build_node_arrays
+from batcamp.builder import _resolve_cell_levels
+from batcamp.builder_cartesian import CartesianOctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
@@ -257,6 +261,52 @@ def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
     )
 
 
+def _make_cartesian_tree(
+    *,
+    leaf_shape: tuple[int, int, int],
+    root_shape: tuple[int, int, int],
+    max_level: int,
+    cell_levels: np.ndarray | None,
+) -> CartesianOctree:
+    levels = None if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
+    valid = np.empty((0,), dtype=np.int64) if levels is None else levels[levels >= 0]
+    min_level = int(np.min(valid)) if valid.size > 0 else 0
+    count = int(valid.size)
+    return CartesianOctree(
+        leaf_shape=leaf_shape,
+        root_shape=root_shape,
+        is_full=False,
+        level_counts=((min_level, count, count),),
+        min_level=min_level,
+        max_level=int(max_level),
+        tree_coord="xyz",
+        cell_levels=levels,
+    )
+
+
+def _make_spherical_tree(
+    *,
+    leaf_shape: tuple[int, int, int],
+    root_shape: tuple[int, int, int],
+    max_level: int,
+    cell_levels: np.ndarray | None,
+) -> SphericalOctree:
+    levels = None if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
+    valid = np.empty((0,), dtype=np.int64) if levels is None else levels[levels >= 0]
+    min_level = int(np.min(valid)) if valid.size > 0 else 0
+    count = int(valid.size)
+    return SphericalOctree(
+        leaf_shape=leaf_shape,
+        root_shape=root_shape,
+        is_full=False,
+        level_counts=((min_level, count, count),),
+        min_level=min_level,
+        max_level=int(max_level),
+        tree_coord="rpa",
+        cell_levels=levels,
+    )
+
+
 @pytest.fixture(scope="module")
 def cartesian_octree_context() -> tuple[_FakeDataset, CartesianOctree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
@@ -457,6 +507,64 @@ def test_warns_on_impossible_blocks_count(caplog: pytest.LogCaptureFixture) -> N
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
 
 
+def test_warns_on_unparseable_blocks_aux(caplog: pytest.LogCaptureFixture) -> None:
+    """Unparseable BLOCKS aux metadata should be ignored with a warning."""
+    ds = _build_regular_dataset()
+    ds.aux["BLOCKS"] = "garbage"
+    with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
+        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    assert tree.level_counts
+    assert any("BLOCKS" in rec.getMessage() and "not parseable" in rec.getMessage() for rec in caplog.records)
+
+
+def test_resolve_cell_levels_requires_inferred_levels_when_cell_levels_missing() -> None:
+    """Level resolution should fail when neither inferred nor explicit levels are provided."""
+    with pytest.raises(ValueError, match="inferred_levels is required"):
+        _resolve_cell_levels(
+            inferred_levels=None,
+            cell_levels=None,
+            expected_shape=(2,),
+        )
+
+
+def test_resolve_cell_levels_rejects_shape_mismatch() -> None:
+    """Level resolution should reject arrays that do not match the expected cell shape."""
+    with pytest.raises(ValueError, match="cell_levels shape does not match"):
+        _resolve_cell_levels(
+            inferred_levels=np.array([0, 1], dtype=np.int64),
+            cell_levels=None,
+            expected_shape=(1,),
+        )
+
+
+def test_build_node_arrays_rejects_duplicate_leaf_addresses() -> None:
+    """Sparse-node construction should reject duplicate leaf octree addresses."""
+    with pytest.raises(ValueError, match="overlap at octree address"):
+        _build_node_arrays(
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
+            tree_depth=0,
+            label="Cartesian",
+        )
+
+
+def test_build_node_arrays_rejects_parent_child_overlap() -> None:
+    """Sparse-node construction should reject explicit parent/child double occupancy."""
+    with pytest.raises(ValueError, match="overlap across parent/child addresses"):
+        _build_node_arrays(
+            np.array([0, 1], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
+            tree_depth=1,
+            label="Cartesian",
+        )
+
+
 def test_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
@@ -523,6 +631,168 @@ def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     assert tree.min_level == 0
     assert tree.cell_levels is not None
     assert np.array_equal(tree.cell_levels, cell_levels)
+
+
+def test_cartesian_level_shapes_reject_inconsistent_dx() -> None:
+    """Cartesian level-shape inference should fail on one nonuniform same-level row."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0, 2.0, 2.3], dtype=float),
+        y_edges=np.array([0.0, 1.0], dtype=float),
+        z_edges=np.array([0.0, 1.0], dtype=float),
+    )
+    ds = _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: points[:, 0],
+            Octree.Y_VAR: points[:, 1],
+            Octree.Z_VAR: points[:, 2],
+            "Scalar": points[:, 0],
+        },
+    )
+    with pytest.raises(ValueError, match="inconsistent dx"):
+        CartesianOctreeBuilder.infer_xyz_level_shapes(ds, np.asarray(corners, dtype=np.int64), np.zeros(3, dtype=np.int64))
+
+
+def test_cartesian_infer_leaf_shape_rejects_missing_max_level() -> None:
+    """Cartesian finest-shape inference should fail when the requested max level is absent."""
+    ds = _build_regular_xyz_dataset(nx=2, ny=2, nz=2)
+    with pytest.raises(ValueError, match="No cells found at max_level=1"):
+        CartesianOctreeBuilder.infer_leaf_shape(
+            ds,
+            np.asarray(ds.corners, dtype=np.int64),
+            np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
+            max_level=1,
+        )
+
+
+def test_cartesian_tree_state_requires_cell_levels() -> None:
+    """Cartesian exact-state construction should fail without cell levels."""
+    ds = _build_regular_xyz_dataset(nx=2, ny=2, nz=2)
+    tree = _make_cartesian_tree(
+        leaf_shape=(2, 2, 2),
+        root_shape=(1, 1, 1),
+        max_level=1,
+        cell_levels=None,
+    )
+    with pytest.raises(ValueError, match="Cartesian tree state requires cell_levels"):
+        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_cartesian_tree_state_requires_at_least_one_valid_level() -> None:
+    """Cartesian exact-state construction should fail when all cell levels are invalid."""
+    ds = _build_regular_xyz_dataset(nx=2, ny=1, nz=1)
+    tree = _make_cartesian_tree(
+        leaf_shape=(2, 1, 1),
+        root_shape=(2, 1, 1),
+        max_level=0,
+        cell_levels=np.full(int(np.asarray(ds.corners).shape[0]), -1, dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="at least one valid cell level"):
+        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_cartesian_tree_state_rejects_depth_above_tree_depth() -> None:
+    """Cartesian exact-state construction should reject cells deeper than tree.max_level."""
+    ds = _build_regular_xyz_dataset(nx=2, ny=1, nz=1)
+    tree = _make_cartesian_tree(
+        leaf_shape=(2, 1, 1),
+        root_shape=(2, 1, 1),
+        max_level=0,
+        cell_levels=np.ones(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="depth exceeds tree_depth=0"):
+        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_cartesian_tree_state_rejects_width_mismatch() -> None:
+    """Cartesian exact-state construction should reject cells whose width contradicts the supplied level."""
+    ds = _build_regular_xyz_dataset(nx=4, ny=2, nz=2)
+    tree = _make_cartesian_tree(
+        leaf_shape=(4, 2, 2),
+        root_shape=(2, 1, 1),
+        max_level=1,
+        cell_levels=np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="width does not match inferred level 0"):
+        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_spherical_level_shapes_require_valid_levels() -> None:
+    """Spherical angular-shape inference should fail when all levels are invalid."""
+    ds = _build_regular_dataset()
+    corners = np.asarray(ds.corners, dtype=np.int64)
+    delta_phi, _center_phi, _levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
+    with pytest.raises(ValueError, match="No valid \\(>=0\\) cell levels available for tree inference"):
+        SphericalOctreeBuilder.infer_level_angular_shapes(
+            ds,
+            corners,
+            delta_phi,
+            np.full(delta_phi.shape, -1, dtype=np.int64),
+        )
+
+
+def test_spherical_infer_leaf_shape_rejects_noninteger_radial_count() -> None:
+    """Spherical finest-shape inference should fail when weighted cells imply a noninteger radial count."""
+    with pytest.raises(ValueError, match="Could not infer integer finest n_axis0"):
+        SphericalOctreeBuilder.infer_leaf_shape(
+            {
+                0: (2, 4, math.pi / 2.0, math.pi / 2.0, 1),
+                1: (4, 8, math.pi / 4.0, math.pi / 4.0, 1),
+            }
+        )
+
+
+def test_spherical_tree_state_requires_cell_levels() -> None:
+    """Spherical exact-state construction should fail without cell levels."""
+    ds = _build_regular_dataset()
+    tree = _make_spherical_tree(
+        leaf_shape=(2, 4, 8),
+        root_shape=(1, 2, 4),
+        max_level=1,
+        cell_levels=None,
+    )
+    with pytest.raises(ValueError, match="Spherical tree state requires cell_levels"):
+        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
+    """Spherical exact-state construction should fail when all cell levels are invalid."""
+    ds = _build_regular_dataset()
+    tree = _make_spherical_tree(
+        leaf_shape=(2, 4, 8),
+        root_shape=(1, 2, 4),
+        max_level=1,
+        cell_levels=np.full(int(np.asarray(ds.corners).shape[0]), -1, dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="at least one valid cell level"):
+        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
+    """Spherical exact-state construction should reject cells deeper than tree.max_level."""
+    ds = _build_regular_dataset()
+    tree = _make_spherical_tree(
+        leaf_shape=(2, 4, 8),
+        root_shape=(2, 4, 8),
+        max_level=0,
+        cell_levels=np.ones(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="depth exceeds tree_depth=0"):
+        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+
+
+def test_spherical_tree_state_rejects_width_mismatch() -> None:
+    """Spherical exact-state construction should reject cells whose width contradicts the supplied level."""
+    ds = _build_regular_dataset()
+    tree = _make_spherical_tree(
+        leaf_shape=(2, 4, 8),
+        root_shape=(1, 2, 4),
+        max_level=1,
+        cell_levels=np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="width does not match inferred level 0"):
+        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
 
 
 def test_build_bind_false_returns_unbound_until_bind() -> None:
