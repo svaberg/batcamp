@@ -7,6 +7,7 @@ import argparse
 import csv
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 import tarfile
 import time
 
@@ -37,13 +38,54 @@ class DatasetCase:
     file_name: str
 
 
-def _progress(message: str, *, log_path: Path | None = None) -> None:
-    """Print one progress line immediately and optionally append it to a log."""
-    print(message, flush=True)
-    if log_path is not None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as fh:
+class _ProgressReporter:
+    """Terminal/log progress helper with optional in-place stage completion."""
+
+    def __init__(self, *, log_path: Path | None = None) -> None:
+        self._log_path = log_path
+        self._stream = sys.stdout
+        self._interactive = bool(getattr(self._stream, "isatty", lambda: False)())
+        self._active_stage = False
+
+    def _append_log(self, message: str) -> None:
+        if self._log_path is None:
+            return
+        self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._log_path.open("a", encoding="utf-8") as fh:
             fh.write(message + "\n")
+
+    def note(self, message: str) -> None:
+        """Write one ordinary progress line."""
+        if self._interactive and self._active_stage:
+            self._stream.write("\n")
+            self._stream.flush()
+            self._active_stage = False
+        print(message, flush=True)
+        self._append_log(message)
+
+    def start(self, message: str) -> None:
+        """Start one timed stage."""
+        line = f"{message}..."
+        if self._interactive:
+            self._stream.write(line)
+            self._stream.flush()
+            self._active_stage = True
+        else:
+            print(line, flush=True)
+        self._append_log(line)
+
+    def complete(self, message: str, seconds: float, *, detail: str | None = None) -> None:
+        """Finish one timed stage."""
+        line = f"{message} complete ({seconds:.2f}s)"
+        if detail:
+            line = f"{line} {detail}"
+        if self._interactive and self._active_stage:
+            self._stream.write(f"\r\033[2K{line}\n")
+            self._stream.flush()
+        else:
+            print(line, flush=True)
+        self._append_log(line)
+        self._active_stage = False
 
 
 def _unique_match(paths: list[Path], *, name: str) -> Path:
@@ -783,6 +825,7 @@ def main() -> None:
     progress_log_path = out_root / "progress.log"
     progress_log_path.parent.mkdir(parents=True, exist_ok=True)
     progress_log_path.write_text("", encoding="utf-8")
+    progress = _ProgressReporter(log_path=progress_log_path)
 
     cases = [
         DatasetCase("example", "3d__var_1_n00000000.plt"),
@@ -790,7 +833,7 @@ def main() -> None:
         DatasetCase("sc", "3d__var_4_n00044000.plt"),
     ]
 
-    _progress(f"output_dir={out_root}", log_path=progress_log_path)
+    progress.note(f"output_dir={out_root}")
     print(
         "dataset,resolution,pixels,grid_s,ray_s,grid_nan,grid_zero,ray_nan,ray_zero,"
         "finite_overlap,positive_overlap,eq_abs_l1,eq_abs_rmse,eq_log10_l1,eq_log10_rmse",
@@ -800,19 +843,34 @@ def main() -> None:
         case_dir = out_root / case.label
         case_dir.mkdir(parents=True, exist_ok=True)
 
-        _progress(f"[{case.label}] start file={case.file_name}", log_path=progress_log_path)
+        progress.note(f"[{case.label}] file={case.file_name}")
+        progress.start(f"[{case.label}] resolve data file")
         data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
-        _progress(f"[{case.label}] resolved path={data_path} ({resolve_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
+        progress.start(f"[{case.label}] read dataset")
         ds, read_s = _time_call(Dataset.from_file, str(data_path))
-        _progress(f"[{case.label}] read dataset ({read_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] read dataset", read_s)
+        progress.start(f"[{case.label}] prepare octree")
         (tree, tree_source), tree_s = _time_call(_load_or_build_octree, ds, data_path, cache_root)
-        _progress(f"[{case.label}] octree {tree_source} ({tree_s:.2f}s)", log_path=progress_log_path)
-        ((_face_neighbors, face_neighbors_source), face_neighbors_s) = _time_call(_load_or_build_full_face_neighbors, tree, data_path, face_neighbors_cache_root)
-        _progress(f"[{case.label}] face-neighbors {face_neighbors_source} ({face_neighbors_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] prepare octree", tree_s, detail=f"source={tree_source}")
+        progress.start(f"[{case.label}] prepare face neighbors")
+        ((_face_neighbors, face_neighbors_source), face_neighbors_s) = _time_call(
+            _load_or_build_full_face_neighbors,
+            tree,
+            data_path,
+            face_neighbors_cache_root,
+        )
+        progress.complete(
+            f"[{case.label}] prepare face neighbors",
+            face_neighbors_s,
+            detail=f"source={face_neighbors_source}",
+        )
+        progress.start(f"[{case.label}] build interpolator")
         interp, interp_s = _time_call(OctreeInterpolator, ds, ["Rho [g/cm^3]"], tree=tree)
-        _progress(f"[{case.label}] interpolator ready ({interp_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] build interpolator", interp_s)
+        progress.start(f"[{case.label}] build ray interpolator")
         ray, ray_s0 = _time_call(OctreeRayInterpolator, interp)
-        _progress(f"[{case.label}] ray interpolator ready ({ray_s0:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] build ray interpolator", ray_s0)
 
         dmin, dmax = interp.tree.domain_bounds(coord="xyz")
         bounds = (
@@ -825,6 +883,8 @@ def main() -> None:
         )
 
         warm_n = int(resolutions[0])
+        progress.start(f"[{case.label}] warm up")
+        t0 = time.perf_counter()
         _, warm_grid_s = _time_call(_grid_sum_image, interp, n_plane=warm_n, nx_sum=int(args.nx_sum), bounds=bounds)
         warm_origins, warm_direction, warm_t_end = _ray_setup(n_plane=warm_n, bounds=bounds)
         _, warm_ray_s = _time_call(
@@ -836,14 +896,16 @@ def main() -> None:
             n_plane=warm_n,
             chunk_size=int(args.chunk_size),
         )
-        _progress(
-            f"[{case.label}] warmup grid={warm_grid_s:.2f}s ray={warm_ray_s:.2f}s",
-            log_path=progress_log_path,
+        progress.complete(
+            f"[{case.label}] warm up",
+            float(time.perf_counter() - t0),
+            detail=f"grid={warm_grid_s:.2f}s ray={warm_ray_s:.2f}s",
         )
 
         rows: list[dict[str, float | int]] = []
         for n in resolutions:
-            _progress(f"[{case.label}] run {n}x{n}", log_path=progress_log_path)
+            progress.start(f"[{case.label}] run {n}x{n}")
+            t_step = time.perf_counter()
             origins, direction, t_end = _ray_setup(n_plane=int(n), bounds=bounds)
 
             t0 = time.perf_counter()
@@ -934,6 +996,11 @@ def main() -> None:
                 case_dir / "runtime_vs_pixels.png",
                 title=f"{case.label}: runtime vs pixel count",
             )
+            progress.complete(
+                f"[{case.label}] run {n}x{n}",
+                float(time.perf_counter() - t_step),
+                detail=f"grid={grid_s:.2f}s ray={ray_s:.2f}s",
+            )
 
             print(
                 f"{case.label},{n}x{n},{pixels},{grid_s:.6f},{ray_s:.6f},"
@@ -942,15 +1009,14 @@ def main() -> None:
                 flush=True,
             )
             if max(grid_s, ray_s) > max_seconds_per_image:
-                _progress(
+                progress.note(
                     (
                         f"[{case.label}] stop at {n}x{n}: "
                         f"max(grid={grid_s:.2f}s, ray={ray_s:.2f}s) > {max_seconds_per_image:.2f}s"
-                    ),
-                    log_path=progress_log_path,
+                    )
                 )
                 break
-        _progress(f"[{case.label}] done -> {case_dir}", log_path=progress_log_path)
+        progress.note(f"[{case.label}] done -> {case_dir}")
 
 
 if __name__ == "__main__":
