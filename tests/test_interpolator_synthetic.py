@@ -34,6 +34,7 @@ def _build_uniform_cartesian_linear_dataset() -> _FakeDataset:
             Octree.Y_VAR: y,
             Octree.Z_VAR: z,
             "Scalar": _linear_scalar(x, y, z),
+            "XCoord": np.asarray(x, dtype=float),
         },
     )
 
@@ -89,6 +90,7 @@ def _build_adaptive_cartesian_linear_dataset() -> _FakeDataset:
             Octree.Y_VAR: y,
             Octree.Z_VAR: z,
             "Scalar": _linear_scalar(x, y, z),
+            "XCoord": np.asarray(x, dtype=float),
         },
     )
 
@@ -117,10 +119,15 @@ def _xy_plane_queries(xyz: np.ndarray, *, resolution: int) -> np.ndarray:
     return np.column_stack((xg.ravel(), yg.ravel(), zg.ravel()))
 
 
-def _assert_plane_ramp_matches_exact_linear_field(ds: _FakeDataset) -> None:
+def _assert_plane_ramp_matches_exact_field(
+    ds: _FakeDataset,
+    *,
+    field_name: str,
+    expected_fn,
+) -> None:
     """Assert plane-resampling stays exact over one resolution ramp."""
     xyz = _xyz_points(ds)
-    interp = OctreeInterpolator(ds, ["Scalar"], tree_coord="xyz")
+    interp = OctreeInterpolator(ds, [field_name], tree_coord="xyz")
 
     for resolution in _PLANE_RAMP:
         query = _xy_plane_queries(xyz, resolution=resolution)
@@ -131,7 +138,7 @@ def _assert_plane_ramp_matches_exact_linear_field(ds: _FakeDataset) -> None:
             return_cell_ids=True,
         )
         values = np.asarray(values, dtype=float)
-        expected = _linear_scalar(query[:, 0], query[:, 1], query[:, 2])
+        expected = np.asarray(expected_fn(query), dtype=float)
 
         assert np.all(cell_ids >= 0)
         assert np.isfinite(values).all()
@@ -140,9 +147,35 @@ def _assert_plane_ramp_matches_exact_linear_field(ds: _FakeDataset) -> None:
 
 def test_uniform_cartesian_plane_ramp_matches_exact_linear_field() -> None:
     """Uniform synthetic plane ramp should reproduce the exact linear field."""
-    _assert_plane_ramp_matches_exact_linear_field(_build_uniform_cartesian_linear_dataset())
+    _assert_plane_ramp_matches_exact_field(
+        _build_uniform_cartesian_linear_dataset(),
+        field_name="Scalar",
+        expected_fn=lambda q: _linear_scalar(q[:, 0], q[:, 1], q[:, 2]),
+    )
 
 
 def test_adaptive_cartesian_plane_ramp_matches_exact_linear_field() -> None:
     """Adaptive synthetic plane ramp should reproduce the exact linear field."""
-    _assert_plane_ramp_matches_exact_linear_field(_build_adaptive_cartesian_linear_dataset())
+    _assert_plane_ramp_matches_exact_field(
+        _build_adaptive_cartesian_linear_dataset(),
+        field_name="Scalar",
+        expected_fn=lambda q: _linear_scalar(q[:, 0], q[:, 1], q[:, 2]),
+    )
+
+
+def test_uniform_cartesian_plane_ramp_matches_x_coordinate_field() -> None:
+    """Uniform synthetic plane ramp should reproduce the exact `x` coordinate field."""
+    _assert_plane_ramp_matches_exact_field(
+        _build_uniform_cartesian_linear_dataset(),
+        field_name="XCoord",
+        expected_fn=lambda q: q[:, 0],
+    )
+
+
+def test_adaptive_cartesian_plane_ramp_matches_x_coordinate_field() -> None:
+    """Adaptive synthetic plane ramp should reproduce the exact `x` coordinate field."""
+    _assert_plane_ramp_matches_exact_field(
+        _build_adaptive_cartesian_linear_dataset(),
+        field_name="XCoord",
+        expected_fn=lambda q: q[:, 0],
+    )
