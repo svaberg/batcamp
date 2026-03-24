@@ -69,7 +69,6 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
         "coarse": coarse,
         "point_levels": point_levels,
         "tree": tree,
-        "lookup": tree.lookup,
     }
 
 

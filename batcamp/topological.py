@@ -384,7 +384,7 @@ def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np
 def _cell_local_indices_from_bounds(tree: Octree, cell_ids: np.ndarray, levels: np.ndarray) -> tuple[np.ndarray, ...]:
     """Derive exact per-level `(i0, i1, i2)` starts from cell bounds."""
     tree._require_lookup()
-    lookup_state = tree.lookup.lookup_state
+    lookup_state = tree.lookup_state
     n = int(cell_ids.shape[0])
     i0 = np.full(n, -1, dtype=np.int64)
     i1 = np.full(n, -1, dtype=np.int64)

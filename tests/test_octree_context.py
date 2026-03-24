@@ -72,12 +72,12 @@ def test_tree_caches_metadata(octree_context: dict[str, object]) -> None:
 
 def test_lookup_xyz_rpa_agree(octree_context: dict[str, object]) -> None:
     """Cartesian and spherical lookup coords resolve the same leaf cell."""
-    lookup = octree_context["lookup"]
+    tree = octree_context["tree"]
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-    hit_xyz = lookup.lookup_point(q_xyz, coord="xyz")
+    hit_xyz = tree.lookup_point(q_xyz, coord="xyz")
     assert hit_xyz is not None
 
-    hit_rpa = lookup.lookup_point(_xyz_to_rpa_numpy(q_xyz), coord="rpa")
+    hit_rpa = tree.lookup_point(_xyz_to_rpa_numpy(q_xyz), coord="rpa")
     assert hit_rpa is not None
     assert hit_xyz.cell_id == hit_rpa.cell_id
