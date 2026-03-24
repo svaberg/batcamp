@@ -250,6 +250,9 @@ def _face_neighbor_state_for_node_cells(face_neighbors) -> FaceNeighborKernelSta
 
 def _node_point_candidates(tree: Octree, face_neighbors) -> list[np.ndarray]:
     """Return unique descendant-corner point ids for every frontier node."""
+    # TODO: ray setup still forces lookup with tree._require_lookup() and then
+    # reaches into tree._corners. If ray traversal stays first-class, give the
+    # octree one non-private exact-state/traversal entrypoint for this data.
     tree._require_lookup()
     if tree.cell_levels is None:
         raise ValueError("Octree has no cell levels; cannot build truncated ray cells.")
@@ -485,6 +488,9 @@ def _build_plane_state_from_ordered_corners(
 
 def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     """Build one Cartesian plane model from face_neighbors-aligned cell faces."""
+    # TODO: this still consumes tree._corners/_points/_cell_centers directly.
+    # Keep the plane-builder math here, but stop depending on foreign private
+    # octree arrays once there is one octree-owned traversal-state bundle.
     tree._require_lookup()
     corners = np.asarray(getattr(tree, "_corners"), dtype=np.int64)
     points = np.asarray(getattr(tree, "_points"), dtype=float)
@@ -879,6 +885,9 @@ def _spherical_interp_state_from_geometry(
 
 def _ray_cell_geometry_for_max_level(tree: Octree, max_level: int) -> CartesianRayCellGeometry | SphericalRayCellGeometry:
     """Return cached truncated ray-cell geometry for one level cutoff."""
+    # TODO: this cache currently lives in tree._ray_cell_geometry_by_max_level.
+    # If truncated ray geometry is a supported octree capability, expose it
+    # through Octree rather than writing foreign private cache slots here.
     cache = getattr(tree, "_ray_cell_geometry_by_max_level", None)
     if cache is None:
         cache = {}
@@ -903,6 +912,9 @@ def _ray_interp_state_for_max_level(
     max_level: int,
 ) -> CartesianInterpKernelState | SphericalInterpKernelState:
     """Return cached truncated interpolation state for one ray level cutoff."""
+    # TODO: ray.py still writes interpolator._ray_interp_state_by_max_level and
+    # reads interpolator._point_values_2d. Promote one non-private packed
+    # interpolation state if truncated ray integration remains public.
     cache = getattr(interpolator, "_ray_interp_state_by_max_level", None)
     if cache is None:
         cache = {}
@@ -2271,6 +2283,8 @@ class OctreeRayTracer:
                 self._cell_lookup_state = self._seed_lookup_state
                 self._cell_plane_state = None
             elif self._tree_coord == "rpa":
+                # TODO: this still caches spherical plane state in
+                # tree._ray_cell_plane_state from outside Octree.
                 plane_state = getattr(tree, "_ray_cell_plane_state", None)
                 if plane_state is None:
                     plane_state = _build_cell_plane_kernel_state(tree)
@@ -2675,6 +2689,9 @@ class OctreeRayInterpolator:
         self.tree = interpolator.tree
         self.max_level = _resolve_ray_max_level(self.tree, max_level)
         self.ray_tracer = OctreeRayTracer(self.tree, max_level=max_level)
+        # TODO: this still reads interpolator._interp_state_xyz/_interp_state_rpa.
+        # Either expose one non-private ray-ready interpolation state or collapse
+        # the split between tracer/interpolator wrappers.
         if int(self.max_level) >= int(self.tree.max_level):
             self._interp_state_xyz = getattr(interpolator, "_interp_state_xyz", None)
             self._interp_state_rpa = getattr(interpolator, "_interp_state_rpa", None)
@@ -2900,6 +2917,8 @@ class OctreeRayInterpolator:
         out = np.full((n_rays, ncomp), np.nan, dtype=float)
 
         tree_coord = str(self.tree.tree_coord)
+        # TODO: OctreeRayInterpolator still reaches into OctreeRayTracer private
+        # kernel state instead of consuming one explicit tracer state object.
         face_state = self.ray_tracer._face_neighbor_state
         for start in range(0, n_rays, chunk):
             stop = min(n_rays, start + chunk)

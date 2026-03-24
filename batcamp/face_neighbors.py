@@ -393,6 +393,8 @@ def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarra
     if not np.any(valid):
         raise ValueError("Octree contains no valid cells (all levels are < 0).")
     cell_ids = np.flatnonzero(valid).astype(np.int64)
+    # TODO: face_neighbors still reaches into tree._i0/_i1/_i2 directly.
+    # Promote exact leaf addresses to one non-private octree state accessor.
     if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
         raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; face neighbors require built tree state.")
     i0_all = np.asarray(getattr(tree, "_i0"), dtype=np.int64)
