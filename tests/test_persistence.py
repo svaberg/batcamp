@@ -54,6 +54,8 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert np.array_equal(np.asarray(loaded._i2, dtype=np.int64), np.asarray(tree._i2, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._node_depth, dtype=np.int64), np.asarray(tree._node_depth, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._node_value, dtype=np.int64), np.asarray(tree._node_value, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._node_child, dtype=np.int64), np.asarray(tree._node_child, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._root_node_ids, dtype=np.int64), np.asarray(tree._root_node_ids, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)

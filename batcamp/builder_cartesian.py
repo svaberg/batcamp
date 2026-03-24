@@ -8,6 +8,7 @@ from batread.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
 from .builder import _build_node_arrays
+from .builder import _build_child_table
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
 from .octree import Octree
@@ -354,6 +355,27 @@ class CartesianOctreeBuilder:
             tree_depth=tree_depth,
             label="Cartesian",
         )
+        node_child, root_node_ids = _build_child_table(
+            node_depth,
+            node_i0,
+            node_i1,
+            node_i2,
+            node_value,
+        )
+        node_shift = np.asarray(tree_depth - node_depth, dtype=np.int64)
+        node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
+        node_x0_f = np.left_shift(node_i0, node_shift)
+        node_x1_f = node_x0_f + node_width
+        node_y0_f = np.left_shift(node_i1, node_shift)
+        node_y1_f = node_y0_f + node_width
+        node_z0_f = np.left_shift(node_i2, node_shift)
+        node_z1_f = node_z0_f + node_width
+        node_x_min = float(xyz_min[0]) + node_x0_f.astype(float) * float(fine_step[0])
+        node_x_max = float(xyz_min[0]) + node_x1_f.astype(float) * float(fine_step[0])
+        node_y_min = float(xyz_min[1]) + node_y0_f.astype(float) * float(fine_step[1])
+        node_y_max = float(xyz_min[1]) + node_y1_f.astype(float) * float(fine_step[1])
+        node_z_min = float(xyz_min[2]) + node_z0_f.astype(float) * float(fine_step[2])
+        node_z_max = float(xyz_min[2]) + node_z1_f.astype(float) * float(fine_step[2])
         tree._i0 = cell_i0
         tree._i1 = cell_i1
         tree._i2 = cell_i2
@@ -362,4 +384,12 @@ class CartesianOctreeBuilder:
         tree._node_i1 = node_i1
         tree._node_i2 = node_i2
         tree._node_value = node_value
+        tree._node_child = node_child
+        tree._root_node_ids = root_node_ids
+        tree._node_x_min = np.asarray(node_x_min, dtype=np.float64)
+        tree._node_x_max = np.asarray(node_x_max, dtype=np.float64)
+        tree._node_y_min = np.asarray(node_y_min, dtype=np.float64)
+        tree._node_y_max = np.asarray(node_y_max, dtype=np.float64)
+        tree._node_z_min = np.asarray(node_z_min, dtype=np.float64)
+        tree._node_z_max = np.asarray(node_z_max, dtype=np.float64)
         tree._radial_edges = np.empty((0,), dtype=np.float64)

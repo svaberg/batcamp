@@ -10,6 +10,7 @@ from batread.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
 from .builder import _build_node_arrays
+from .builder import _build_child_table
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
 from .octree import DEFAULT_AXIS_RHO_TOL
@@ -501,6 +502,29 @@ class SphericalOctreeBuilder:
             tree_depth=tree_depth,
             label="Spherical",
         )
+        node_child, root_node_ids = _build_child_table(
+            node_depth,
+            node_i0,
+            node_i1,
+            node_i2,
+            node_value,
+        )
+        node_shift = np.asarray(tree_depth - node_depth, dtype=np.int64)
+        node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
+        node_r0_f = np.left_shift(node_i0, node_shift)
+        node_r1_f = node_r0_f + node_width
+        node_t0_f = np.left_shift(node_i1, node_shift)
+        node_t1_f = node_t0_f + node_width
+        node_p0_f = np.left_shift(node_i2, node_shift)
+        node_p1_f = node_p0_f + node_width
+        d_theta_f = math.pi / float(int(tree.leaf_shape[1]))
+        d_phi_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
+        node_r_min = radial_edges[node_r0_f]
+        node_r_max = radial_edges[node_r1_f]
+        node_theta_min = node_t0_f.astype(float) * d_theta_f
+        node_theta_max = node_t1_f.astype(float) * d_theta_f
+        node_phi_start = np.mod(node_p0_f.astype(float) * d_phi_f, 2.0 * math.pi)
+        node_phi_width = node_width.astype(float) * d_phi_f
         tree._i0 = cell_i0
         tree._i1 = cell_i1
         tree._i2 = cell_i2
@@ -509,4 +533,12 @@ class SphericalOctreeBuilder:
         tree._node_i1 = node_i1
         tree._node_i2 = node_i2
         tree._node_value = node_value
+        tree._node_child = node_child
+        tree._root_node_ids = root_node_ids
+        tree._node_r_min = np.asarray(node_r_min, dtype=np.float64)
+        tree._node_r_max = np.asarray(node_r_max, dtype=np.float64)
+        tree._node_theta_min = np.asarray(node_theta_min, dtype=np.float64)
+        tree._node_theta_max = np.asarray(node_theta_max, dtype=np.float64)
+        tree._node_phi_start = np.asarray(node_phi_start, dtype=np.float64)
+        tree._node_phi_width = np.asarray(node_phi_width, dtype=np.float64)
         tree._radial_edges = np.asarray(radial_edges, dtype=np.float64)
