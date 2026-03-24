@@ -27,6 +27,8 @@ class CartesianOctreeBuilder:
         atol: float = 1e-10,
     ) -> np.ndarray:
         """Infer dyadic xyz refinement levels from per-cell axis-aligned spans."""
+        # TODO: Replace these hand-tuned span tolerances with one inference pass
+        # that fits the most probable dyadic level ladder from all observed cell sizes.
         levels = np.full(dx.shape, -1, dtype=np.int64)
         tiny = max(float(atol), 1e-12)
         valid = (dx > tiny) & (dy > tiny) & (dz > tiny) & np.isfinite(dx) & np.isfinite(dy) & np.isfinite(dz)
@@ -101,6 +103,8 @@ class CartesianOctreeBuilder:
             ref_dx = span_x / n_x
             ref_dy = span_y / n_y
             ref_dz = span_z / n_z
+            # TODO: Infer the most probable regular level shape from clustered spans
+            # instead of validating medians against these fixed isclose thresholds.
             if not np.isclose(med_dx, ref_dx, rtol=2e-2, atol=1e-9):
                 raise ValueError(f"Level {level} has inconsistent dx={med_dx:.6e} vs inferred {ref_dx:.6e}.")
             if not np.isclose(med_dy, ref_dy, rtol=2e-2, atol=1e-9):
@@ -263,6 +267,8 @@ class CartesianOctreeBuilder:
         axis_tol = np.empty(3, dtype=float)
         for k in range(3):
             coord_scale = max(abs(float(xyz_min[k])), abs(float(xyz_max[k])), 1.0)
+            # TODO: Replace this axis snap heuristic with edge clustering that
+            # resolves the most probable Cartesian grid from the observed bounds.
             axis_tol[k] = min(
                 0.25 * float(fine_step[k]),
                 max(8.0 * float32_eps * coord_scale, 1e-9 * max(float(xyz_span[k]), 1.0)),
