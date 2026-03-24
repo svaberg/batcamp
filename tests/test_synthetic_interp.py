@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -56,7 +57,7 @@ def _build_uniform_spherical_hex_dataset(
 def synthetic_context() -> tuple[_FakeDataset, Octree, np.ndarray, tuple[float, float, float, float]]:
     """Return synthetic dataset, built tree, linear nodal field and coefficients."""
     ds, linear_field, coeffs = _build_uniform_spherical_hex_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     return ds, tree, linear_field, coeffs
 
 
@@ -143,7 +144,7 @@ def test_interp_matches_linear_field_xyz(synthetic_context) -> None:
     """xyz interpolation should reconstruct an exactly linear spherical field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(ds, ["LinField"], tree=tree)
+    interp = OctreeInterpolator(tree, ["LinField"])
     rng = np.random.default_rng(22)
     valid = _interpolation_valid_cells(tree, interp=interp)
     assert valid.size > 0
@@ -160,7 +161,7 @@ def test_interp_matches_linear_field_rpa_wrap(synthetic_context) -> None:
     """rpa interpolation should normalize wrapped azimuth and match linear field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(ds, ["LinField"], tree=tree)
+    interp = OctreeInterpolator(tree, ["LinField"])
     rng = np.random.default_rng(33)
     valid = _interpolation_valid_cells(tree, interp=interp)
     assert valid.size > 0
@@ -179,7 +180,7 @@ def test_vector_interp_shape_and_values(synthetic_context) -> None:
     """Vector-valued interpolation should preserve trailing dims and nodal exactness."""
     ds, tree, _linear_field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(ds, ["LinField", "LinField2", "LinFieldConst"], tree=tree)
+    interp = OctreeInterpolator(tree, ["LinField", "LinField2", "LinFieldConst"])
 
     rng = np.random.default_rng(44)
     valid = _interpolation_valid_cells(tree, interp=interp)
@@ -199,7 +200,7 @@ def test_outside_points_use_fill_and_negative_cell_id(synthetic_context) -> None
     """Outside-domain synthetic points should return fill value and cell_id=-1."""
     ds, tree, _field, _coeffs = synthetic_context
     fill = -999.0
-    interp = OctreeInterpolator(ds, ["LinField"], tree=tree, fill_value=fill)
+    interp = OctreeInterpolator(tree, ["LinField"], fill_value=fill)
 
     inside = np.array(tree.cell_centers[0]).reshape(1, 3)
     outside = np.array([[100.0, 0.0, 0.0], [-100.0, 0.0, 0.0]])

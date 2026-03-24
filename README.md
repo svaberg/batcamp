@@ -24,13 +24,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from batread.dataset import Dataset
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 
 # Read the dataset
 ds = Dataset.from_file("MY_FILE")
 
-# Create the interpolator; the octree is built automatically.
-interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+# Build the octree explicitly, then create the interpolator on top of it.
+tree = OctreeBuilder().build(ds)
+interp = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
 
 # Create a grid of points and interpolate the density
 X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))

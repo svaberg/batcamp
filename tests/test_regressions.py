@@ -5,6 +5,7 @@ import pytest
 from batread.dataset import Dataset
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp.spherical import _xyz_to_rpa_components
 
@@ -28,11 +29,12 @@ def test_xyz_to_rpa_components_stable_and_finite() -> None:
 
 
 @pytest.mark.slow
-def test_interpolator_without_tree_falls_back_to_rpa(regression_context) -> None:
-    """No-tree interpolator should recover from invalid xyz reconstruction on spherical data."""
+def test_default_tree_inference_selects_rpa_for_regression_dataset(regression_context) -> None:
+    """Default tree inference should stay on spherical geometry for this dataset."""
     ds, _tree = regression_context
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=None)
-    assert interp.tree.tree_coord == "rpa"
+    tree = OctreeBuilder().build(ds)
+    interp = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
+    assert tree.tree_coord == "rpa"
 
     q = np.array([1.0, 0.0, 0.0], dtype=float)
     vals, cids = interp(q, return_cell_ids=True)

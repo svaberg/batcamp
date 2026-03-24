@@ -25,10 +25,8 @@ __all__ = [
     "DEFAULT_TREE_COORD",
     "DEFAULT_MIN_VALID_CELL_FRACTION",
     "OCTREE_FILE_VERSION",
-    "CartesianOctree",
     "LookupHit",
     "Octree",
-    "SphericalOctree",
     "OctreeInterpolator",
     "OctreeRayTracer",
     "OctreeRayInterpolator",
@@ -37,8 +35,6 @@ __all__ = [
 ]
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
-    "CartesianOctree": (".cartesian", "CartesianOctree"),
-    "SphericalOctree": (".spherical", "SphericalOctree"),
     "OctreeInterpolator": (".interpolator", "OctreeInterpolator"),
     "OctreeRayTracer": (".ray", "OctreeRayTracer"),
     "OctreeRayInterpolator": (".ray", "OctreeRayInterpolator"),

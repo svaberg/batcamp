@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -65,13 +66,13 @@ def test_axis_only_dataset_rejected() -> None:
     """Axis-only cells should fail octree build because no valid phi levels exist."""
     ds = _build_axis_only_fake_dataset()
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels"):
-        Octree.from_dataset(ds, tree_coord="rpa")
+        OctreeBuilder().build(ds, tree_coord="rpa")
 
 
 def test_lookup_rejects_invalid_queries() -> None:
     """Lookup should return None for non-finite or invalid-angle queries."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
 
     assert tree.lookup_point(np.array([float("nan"), 0.0, 0.0], dtype=float), coord="xyz") is None
     assert tree.lookup_point(np.array([float("inf"), 0.0, 0.0], dtype=float), coord="xyz") is None
@@ -83,8 +84,8 @@ def test_lookup_rejects_invalid_queries() -> None:
 def test_interpolator_fill_for_invalid_points() -> None:
     """Interpolator should emit fill value and cell_id=-1 for invalid queries."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree, fill_value=-123.0)
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    interp = OctreeInterpolator(tree, ["Scalar"], fill_value=-123.0)
 
     invalid = np.array(
         [
@@ -103,7 +104,7 @@ def test_interpolator_fill_for_invalid_points() -> None:
 def test_bind_without_corners_rejected() -> None:
     """Binding a tree to a dataset with missing corners should fail clearly."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     ds_no_corners = _FakeDataset(ds.points, None, ds._variables)
 
     with pytest.raises(ValueError, match="Dataset has no corners"):

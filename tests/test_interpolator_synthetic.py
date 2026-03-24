@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
@@ -127,7 +128,7 @@ def _assert_plane_ramp_matches_exact_field(
 ) -> None:
     """Assert plane-resampling stays exact over one resolution ramp."""
     xyz = _xyz_points(ds)
-    interp = OctreeInterpolator(ds, [field_name], tree_coord="xyz")
+    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="xyz"), [field_name])
 
     for resolution in _PLANE_RAMP:
         query = _xy_plane_queries(xyz, resolution=resolution)

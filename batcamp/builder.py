@@ -15,10 +15,10 @@ from .octree import TreeCoord
 from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import DEFAULT_TREE_COORD
 from .octree import GridShape
+from .octree import infer_tree_coord_from_geometry
 from .octree import LevelCountTable
 from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
-from .octree import octree_class_for_coord
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""
@@ -326,16 +326,19 @@ class OctreeBuilder:
         self,
         ds: Dataset,
         *,
-        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
+        tree_coord: TreeCoord | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> Octree:
         """Build and bind an octree from a dataset.
 
         The returned tree is ready for lookup and ray methods.
         """
+        if ds.corners is None:
+            raise ValueError("Dataset has no corners; cannot build octree.")
+        resolved_tree_coord = infer_tree_coord_from_geometry(ds) if tree_coord is None else tree_coord
         return self._build(
             ds,
-            tree_coord=tree_coord,
+            tree_coord=resolved_tree_coord,
             axis_rho_tol=axis_rho_tol,
             cell_levels=None,
             bind=True,
@@ -360,7 +363,6 @@ class OctreeBuilder:
             raise ValueError("Dataset has no corners; cannot build octree.")
         corners_arr = np.asarray(ds.corners, dtype=np.int64)
 
-        tree_cls = octree_class_for_coord(tree_coord)
         if tree_coord == "rpa":
             level_shapes, levels, min_level, max_level, leaf_shape, weighted_cells = self._rpa_builder.infer_tree_geometry(
                 ds,
@@ -401,7 +403,7 @@ class OctreeBuilder:
             and int(sum(item[2] for item in level_counts)) == int(np.prod(leaf_shape))
             and int(weighted_cells) == int(np.prod(leaf_shape))
         )
-        tree = tree_cls(
+        tree = Octree(
             leaf_shape=leaf_shape,
             root_shape=root_shape,
             is_full=bool(is_full),

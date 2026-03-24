@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 from batcamp import OctreeRayTracer
@@ -203,7 +204,7 @@ def _build_cartesian_tree() -> tuple[Octree, np.ndarray, np.ndarray, float]:
             Octree.Z_VAR: points[:, 2],
         },
     )
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
     origin = np.array([-1.0, 0.25, 0.25], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
     return tree, origin, direction, 4.0
@@ -227,7 +228,7 @@ def _build_spherical_tree() -> tuple[Octree, np.ndarray, np.ndarray, float]:
             Octree.Z_VAR: points[:, 2],
         },
     )
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     origin = np.array([3.0, 0.4, 0.2], dtype=float)
     direction = -origin / np.linalg.norm(origin)
     return tree, origin, direction, 6.0
@@ -342,8 +343,8 @@ def test_midpoint_integral_finds_shell_after_outside_start() -> None:
             "Scalar": scalar,
         },
     )
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    interp = OctreeInterpolator(tree, ["Scalar"])
     ray = OctreeRayInterpolator(interp)
 
     origin = np.array([0.0, 0.0, 0.0], dtype=float)

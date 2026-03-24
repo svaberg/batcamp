@@ -8,6 +8,7 @@ import numpy as np
 import pooch
 from batread.dataset import Dataset
 
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 from batcamp.ray import _has_xyz_lookup_kernel
@@ -126,7 +127,7 @@ def main() -> None:
             )[0]
         )
         ds = Dataset.from_file(str(path))
-        interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+        interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Rho [g/cm^3]"])
         ray = OctreeRayInterpolator(interp)
 
         for ny, nz in grids:

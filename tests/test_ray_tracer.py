@@ -5,6 +5,7 @@ import pytest
 from batread.dataset import Dataset
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeRayTracer
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
@@ -68,7 +69,7 @@ def _build_cartesian_fake_dataset() -> _FakeDataset:
 def test_trace_arrays_ordered_and_inside_cells() -> None:
     """Ray tracer should return ordered array segments that stay in the domain."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     tracer = OctreeRayTracer(tree)
 
     origin = np.array([2.2, 0.1, 0.0], dtype=float)
@@ -91,7 +92,7 @@ def test_trace_arrays_ordered_and_inside_cells() -> None:
 def test_loaded_tree_matches_original_walk(tmp_path) -> None:
     """Persisted/reloaded trees should return equal segment arrays."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     path = tmp_path / "ray_tree.npz"
     tree.save(path)
     loaded = Octree.load(path, ds=tree.ds)
@@ -111,7 +112,7 @@ def test_loaded_tree_matches_original_walk(tmp_path) -> None:
 def test_outside_outward_ray_returns_empty() -> None:
     """Outside-start outward rays should trace zero segments."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     _r_lo, r_hi = tree.domain_bounds(coord="rpa")
     r_max = float(r_hi[0])
     origin = np.array([r_max + 25.0, 0.0, 0.0], dtype=float)
@@ -126,7 +127,7 @@ def test_outside_outward_ray_returns_empty() -> None:
 def test_non_increasing_interval_returns_empty() -> None:
     """Ray trace should return empty arrays when `t_end <= t_start`."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     tracer = OctreeRayTracer(tree)
     origin = np.array([0.0, 0.0, 0.0], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
@@ -140,7 +141,7 @@ def test_non_increasing_interval_returns_empty() -> None:
 def test_zero_direction_raises() -> None:
     """Ray trace should reject zero-length direction vectors."""
     ds = _build_regular_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     with pytest.raises(ValueError, match="direction_xyz must be finite and non-zero"):
         OctreeRayTracer(tree).trace(
             origin_xyz=np.array([1.0, 0.0, 0.0]),
@@ -153,7 +154,7 @@ def test_zero_direction_raises() -> None:
 def test_cartesian_tracer_init_does_not_build_unused_plane_state() -> None:
     """Cartesian tracer init should not build spherical-style plane geometry."""
     ds = _build_cartesian_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
     assert not hasattr(tree, "_ray_cell_plane_state")
 
     tracer = OctreeRayTracer(tree)
@@ -166,7 +167,7 @@ def test_cartesian_tracer_init_does_not_build_unused_plane_state() -> None:
 def test_example_specific_failing_ray_trace_midpoints_match_lookup() -> None:
     """Provided example: traced segments should stay on oracle cells for the bad 16x16 ray."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    tree = Octree.from_dataset(ds)
+    tree = OctreeBuilder().build(ds)
     tracer = OctreeRayTracer(tree)
 
     origin = np.array([-48.000096, 3.2, -41.6], dtype=float)
@@ -226,7 +227,7 @@ def _plane_oracle_sequence(
 def test_example_specific_rays_match_xyz_plane_oracle(origin: np.ndarray) -> None:
     """Provided example: traced cell sequence should match the xyz plane-cell oracle."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    tree = Octree.from_dataset(ds)
+    tree = OctreeBuilder().build(ds)
     tracer = OctreeRayTracer(tree)
 
     direction = np.array([1.0, 0.0, 0.0], dtype=float)

@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 from typing import ClassVar
 from typing import TYPE_CHECKING
-from typing import cast
 from typing import Literal
 from typing import TypeAlias
 
@@ -84,7 +83,6 @@ class Octree:
     `(level, leaf_count, fine_equivalent_count)`.
     """
 
-    TREE_COORD: ClassVar[str | None] = None
     X_VAR: ClassVar[str] = "X [R]"
     Y_VAR: ClassVar[str] = "Y [R]"
     Z_VAR: ClassVar[str] = "Z [R]"
@@ -102,37 +100,6 @@ class Octree:
     ds: Dataset | None = field(default=None, repr=False)
     axis_rho_tol: float = field(default=DEFAULT_AXIS_RHO_TOL, repr=False)
     _lookup_ready: bool = field(default=False, init=False, repr=False)
-
-    @classmethod
-    def from_dataset(
-        cls,
-        ds: Dataset,
-        *,
-        tree_coord: TreeCoord | None = None,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-        level_rtol: float = 1e-4,
-        level_atol: float = 1e-9,
-    ) -> "Octree":
-        """Build a tree from a dataset and bind it so lookup methods can run."""
-        resolved_tree_coord: TreeCoord
-        if cls is not Octree and cls.TREE_COORD is not None:
-            if tree_coord is None:
-                resolved_tree_coord = cls.TREE_COORD
-            else:
-                resolved_tree_coord = cast(TreeCoord, str(tree_coord))
-            if resolved_tree_coord != cls.TREE_COORD:
-                raise ValueError(
-                    f"{cls.__name__} requires tree_coord='{cls.TREE_COORD}', got '{resolved_tree_coord}'."
-                )
-        else:
-            if tree_coord is None:
-                resolved_tree_coord = infer_tree_coord_from_geometry(ds)
-            else:
-                resolved_tree_coord = cast(TreeCoord, str(tree_coord))
-        from .builder import OctreeBuilder
-
-        builder = OctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
-        return builder.build(ds, tree_coord=resolved_tree_coord, axis_rho_tol=axis_rho_tol)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -198,15 +165,7 @@ class Octree:
 
         in_path = Path(path)
         state, array_state = OctreePersistenceState.load_npz(in_path)
-        tree_coord = str(state.tree_coord)
-        tree_cls = octree_class_for_coord(tree_coord)
-        if cls is not Octree and cls.TREE_COORD is not None and cls.TREE_COORD != tree_coord:
-            raise ValueError(
-                f"{cls.__name__} cannot load tree_coord='{tree_coord}'."
-            )
-        if cls is not Octree:
-            tree_cls = cls
-        tree = state.instantiate_tree(tree_cls, arrays=array_state)
+        tree = state.instantiate_tree(Octree, arrays=array_state)
         tree.bind(ds, axis_rho_tol=axis_rho_tol)
         if axis_rho_tol is not None:
             tree.axis_rho_tol = float(axis_rho_tol)
@@ -228,18 +187,33 @@ class Octree:
             f"levels={self.min_level}..{self.max_level}; leaf_levels[{leaf_levels}]"
         )
 
-    def build_lookup(
-        self,
-    ) -> None:
+    @staticmethod
+    def _lookup_backend(tree_coord: str) -> type:
+        """Return the geometry-specific lookup helper for one tree coordinate."""
+        if tree_coord == "xyz":
+            from .cartesian import _CartesianCellLookup
+
+            return _CartesianCellLookup
+        if tree_coord == "rpa":
+            from .spherical import _SphericalCellLookup
+
+            return _SphericalCellLookup
+        raise ValueError(
+            f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+        )
+
+    def build_lookup(self) -> None:
         """Build the per-cell lookup data used by query methods."""
-        raise NotImplementedError("Lookup must be implemented by concrete octree subclasses.")
+        if self.ds is None or self.ds.corners is None:
+            raise ValueError("Octree is not bound to a dataset. Call bind(...) before lookup.")
+        self._lookup_backend(str(self.tree_coord))._init_lookup_state(self)
 
     def _require_lookup(self) -> "Octree":
         """Ensure lookup data is built, then return `self`."""
         if self._lookup_ready:
             return self
         if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Call Octree.from_dataset(...) or bind(...).")
+            raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
         self.build_lookup()
         self._lookup_ready = True
         return self
@@ -255,18 +229,6 @@ class Octree:
         """Return leaf-cell centers in Cartesian coordinates."""
         self._require_lookup()
         return np.asarray(self._cell_centers, dtype=float)
-
-    @property
-    def lookup_state(self) -> object:
-        """Return compiled lookup state used by numba kernels."""
-        # TODO: This still leaks packed lookup internals to interpolator/ray code.
-        # The intended boundary is exact tree state on Octree, not foreign modules
-        # reaching through extra private cache slots on the tree.
-        self._require_lookup()
-        state = getattr(self, "_lookup_state", None)
-        if state is None:
-            raise ValueError("Lookup state is unavailable for this tree.")
-        return state
 
     def face_neighbors(self, *, max_level: int | None = None) -> "OctreeFaceNeighbors":
         """Return the lazily built face-neighbor graph for one level cutoff."""
@@ -298,48 +260,21 @@ class Octree:
             self._face_neighbors_by_max_level = cache
         cache[int(face_neighbors.max_level)] = face_neighbors
 
-    @property
-    def points(self) -> np.ndarray:
-        """Return node coordinates used by lookup/interpolation setup."""
-        self._require_lookup()
-        pts = getattr(self, "_points", None)
-        if pts is None:
-            raise ValueError("Lookup points are unavailable for this tree.")
-        return np.asarray(pts, dtype=float)
-
-    @property
-    def cell_phi_start(self) -> np.ndarray:
-        """Return per-cell azimuth start for spherical lookup trees."""
-        self._require_lookup()
-        starts = getattr(self, "_cell_phi_start", None)
-        if starts is None:
-            raise ValueError("cell_phi_start is only available for spherical trees.")
-        return np.asarray(starts, dtype=float)
-
-    @property
-    def cell_phi_width(self) -> np.ndarray:
-        """Return per-cell wrapped azimuth width for spherical lookup trees."""
-        self._require_lookup()
-        widths = getattr(self, "_cell_phi_width", None)
-        if widths is None:
-            raise ValueError("cell_phi_width is only available for spherical trees.")
-        return np.asarray(widths, dtype=float)
-
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         """Return one cell's Cartesian bounds for subclasses."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord))._cell_bounds_xyz(self, cell_id)
 
     def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         """Return one cell's spherical bounds for subclasses."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord))._cell_bounds_rpa(self, cell_id)
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
         """Return global Cartesian bounds for subclasses."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord))._domain_bounds_xyz(self)
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         """Return global spherical bounds for subclasses."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord))._domain_bounds_rpa(self)
 
     def cell_bounds(
         self,
@@ -384,11 +319,15 @@ class Octree:
         coord: str,
     ) -> int:
         """Resolve one query point to a leaf `cell_id` (or `-1`)."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord)).lookup_cell_id(self, point, coord=coord)
 
     def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> "LookupHit | None":
         """Materialize lookup metadata from one chosen cell id."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord)).hit_from_chosen(
+            self,
+            chosen,
+            allow_invalid_level=allow_invalid_level,
+        )
 
     def lookup_point(
         self,
@@ -416,7 +355,13 @@ class Octree:
         tol: float = 1e-10,
     ) -> bool:
         """Return whether one point lies inside one cell."""
-        raise NotImplementedError
+        return self._lookup_backend(str(self.tree_coord)).contains_cell(
+            self,
+            cell_id,
+            point,
+            coord=coord,
+            tol=tol,
+        )
 
     def hit_from_cell_id(self, cell_id: int) -> "LookupHit":
         """Return lookup metadata for a known cell id."""
@@ -429,20 +374,6 @@ class Octree:
         if hit is None:
             raise ValueError(f"Invalid cell_id {cid}; cannot materialize LookupHit.")
         return hit
-
-def octree_class_for_coord(tree_coord: str) -> type[Octree]:
-    """Return the octree class that matches `tree_coord`."""
-    from .cartesian import CartesianOctree
-    from .spherical import SphericalOctree
-
-    if tree_coord == "rpa":
-        return SphericalOctree
-    if tree_coord == "xyz":
-        return CartesianOctree
-    raise ValueError(
-        f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-    )
-
 
 @dataclass(frozen=True)
 class LookupHit:
