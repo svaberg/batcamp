@@ -237,18 +237,6 @@ def _resolve_ray_max_level(tree: Octree, max_level: int | None) -> int:
     return level
 
 
-def _shape_for_level(tree: Octree, level: int) -> tuple[int, int, int]:
-    """Return `(n0, n1, n2)` cell counts at one root-relative level."""
-    if level < 0 or level > int(tree.max_level):
-        raise ValueError(f"level={level} is outside [0, {int(tree.max_level)}] for this tree.")
-    scale = 1 << int(level)
-    return (
-        int(tree.root_shape[0]) * scale,
-        int(tree.root_shape[1]) * scale,
-        int(tree.root_shape[2]) * scale,
-    )
-
-
 def _face_neighbor_state_for_node_cells(face_neighbors) -> FaceNeighborKernelState:
     """Return one face-neighbor state whose active cell ids are the frontier nodes."""
     node_ids = np.arange(int(face_neighbors.node_count), dtype=np.int64)
@@ -707,7 +695,10 @@ def _build_spherical_ray_cell_geometry(tree: Octree, face_neighbors) -> Spherica
         point_ids = np.asarray(point_groups[node_id], dtype=np.int64)
         cell_pts = np.asarray(points[point_ids], dtype=float)
         depth = int(face_neighbors.levels[node_id])
-        _nr, ntheta, nphi = _shape_for_level(tree, depth)
+        scale = 1 << depth
+        _nr = int(tree.root_shape[0]) * scale
+        ntheta = int(tree.root_shape[1]) * scale
+        nphi = int(tree.root_shape[2]) * scale
         dtheta = math.pi / float(ntheta)
         dphi = 2.0 * math.pi / float(nphi)
         theta0 = float(int(face_neighbors.i1[node_id]) * dtheta)

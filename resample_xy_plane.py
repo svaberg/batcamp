@@ -15,7 +15,7 @@ from batread.dataset import Dataset
 
 from batcamp import OctreeInterpolator
 from resampling_compare import _load_or_build_octree
-from resampling_compare import _progress
+from resampling_compare import _ProgressReporter
 from resampling_compare import _resolution_ramp
 from resampling_compare import _time_call
 from resampling_compare import DatasetCase
@@ -220,6 +220,7 @@ def main() -> None:
     progress_log_path = out_root / "progress.log"
     progress_log_path.parent.mkdir(parents=True, exist_ok=True)
     progress_log_path.write_text("", encoding="utf-8")
+    progress = _ProgressReporter(log_path=progress_log_path)
 
     cases = [
         DatasetCase("example", "3d__var_1_n00000000.plt"),
@@ -227,21 +228,25 @@ def main() -> None:
         DatasetCase("sc", "3d__var_4_n00044000.plt"),
     ]
 
-    _progress(f"output_dir={out_root}", log_path=progress_log_path)
+    progress.note(f"output_dir={out_root}")
     print("dataset,resolution,pixels,plane_s,nan,zero,finite_min,finite_max", flush=True)
     for case in cases:
         case_dir = out_root / case.label
         case_dir.mkdir(parents=True, exist_ok=True)
 
-        _progress(f"[{case.label}] start file={case.file_name}", log_path=progress_log_path)
+        progress.note(f"[{case.label}] file={case.file_name}")
+        progress.start(f"[{case.label}] resolve data file")
         data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
-        _progress(f"[{case.label}] resolved path={data_path} ({resolve_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
+        progress.start(f"[{case.label}] read dataset")
         ds, read_s = _time_call(Dataset.from_file, str(data_path))
-        _progress(f"[{case.label}] read dataset ({read_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] read dataset", read_s)
+        progress.start(f"[{case.label}] prepare octree")
         (tree, tree_source), tree_s = _time_call(_load_or_build_octree, ds, data_path, cache_root)
-        _progress(f"[{case.label}] octree {tree_source} ({tree_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] prepare octree", tree_s, detail=f"source={tree_source}")
+        progress.start(f"[{case.label}] build interpolator")
         interp, interp_s = _time_call(OctreeInterpolator, ds, [args.variable], tree=tree)
-        _progress(f"[{case.label}] interpolator ready ({interp_s:.2f}s)", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] build interpolator", interp_s)
 
         dmin, dmax = interp.tree.domain_bounds(coord="xyz")
         bounds = (
@@ -254,12 +259,14 @@ def main() -> None:
         )
 
         warm_n = int(resolutions[0])
+        progress.start(f"[{case.label}] warm up")
         _, warm_s = _time_call(_xy_plane_image, interp, n_plane=warm_n, z_plane=float(args.z_plane), bounds=bounds)
-        _progress(f"[{case.label}] warmup plane={warm_s:.2f}s", log_path=progress_log_path)
+        progress.complete(f"[{case.label}] warm up", warm_s, detail="plane query")
 
         rows: list[dict[str, float | int]] = []
         for n in resolutions:
-            _progress(f"[{case.label}] run {n}x{n}", log_path=progress_log_path)
+            progress.start(f"[{case.label}] run {n}x{n}")
+            t_step = time.perf_counter()
             t0 = time.perf_counter()
             xg, yg, img = _xy_plane_image(
                 interp,
@@ -296,6 +303,11 @@ def main() -> None:
             )
             _write_timing_table(rows, case_dir / "timing_report.md")
             _save_runtime_plot(rows, case_dir / "runtime_vs_pixels.png", title=f"{case.label}: xy plane runtime")
+            progress.complete(
+                f"[{case.label}] run {n}x{n}",
+                float(time.perf_counter() - t_step),
+                detail=f"plane={plane_s:.2f}s",
+            )
 
             print(
                 f"{case.label},{n}x{n},{pixels},{plane_s:.6f},{nan_count},{zero_count},"
@@ -303,12 +315,11 @@ def main() -> None:
                 flush=True,
             )
             if plane_s > max_seconds_per_image:
-                _progress(
-                    f"[{case.label}] stop at {n}x{n}: plane={plane_s:.2f}s > {max_seconds_per_image:.2f}s",
-                    log_path=progress_log_path,
+                progress.note(
+                    f"[{case.label}] stop at {n}x{n}: plane={plane_s:.2f}s > {max_seconds_per_image:.2f}s"
                 )
                 break
-        _progress(f"[{case.label}] done -> {case_dir}", log_path=progress_log_path)
+        progress.note(f"[{case.label}] done -> {case_dir}")
 
 
 if __name__ == "__main__":
