@@ -393,18 +393,6 @@ class Octree:
             raise ValueError(f"Invalid cell_id {cid}; cannot materialize LookupHit.")
         return hit
 
-    def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> "LookupHit | None":
-        """Lookup in `xyz`, first trying `near_cid` if one is provided."""
-        q = np.array(xyz, dtype=float)
-        x = float(q[0])
-        y = float(q[1])
-        z = float(q[2])
-        if near_cid is not None and int(near_cid) >= 0:
-            near = int(near_cid)
-            if self.contains_cell(near, q, coord="xyz"):
-                return self.hit_from_cell_id(near)
-        return self.lookup_point(np.array([x, y, z], dtype=float), coord="xyz")
-
 def octree_class_for_coord(tree_coord: str) -> type[Octree]:
     """Return the octree class that matches `tree_coord`."""
     from .cartesian import CartesianOctree
