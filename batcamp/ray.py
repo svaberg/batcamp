@@ -231,21 +231,21 @@ _ORDERED_FACE_CORNERS = (
 _ORDERED_FACE_CORNERS_ARRAY = np.asarray(_ORDERED_FACE_CORNERS, dtype=np.int64)
 
 
-def _resolve_ray_maxdepth(tree: Octree, maxdepth: int | None) -> int:
-    """Return requested ray depth cutoff, defaulting to the full tree depth."""
-    if maxdepth is None:
-        return int(tree.depth)
-    depth = int(maxdepth)
-    if depth < 0 or depth > int(tree.depth):
-        raise ValueError(f"maxdepth={depth} is outside [0, {int(tree.depth)}] for this tree.")
-    return depth
+def _resolve_ray_max_level(tree: Octree, max_level: int | None) -> int:
+    """Return requested ray level cutoff, defaulting to the full tree level."""
+    if max_level is None:
+        return int(tree.max_level)
+    level = int(max_level)
+    if level < 0 or level > int(tree.max_level):
+        raise ValueError(f"max_level={level} is outside [0, {int(tree.max_level)}] for this tree.")
+    return level
 
 
-def _shape_for_ray_depth(tree: Octree, depth: int) -> tuple[int, int, int]:
-    """Return `(n0, n1, n2)` cell counts at one root-relative depth."""
-    if depth < 0 or depth > int(tree.depth):
-        raise ValueError(f"depth={depth} is outside [0, {int(tree.depth)}] for this tree.")
-    scale = 1 << int(depth)
+def _shape_for_level(tree: Octree, level: int) -> tuple[int, int, int]:
+    """Return `(n0, n1, n2)` cell counts at one root-relative level."""
+    if level < 0 or level > int(tree.max_level):
+        raise ValueError(f"level={level} is outside [0, {int(tree.max_level)}] for this tree.")
+    scale = 1 << int(level)
     return (
         int(tree.root_shape[0]) * scale,
         int(tree.root_shape[1]) * scale,
@@ -253,23 +253,23 @@ def _shape_for_ray_depth(tree: Octree, depth: int) -> tuple[int, int, int]:
     )
 
 
-def _depth_shapes_for_cutoff(tree: Octree, min_depth: int, max_depth: int) -> np.ndarray:
-    """Return `(n0, n1, n2)` for every ray depth in `[min_depth, max_depth]`."""
-    if max_depth < min_depth:
-        raise ValueError(f"Invalid depth bounds: min_depth={min_depth}, max_depth={max_depth}.")
-    out = np.empty((int(max_depth - min_depth + 1), 3), dtype=np.int64)
-    for depth in range(int(min_depth), int(max_depth) + 1):
-        out[int(depth - min_depth), :] = _shape_for_ray_depth(tree, depth)
+def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np.ndarray:
+    """Return `(n0, n1, n2)` for every ray level in `[min_level, max_level]`."""
+    if max_level < min_level:
+        raise ValueError(f"Invalid level bounds: min_level={min_level}, max_level={max_level}.")
+    out = np.empty((int(max_level - min_level + 1), 3), dtype=np.int64)
+    for level in range(int(min_level), int(max_level) + 1):
+        out[int(level - min_level), :] = _shape_for_level(tree, level)
     return out
 
 
-def _topology_for_ray_maxdepth(tree: Octree, maxdepth: int) -> TopologicalNeighborhood:
-    """Build face-neighbor topology at one root-relative ray depth cutoff."""
-    cache = getattr(tree, "_ray_topology_by_maxdepth", None)
+def _topology_for_ray_max_level(tree: Octree, max_level: int) -> TopologicalNeighborhood:
+    """Build face-neighbor topology at one root-relative ray level cutoff."""
+    cache = getattr(tree, "_ray_topology_by_max_level", None)
     if cache is None:
         cache = {}
-        tree._ray_topology_by_maxdepth = cache
-    key = int(maxdepth)
+        tree._ray_topology_by_max_level = cache
+    key = int(max_level)
     if key in cache:
         return cache[key]
 
@@ -284,8 +284,7 @@ def _topology_for_ray_maxdepth(tree: Octree, maxdepth: int) -> TopologicalNeighb
 
     cell_ids = np.flatnonzero(valid).astype(np.int64)
     cell_levels = levels_all[valid]
-    cell_depths = np.asarray(int(tree.depth) - (int(tree.max_level) - cell_levels), dtype=np.int64)
-    active_depths = np.minimum(cell_depths, key)
+    active_levels = np.minimum(cell_levels, key)
 
     if str(tree.tree_coord) == "xyz":
         i0_valid, i1_valid, i2_valid = _cell_local_indices_from_bounds(tree, cell_ids, cell_levels)
@@ -296,12 +295,12 @@ def _topology_for_ray_maxdepth(tree: Octree, maxdepth: int) -> TopologicalNeighb
         i1_valid = np.asarray(getattr(tree, "_i1"), dtype=np.int64)[valid]
         i2_valid = np.asarray(getattr(tree, "_i2"), dtype=np.int64)[valid]
 
-    shift = cell_depths - active_depths
+    shift = cell_levels - active_levels
     active_i0 = np.right_shift(i0_valid, shift)
     active_i1 = np.right_shift(i1_valid, shift)
     active_i2 = np.right_shift(i2_valid, shift)
 
-    keys = np.column_stack((active_depths, active_i0, active_i1, active_i2)).astype(np.int64)
+    keys = np.column_stack((active_levels, active_i0, active_i1, active_i2)).astype(np.int64)
     unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
 
     node_cell_ids = np.full(int(unique_keys.shape[0]), -1, dtype=np.int64)
@@ -312,25 +311,25 @@ def _topology_for_ray_maxdepth(tree: Octree, maxdepth: int) -> TopologicalNeighb
             node_cell_ids[nid] = int(cell_ids[row])
         cell_to_node_id[int(cell_ids[row])] = nid
 
-    depths = np.asarray(unique_keys[:, 0], dtype=np.int64)
+    levels = np.asarray(unique_keys[:, 0], dtype=np.int64)
     i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
     i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
     i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
-    min_depth = int(np.min(depths))
-    level_shapes = _depth_shapes_for_cutoff(tree, min_depth, key)
+    min_level = int(np.min(levels))
+    level_shapes = _level_shapes_for_cutoff(tree, min_level, key)
     periodic_i2 = str(tree.tree_coord) == "rpa"
     face_counts, face_offsets, face_neighbors = build_topological_neighborhood_kernel(
-        depths,
+        levels,
         i0,
         i1,
         i2,
-        min_depth,
+        min_level,
         key,
         level_shapes,
         periodic_i2,
     )
     topology = TopologicalNeighborhood(
-        levels=depths,
+        levels=levels,
         i0=i0,
         i1=i1,
         i2=i2,
@@ -339,7 +338,7 @@ def _topology_for_ray_maxdepth(tree: Octree, maxdepth: int) -> TopologicalNeighb
         face_neighbors=face_neighbors,
         node_cell_ids=node_cell_ids,
         cell_to_node_id=cell_to_node_id,
-        min_level=min_depth,
+        min_level=min_level,
         max_level=key,
         periodic_i2=periodic_i2,
     )
@@ -761,6 +760,16 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, topology) -> CartesianRayCe
         bin_offsets=np.zeros(2, dtype=np.int64),
         bin_cell_ids=np.empty((0,), dtype=np.int64),
         max_radius=0,
+        leaf_shape=np.asarray(_shape_for_level(tree, int(topology.max_level)), dtype=np.int64),
+        tree_depth=int(topology.max_level),
+        cell_i0=np.asarray(topology.i0, dtype=np.int64),
+        cell_i1=np.asarray(topology.i1, dtype=np.int64),
+        cell_i2=np.asarray(topology.i2, dtype=np.int64),
+        node_depth=np.asarray(topology.levels, dtype=np.int64),
+        node_i0=np.asarray(topology.i0, dtype=np.int64),
+        node_i1=np.asarray(topology.i1, dtype=np.int64),
+        node_i2=np.asarray(topology.i2, dtype=np.int64),
+        node_value=np.arange(n_cells, dtype=np.int64),
     )
     return CartesianRayCellGeometry(
         topology_state=_topology_state_for_node_cells(topology),
@@ -802,7 +811,7 @@ def _build_spherical_ray_cell_geometry(tree: Octree, topology) -> SphericalRayCe
         point_ids = np.asarray(point_groups[node_id], dtype=np.int64)
         cell_pts = np.asarray(points[point_ids], dtype=float)
         depth = int(topology.levels[node_id])
-        _nr, ntheta, nphi = _shape_for_ray_depth(tree, depth)
+        _nr, ntheta, nphi = _shape_for_level(tree, depth)
         dtheta = math.pi / float(ntheta)
         dphi = 2.0 * math.pi / float(nphi)
         theta0 = float(int(topology.i1[node_id]) * dtheta)
@@ -905,7 +914,7 @@ def _build_sparse_spherical_seed_lookup_state(
     running_offset = 0
     for depth in depth_levels:
         d = int(depth)
-        nr, ntheta, nphi = _shape_for_ray_depth(tree, d)
+        nr, ntheta, nphi = _shape_for_level(tree, d)
         shape_table[d, 0] = int(nr)
         shape_table[d, 1] = int(ntheta)
         shape_table[d, 2] = int(nphi)
@@ -1030,17 +1039,17 @@ def _spherical_interp_state_from_geometry(
     )
 
 
-def _ray_cell_geometry_for_maxdepth(tree: Octree, maxdepth: int) -> CartesianRayCellGeometry | SphericalRayCellGeometry:
-    """Return cached truncated ray-cell geometry for one depth cutoff."""
-    cache = getattr(tree, "_ray_cell_geometry_by_maxdepth", None)
+def _ray_cell_geometry_for_max_level(tree: Octree, max_level: int) -> CartesianRayCellGeometry | SphericalRayCellGeometry:
+    """Return cached truncated ray-cell geometry for one level cutoff."""
+    cache = getattr(tree, "_ray_cell_geometry_by_max_level", None)
     if cache is None:
         cache = {}
-        tree._ray_cell_geometry_by_maxdepth = cache
-    key = int(maxdepth)
+        tree._ray_cell_geometry_by_max_level = cache
+    key = int(max_level)
     if key in cache:
         return cache[key]
 
-    topology = _topology_for_ray_maxdepth(tree, key)
+    topology = _topology_for_ray_max_level(tree, key)
     if str(tree.tree_coord) == "xyz":
         geometry = _build_cartesian_ray_cell_geometry(tree, topology)
     elif str(tree.tree_coord) == "rpa":
@@ -1051,20 +1060,20 @@ def _ray_cell_geometry_for_maxdepth(tree: Octree, maxdepth: int) -> CartesianRay
     return geometry
 
 
-def _ray_interp_state_for_maxdepth(
+def _ray_interp_state_for_max_level(
     interpolator: "OctreeInterpolator",
-    maxdepth: int,
+    max_level: int,
 ) -> CartesianInterpKernelState | SphericalInterpKernelState:
-    """Return cached truncated interpolation state for one ray depth cutoff."""
-    cache = getattr(interpolator, "_ray_interp_state_by_maxdepth", None)
+    """Return cached truncated interpolation state for one ray level cutoff."""
+    cache = getattr(interpolator, "_ray_interp_state_by_max_level", None)
     if cache is None:
         cache = {}
-        interpolator._ray_interp_state_by_maxdepth = cache
-    key = int(maxdepth)
+        interpolator._ray_interp_state_by_max_level = cache
+    key = int(max_level)
     if key in cache:
         return cache[key]
 
-    geometry = _ray_cell_geometry_for_maxdepth(interpolator.tree, key)
+    geometry = _ray_cell_geometry_for_max_level(interpolator.tree, key)
     point_values_2d = np.asarray(interpolator._point_values_2d, dtype=np.float64)
     if isinstance(geometry, CartesianRayCellGeometry):
         state = _cartesian_interp_state_from_geometry(point_values_2d, geometry)
@@ -2399,10 +2408,10 @@ def _coerce_positive_int(name: str, value: int) -> int:
 class OctreeRayTracer:
     """Thin convenience wrapper around compiled ray tracing kernels."""
 
-    def __init__(self, tree: Octree, *, maxdepth: int | None = None) -> None:
+    def __init__(self, tree: Octree, *, max_level: int | None = None) -> None:
         """Bind one built octree."""
         self.tree = tree
-        self.maxdepth = _resolve_ray_maxdepth(tree, maxdepth)
+        self.max_level = _resolve_ray_max_level(tree, max_level)
         self._tree_coord = str(tree.tree_coord)
         dmin, dmax = tree.domain_bounds(coord="xyz")
         self._domain_xyz_min = np.asarray(dmin, dtype=float).reshape(3)
@@ -2412,7 +2421,7 @@ class OctreeRayTracer:
         self._seed_lookup_state = tree.lookup.lookup_state
         self._seed_cell_plane_state = None
 
-        if int(self.maxdepth) >= int(tree.depth):
+        if int(self.max_level) >= int(tree.max_level):
             topology = getattr(tree, "_ray_topology_full", None)
             if topology is None or int(topology.max_level) != int(tree.max_level):
                 topology = build_topological_neighborhood(tree, max_level=int(tree.max_level))
@@ -2440,7 +2449,7 @@ class OctreeRayTracer:
             self._ray_cell_geometry = None
             return
 
-        geometry = _ray_cell_geometry_for_maxdepth(tree, int(self.maxdepth))
+        geometry = _ray_cell_geometry_for_max_level(tree, int(self.max_level))
         self._ray_cell_geometry = geometry
         self._topology = None
         self._topology_state = geometry.topology_state
@@ -2458,7 +2467,7 @@ class OctreeRayTracer:
                     "Spherical ray tracing requires SphericalRayCellGeometry; "
                     f"got {type(geometry).__name__}."
                 )
-            topology = _topology_for_ray_maxdepth(tree, int(self.maxdepth))
+            topology = _topology_for_ray_max_level(tree, int(self.max_level))
             self._seed_lookup_state = _build_sparse_spherical_seed_lookup_state(tree, topology, geometry)
             self._seed_cell_plane_state = _build_sparse_seed_plane_state(
                 topology.node_cell_ids,
@@ -2827,17 +2836,17 @@ class OctreeRayTracer:
 class OctreeRayInterpolator:
     """Thin convenience wrapper around compiled ray integration kernels."""
 
-    def __init__(self, interpolator: "OctreeInterpolator", *, maxdepth: int | None = None) -> None:
+    def __init__(self, interpolator: "OctreeInterpolator", *, max_level: int | None = None) -> None:
         """Bind one interpolator and its tree."""
         self.interpolator = interpolator
         self.tree = interpolator.tree
-        self.maxdepth = _resolve_ray_maxdepth(self.tree, maxdepth)
-        self.ray_tracer = OctreeRayTracer(self.tree, maxdepth=maxdepth)
-        if int(self.maxdepth) >= int(self.tree.depth):
+        self.max_level = _resolve_ray_max_level(self.tree, max_level)
+        self.ray_tracer = OctreeRayTracer(self.tree, max_level=max_level)
+        if int(self.max_level) >= int(self.tree.max_level):
             self._interp_state_xyz = getattr(interpolator, "_interp_state_xyz", None)
             self._interp_state_rpa = getattr(interpolator, "_interp_state_rpa", None)
         else:
-            interp_state = _ray_interp_state_for_maxdepth(interpolator, int(self.maxdepth))
+            interp_state = _ray_interp_state_for_max_level(interpolator, int(self.max_level))
             if isinstance(interp_state, CartesianInterpKernelState):
                 self._interp_state_xyz = interp_state
                 self._interp_state_rpa = None

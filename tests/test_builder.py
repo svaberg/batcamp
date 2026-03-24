@@ -114,6 +114,65 @@ def _build_disjoint_xyz_dataset() -> _FakeDataset:
     )
 
 
+def _build_adaptive_xyz_dataset() -> tuple[_FakeDataset, np.ndarray]:
+    """Build one simple adaptive Cartesian dataset with one coarse and eight fine leaves."""
+    x_edges = np.array([0.0, 1.0, 1.5, 2.0], dtype=float)
+    y_edges = np.array([0.0, 0.5, 1.0], dtype=float)
+    z_edges = np.array([0.0, 0.5, 1.0], dtype=float)
+    points, _corners = _build_cartesian_hex_mesh(
+        x_edges=x_edges,
+        y_edges=y_edges,
+        z_edges=z_edges,
+    )
+    node_index = np.arange(points.shape[0], dtype=np.int64).reshape(x_edges.size, y_edges.size, z_edges.size)
+    corners = [
+        [
+            int(node_index[0, 0, 0]),
+            int(node_index[1, 0, 0]),
+            int(node_index[0, 2, 0]),
+            int(node_index[1, 2, 0]),
+            int(node_index[0, 0, 2]),
+            int(node_index[1, 0, 2]),
+            int(node_index[0, 2, 2]),
+            int(node_index[1, 2, 2]),
+        ]
+    ]
+    levels = [0]
+    for ix in (1, 2):
+        for iy in (0, 1):
+            for iz in (0, 1):
+                corners.append(
+                    [
+                        int(node_index[ix, iy, iz]),
+                        int(node_index[ix + 1, iy, iz]),
+                        int(node_index[ix, iy + 1, iz]),
+                        int(node_index[ix + 1, iy + 1, iz]),
+                        int(node_index[ix, iy, iz + 1]),
+                        int(node_index[ix + 1, iy, iz + 1]),
+                        int(node_index[ix, iy + 1, iz + 1]),
+                        int(node_index[ix + 1, iy + 1, iz + 1]),
+                    ]
+                )
+                levels.append(1)
+
+    corners_arr = np.array(corners, dtype=np.int64)
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    scalar = x + 2.0 * y + 3.0 * z
+    ds = _FakeDataset(
+        points=points,
+        corners=corners_arr,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Scalar": scalar,
+        },
+    )
+    return ds, np.array(levels, dtype=np.int64)
+
+
 def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
     """Private test helper: build two spherical shell layers with a radial gap."""
     theta_edges = np.array([0.0, 0.5 * math.pi, math.pi], dtype=float)
@@ -218,6 +277,24 @@ def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
     values, cell_ids = interp(q, return_cell_ids=True)
     assert np.array_equal(np.array(cell_ids, dtype=np.int64), np.array(choose, dtype=np.int64))
     assert np.allclose(np.array(values, dtype=float), expected, atol=1e-12, rtol=0.0)
+
+
+def test_xyz_lookup_reports_exact_adaptive_paths() -> None:
+    """Adaptive Cartesian lookup should report exact discrete addresses and root-leaf paths."""
+    ds, levels = _build_adaptive_xyz_dataset()
+    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=levels, bind=True)
+
+    coarse_hit = tree.lookup_point(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")
+    assert coarse_hit is not None
+    assert coarse_hit.level == 0
+    assert (coarse_hit.i0, coarse_hit.i1, coarse_hit.i2) == (0, 0, 0)
+    assert coarse_hit.path == ((0, 0, 0),)
+
+    fine_hit = tree.lookup_point(np.array([1.75, 0.75, 0.75], dtype=float), coord="xyz")
+    assert fine_hit is not None
+    assert fine_hit.level == 1
+    assert (fine_hit.i0, fine_hit.i1, fine_hit.i2) == (3, 1, 1)
+    assert fine_hit.path == ((1, 0, 0), (3, 1, 1))
 
 
 def test_build_rejects_missing_corners() -> None:
@@ -354,6 +431,25 @@ def test_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
     assert not hasattr(tree, "depth_for_level")
+
+
+def test_regular_spherical_tree_uses_absolute_levels() -> None:
+    """Uniform spherical trees should store root-relative absolute levels."""
+    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
+    assert tree.max_level == tree.depth
+    assert tree.min_level == tree.max_level
+    assert tree.cell_levels is not None
+    assert np.all(tree.cell_levels == tree.max_level)
+
+
+def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
+    """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
+    ds, cell_levels = _build_adaptive_xyz_dataset()
+    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=cell_levels, bind=False)
+    assert tree.max_level == tree.depth == 1
+    assert tree.min_level == 0
+    assert tree.cell_levels is not None
+    assert np.array_equal(tree.cell_levels, cell_levels)
 
 
 def test_build_bind_false_returns_unbound_until_bind() -> None:

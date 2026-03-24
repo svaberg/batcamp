@@ -143,8 +143,12 @@ class Octree:
 
     @property
     def depth(self) -> int:
-        """Return octree depth derived from `root_shape` and `leaf_shape`."""
-        return _depth_from_shapes(self.leaf_shape, self.root_shape)
+        """Return the maximum root-relative level.
+
+        `depth` is kept as a read-only alias for `max_level` so the tree has
+        one refinement coordinate system internally.
+        """
+        return int(self.max_level)
 
     def bind(
         self,
@@ -217,7 +221,7 @@ class Octree:
             f"Octree ({shape_kind}): "
             f"tree_coord={self.tree_coord}, "
             f"finest_leaf_grid={self.leaf_shape}, root_grid={self.root_shape}, "
-            f"depth={self.depth}, full={self.is_full}, "
+            f"max_level={self.max_level}, full={self.is_full}, "
             f"levels={self.min_level}..{self.max_level}; leaf_levels[{leaf_levels}]"
         )
 
@@ -318,7 +322,7 @@ class Octree:
         """Resolve one query point to a leaf `cell_id` (or `-1`)."""
         raise NotImplementedError
 
-    def hit_from_chosen(self, chosen: int, *, allow_invalid_depth: bool = False) -> "LookupHit | None":
+    def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> "LookupHit | None":
         """Materialize lookup metadata from one chosen cell id."""
         raise NotImplementedError
 
@@ -357,7 +361,7 @@ class Octree:
         n_cells = int(self._cell_centers.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-        hit = self.hit_from_chosen(cid, allow_invalid_depth=True)
+        hit = self.hit_from_chosen(cid, allow_invalid_level=True)
         if hit is None:
             raise ValueError(f"Invalid cell_id {cid}; cannot materialize LookupHit.")
         return hit
@@ -479,25 +483,6 @@ def octree_class_for_coord(tree_coord: str) -> type[Octree]:
     raise ValueError(
         f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
     )
-
-
-def _depth_from_shapes(leaf_shape: GridShape, root_shape: GridShape) -> int:
-    """Compute dyadic octree depth from leaf/root grid shapes."""
-    depths: list[int] = []
-    for leaf, root in zip(leaf_shape, root_shape):
-        if int(root) <= 0 or int(leaf) < int(root) or (int(leaf) % int(root)) != 0:
-            raise ValueError(f"Invalid leaf/root shape pair: leaf={leaf_shape}, root={root_shape}.")
-        ratio = int(leaf) // int(root)
-        depth = 0
-        while ratio > 1 and (ratio % 2) == 0:
-            ratio //= 2
-            depth += 1
-        if ratio != 1:
-            raise ValueError(
-                f"Non-dyadic leaf/root shape pair: leaf={leaf_shape}, root={root_shape}."
-            )
-        depths.append(depth)
-    return min(depths) if depths else 0
 
 
 @dataclass(frozen=True)

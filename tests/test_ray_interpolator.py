@@ -7,7 +7,7 @@ from batread.dataset import Dataset
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
-from batcamp.ray import _ray_cell_geometry_for_maxdepth
+from batcamp.ray import _ray_cell_geometry_for_max_level
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -319,14 +319,14 @@ def test_direct_ray_integral_matches_exact_for_trilinear_field() -> None:
     assert np.isclose(direct, exact, rtol=1e-12, atol=1e-12)
 
 
-def test_cartesian_maxdepth_zero_matches_root_cell_interpolation() -> None:
-    """`maxdepth=0` should match one-root-cell interpolation on a depth-1 Cartesian mesh."""
+def test_cartesian_max_level_zero_matches_root_cell_interpolation() -> None:
+    """`max_level=0` should match one-root-cell interpolation on a level-1 Cartesian mesh."""
     fine = _build_depth1_cartesian_dataset()
     coarse = _build_root_cartesian_dataset()
     fine_interp = OctreeInterpolator(fine, ["Curved"], tree=Octree.from_dataset(fine, tree_coord="xyz"))
     coarse_interp = OctreeInterpolator(coarse, ["Curved"], tree=Octree.from_dataset(coarse, tree_coord="xyz"))
 
-    cut = OctreeRayInterpolator(fine_interp, maxdepth=0)
+    cut = OctreeRayInterpolator(fine_interp, max_level=0)
     root = OctreeRayInterpolator(coarse_interp)
 
     origins = np.array(
@@ -340,13 +340,13 @@ def test_cartesian_maxdepth_zero_matches_root_cell_interpolation() -> None:
     assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
 
 
-def test_cartesian_maxdepth_full_matches_default() -> None:
-    """Full-depth Cartesian `maxdepth` should match the default ray path exactly."""
+def test_cartesian_max_level_full_matches_default() -> None:
+    """Full-level Cartesian `max_level` should match the default ray path exactly."""
     fine = _build_depth1_cartesian_dataset()
     interp = OctreeInterpolator(fine, ["Curved"], tree=Octree.from_dataset(fine, tree_coord="xyz"))
 
     default = OctreeRayInterpolator(interp)
-    full = OctreeRayInterpolator(interp, maxdepth=int(interp.tree.depth))
+    full = OctreeRayInterpolator(interp, max_level=int(interp.tree.max_level))
 
     origins = np.array(
         [[0.0, 0.25, 0.25], [0.0, 1.25, 0.75], [0.0, 1.5, 1.5]],
@@ -363,14 +363,14 @@ def test_cartesian_maxdepth_full_matches_default() -> None:
     assert np.allclose(default_vals, full_vals, atol=1e-12, rtol=1e-12)
 
 
-def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
-    """`maxdepth=0` should match one-root-cell interpolation on a depth-1 spherical mesh."""
+def test_spherical_max_level_zero_matches_root_cell_interpolation() -> None:
+    """`max_level=0` should match one-root-cell interpolation on a level-1 spherical mesh."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
     fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
     coarse_interp = OctreeInterpolator(coarse, ["Scalar"], tree=Octree.from_dataset(coarse, tree_coord="rpa"))
 
-    cut = OctreeRayInterpolator(fine_interp, maxdepth=0)
+    cut = OctreeRayInterpolator(fine_interp, max_level=0)
     root = OctreeRayInterpolator(coarse_interp)
 
     origins = np.array(
@@ -388,12 +388,12 @@ def test_spherical_maxdepth_zero_matches_root_cell_interpolation() -> None:
     assert np.allclose(cut_vals, root_vals, atol=1e-12, rtol=1e-12)
 
 
-def test_spherical_maxdepth_zero_geometry_matches_root_cells() -> None:
-    """Spherical `maxdepth=0` geometry should reproduce the true root-cell corners."""
+def test_spherical_max_level_zero_geometry_matches_root_cells() -> None:
+    """Spherical `max_level=0` geometry should reproduce the true root-cell corners."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
     tree = Octree.from_dataset(fine, tree_coord="rpa")
-    geometry = _ray_cell_geometry_for_maxdepth(tree, 0)
+    geometry = _ray_cell_geometry_for_max_level(tree, 0)
 
     grouped = sorted(_corner_point_multiset(fine.points, geometry.corners[node_id]) for node_id in range(8))
     root = sorted(_corner_point_multiset(coarse.points, coarse.corners[cell_id]) for cell_id in range(8))
@@ -401,13 +401,13 @@ def test_spherical_maxdepth_zero_geometry_matches_root_cells() -> None:
     assert grouped == root
 
 
-def test_spherical_maxdepth_full_matches_default() -> None:
-    """Full-depth spherical `maxdepth` should match the default ray path exactly."""
+def test_spherical_max_level_full_matches_default() -> None:
+    """Full-level spherical `max_level` should match the default ray path exactly."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
 
     default = OctreeRayInterpolator(interp)
-    full = OctreeRayInterpolator(interp, maxdepth=int(interp.tree.depth))
+    full = OctreeRayInterpolator(interp, max_level=int(interp.tree.max_level))
 
     origins = np.array(
         [[-2.1, -0.2, 0.2], [-2.1, 0.3, 0.1]],
@@ -424,14 +424,14 @@ def test_spherical_maxdepth_full_matches_default() -> None:
     assert np.allclose(default_vals, full_vals, atol=1e-12, rtol=1e-12)
 
 
-def test_spherical_maxdepth_one_matches_depth_one_mesh() -> None:
-    """Spherical `maxdepth=1` should match a true depth-1 mesh on the same rays."""
+def test_spherical_max_level_one_matches_level_one_mesh() -> None:
+    """Spherical `max_level=1` should match a true level-1 mesh on the same rays."""
     fine = _build_fake_dataset(nr=4, ntheta=8, nphi=16)
     coarse = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
     coarse_interp = OctreeInterpolator(coarse, ["Scalar"], tree=Octree.from_dataset(coarse, tree_coord="rpa"))
 
-    cut = OctreeRayInterpolator(fine_interp, maxdepth=1)
+    cut = OctreeRayInterpolator(fine_interp, max_level=1)
     ref = OctreeRayInterpolator(coarse_interp)
 
     origins = np.array(

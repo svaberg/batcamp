@@ -275,18 +275,37 @@ class OctreeBuilder:
             )
 
         _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
-        leaf_shape, weighted_cells, _max_level = self._infer_leaf_shape_from_levels(level_shapes)
+        weighted_cells = int(
+            sum(int(level_shapes[level][4]) * (8 ** int(max_level - level)) for level in level_shapes)
+        )
+        if tree_coord == "xyz":
+            leaf_shape = self._xyz_builder.infer_leaf_shape(
+                ds,
+                corners_arr,
+                levels,
+                max_level=max_level,
+            )
+        else:
+            leaf_shape, weighted_cells, _max_level = self._infer_leaf_shape_from_levels(level_shapes)
         _counts_full, root_shape, _depth = self._full_tree_counts(leaf_shape)
+        level_offset = int(_depth) - int(max_level)
+        if level_offset < 0:
+            raise ValueError(
+                f"Inferred level offset is negative: depth={_depth}, max_level={max_level}."
+            )
+        levels = np.asarray(levels, dtype=np.int64)
+        levels_abs = np.array(levels, copy=True)
+        levels_abs[levels_abs >= 0] += int(level_offset)
         level_counts = tuple(
             (
-                int(level),
+                int(level + level_offset),
                 int(level_shapes[level][4]),
                 int(level_shapes[level][4] * (8 ** int(max_level - level))),
             )
             for level in sorted(level_shapes)
         )
         is_full = (
-            int(np.count_nonzero(levels >= 0)) == int(levels.size)
+            int(np.count_nonzero(levels_abs >= 0)) == int(levels_abs.size)
             and int(sum(item[2] for item in level_counts)) == int(np.prod(leaf_shape))
             and int(weighted_cells) == int(np.prod(leaf_shape))
         )
@@ -295,10 +314,10 @@ class OctreeBuilder:
             root_shape=root_shape,
             is_full=bool(is_full),
             level_counts=level_counts,
-            min_level=min_level,
-            max_level=max_level,
+            min_level=int(min_level + level_offset),
+            max_level=int(max_level + level_offset),
             tree_coord=tree_coord,
-            cell_levels=levels,
+            cell_levels=levels_abs,
         )
         if bind:
             tree.bind(ds, axis_rho_tol=axis_rho_tol)
