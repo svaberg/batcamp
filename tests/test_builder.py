@@ -46,6 +46,36 @@ def _build_regular_dataset(
     )
 
 
+def _build_irregular_spherical_dataset() -> _FakeDataset:
+    """Build one spherical dataset with a deliberately non-dyadic azimuth corner."""
+    ds = _build_regular_dataset()
+    points = np.array(ds.points, dtype=float, copy=True)
+    movable = np.flatnonzero((np.abs(points[:, 0]) > 1e-6) & (np.abs(points[:, 1]) > 1e-6))
+    idx = int(movable[0])
+    angle = 0.01
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    x = float(points[idx, 0])
+    y = float(points[idx, 1])
+    points[idx, 0] = cos_a * x - sin_a * y
+    points[idx, 1] = sin_a * x + cos_a * y
+
+    x_var = points[:, 0]
+    y_var = points[:, 1]
+    z_var = points[:, 2]
+    scalar = 1.5 * x_var - 0.7 * y_var + 0.2 * z_var + 3.0
+    return _FakeDataset(
+        points=points,
+        corners=np.array(ds.corners, dtype=np.int64, copy=True),
+        variables={
+            Octree.X_VAR: x_var,
+            Octree.Y_VAR: y_var,
+            Octree.Z_VAR: z_var,
+            "Scalar": scalar,
+        },
+    )
+
+
 def _build_regular_xyz_dataset(
     *,
     nx: int = 4,
@@ -453,6 +483,20 @@ def test_regular_spherical_lookup_materializes_exact_indices() -> None:
     assert last.path == ((0, 1, 3), (1, 3, 7))
 
 
+def test_spherical_lookup_rejects_non_exact_geometry() -> None:
+    """Irregular spherical geometry should fail instead of fabricating octree addresses."""
+    regular = _build_regular_dataset()
+    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(regular)
+    tree = OctreeBuilder()._build(
+        _build_irregular_spherical_dataset(),
+        tree_coord="rpa",
+        cell_levels=cell_levels,
+        bind=True,
+    )
+    with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
+        _ = tree.lookup_state
+
+
 def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
     ds, cell_levels = _build_adaptive_xyz_dataset()
@@ -527,9 +571,8 @@ def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
 
 
 def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:
-    """Spherical lookup should return miss for points in a radial gap."""
+    """Gappy spherical shells are not supported as one exact octree lookup grid."""
     ds = _build_disjoint_spherical_shell_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
-    q_gap = np.array([3.0, 0.5 * math.pi, 0.5 * math.pi], dtype=float)
-    hit = tree.lookup_point(q_gap, coord="rpa")
-    assert hit is None
+    with pytest.raises(ValueError, match="radial edge count does not match leaf_shape"):
+        _ = tree.lookup_state

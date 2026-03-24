@@ -978,6 +978,7 @@ def _build_sparse_spherical_seed_lookup_state(
             "Spherical truncated ray geometry requires SphericalLookupKernelState; "
             f"got {type(seed_lookup).__name__}."
         )
+
     return SphericalLookupKernelState(
         levels_desc=levels_desc,
         shape_table=shape_table,
@@ -996,6 +997,7 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_centers=cell_centers,
         r_min=float(np.min(geometry.cell_r0)),
         r_max=float(np.max(geometry.cell_r0 + geometry.cell_rden)),
+        radial_edges=np.empty((0,), dtype=np.float64),
         max_radius=int(seed_lookup.max_radius),
         leaf_shape=np.zeros(3, dtype=np.int64),
         tree_depth=-1,
