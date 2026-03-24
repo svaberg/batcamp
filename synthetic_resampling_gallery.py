@@ -82,17 +82,109 @@ def _build_checkerboard_pattern_dataset(
     )
 
 
+def _build_adaptive_slab_points_and_corners() -> tuple[np.ndarray, np.ndarray]:
+    """Build one dyadic slab with six coarse octants and one refined northeast column."""
+    x_edges = np.linspace(-1.0, 1.0, 9, dtype=float)
+    y_edges = np.linspace(-1.0, 1.0, 9, dtype=float)
+    z_edges = np.linspace(-0.25, 0.25, 9, dtype=float)
+    points, _unused = build_cartesian_hex_mesh(x_edges=x_edges, y_edges=y_edges, z_edges=z_edges)
+    node_index = np.arange(points.shape[0], dtype=np.int64).reshape(x_edges.size, y_edges.size, z_edges.size)
+
+    corners: list[list[int]] = []
+
+    def add_cell(ix0: int, ix1: int, iy0: int, iy1: int, iz0: int, iz1: int) -> None:
+        corners.append(
+            [
+                int(node_index[ix0, iy0, iz0]),
+                int(node_index[ix1, iy0, iz0]),
+                int(node_index[ix0, iy1, iz0]),
+                int(node_index[ix1, iy1, iz0]),
+                int(node_index[ix0, iy0, iz1]),
+                int(node_index[ix1, iy0, iz1]),
+                int(node_index[ix0, iy1, iz1]),
+                int(node_index[ix1, iy1, iz1]),
+            ]
+        )
+
+    for ix0, ix1 in ((0, 4), (4, 8)):
+        for iy0, iy1 in ((0, 4), (4, 8)):
+            for iz0, iz1 in ((0, 4), (4, 8)):
+                if ix0 == 4 and iy0 == 4:
+                    continue
+                add_cell(ix0, ix1, iy0, iy1, iz0, iz1)
+    for ix in range(4, 8):
+        for iy in range(4, 8):
+            for iz in range(0, 8):
+                add_cell(ix, ix + 1, iy, iy + 1, iz, iz + 1)
+    return points, np.array(corners, dtype=np.int64)
+
+
+def _build_adaptive_ring_pattern_dataset(
+    *,
+    ring_radius: float,
+    ring_width: float,
+    center_x: float,
+    center_y: float,
+) -> FakeDataset:
+    """Build one adaptive slab with a ring concentrated in the refined patch."""
+    points, corners = _build_adaptive_slab_points_and_corners()
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    radius = np.sqrt((x - float(center_x)) ** 2 + (y - float(center_y)) ** 2)
+    pattern = 0.05 + np.exp(-((radius - float(ring_radius)) ** 2) / (2.0 * float(ring_width) ** 2))
+    return FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Pattern": pattern,
+        },
+    )
+
+
+def _build_adaptive_checkerboard_pattern_dataset(
+    *,
+    tile_count: int,
+    x_offset: float,
+    y_offset: float,
+) -> FakeDataset:
+    """Build one adaptive slab with a checkerboard over the refined northeast patch."""
+    points, corners = _build_adaptive_slab_points_and_corners()
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    tile_size = 1.0 / float(tile_count)
+    ix = np.floor(np.clip((x - float(x_offset)) / tile_size, 0.0, float(tile_count) - 1.0e-6)).astype(np.int64)
+    iy = np.floor(np.clip((y - float(y_offset)) / tile_size, 0.0, float(tile_count) - 1.0e-6)).astype(np.int64)
+    in_patch = (x >= float(x_offset)) & (x <= float(x_offset) + 1.0) & (y >= float(y_offset)) & (y <= float(y_offset) + 1.0)
+    parity = (ix + iy) % 2
+    pattern = np.where(in_patch, np.where(parity == 0, 1.8, 0.2), 1.0)
+    return FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Pattern": pattern,
+        },
+    )
+
+
 def _resample_xy_plane(
     interp: OctreeInterpolator,
     *,
     resolution: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Resample one scalar field onto one regular `xy` plane at `z=0`."""
+    """Resample one scalar field onto one regular `xy` plane just above `z=0`."""
     dmin, dmax = interp.tree.domain_bounds(coord="xyz")
     x = np.linspace(float(dmin[0]), float(dmax[0]), int(resolution), dtype=float)
     y = np.linspace(float(dmin[1]), float(dmax[1]), int(resolution), dtype=float)
     xg, yg = np.meshgrid(x, y, indexing="xy")
-    zg = np.zeros_like(xg, dtype=float)
+    zg = np.full_like(xg, 0.03125, dtype=float)
     query = np.column_stack((xg.ravel(), yg.ravel(), zg.ravel()))
     img = np.asarray(
         interp(query, query_coord="xyz", log_outside_domain=False),
@@ -164,6 +256,37 @@ def _checker_cases() -> list[tuple[str, FakeDataset]]:
     return out
 
 
+def _adaptive_ring_cases() -> list[tuple[str, FakeDataset]]:
+    """Return one batch of adaptive ring datasets."""
+    out: list[tuple[str, FakeDataset]] = []
+    for ring_radius in (0.18, 0.24, 0.30):
+        for ring_width in (0.04, 0.07):
+            label = f"adaptive_rings_r{ring_radius:.2f}_w{ring_width:.2f}"
+            ds = _build_adaptive_ring_pattern_dataset(
+                ring_radius=ring_radius,
+                ring_width=ring_width,
+                center_x=0.5,
+                center_y=0.5,
+            )
+            out.append((label, ds))
+    return out
+
+
+def _adaptive_checker_cases() -> list[tuple[str, FakeDataset]]:
+    """Return one batch of adaptive checkerboard datasets."""
+    out: list[tuple[str, FakeDataset]] = []
+    for tile_count in (2,):
+        for x_offset, y_offset in ((0.00, 0.00), (0.10, 0.00), (0.10, 0.10)):
+            label = f"adaptive_checker_t{tile_count:02d}_ox{x_offset:.2f}_oy{y_offset:.2f}"
+            ds = _build_adaptive_checkerboard_pattern_dataset(
+                tile_count=tile_count,
+                x_offset=x_offset,
+                y_offset=y_offset,
+            )
+            out.append((label, ds))
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic resampling pattern gallery.")
     parser.add_argument(
@@ -198,7 +321,7 @@ def main() -> None:
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir).resolve()
-    cases = _ring_cases() + _checker_cases()
+    cases = _adaptive_ring_cases() + _adaptive_checker_cases() + _ring_cases() + _checker_cases()
     if int(args.limit_cases) > 0:
         cases = cases[: int(args.limit_cases)]
 
