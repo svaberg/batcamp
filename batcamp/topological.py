@@ -367,18 +367,13 @@ def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np
     if max_level < min_level:
         raise ValueError(f"Invalid level bounds: min_level={min_level}, max_level={max_level}.")
     out = np.empty((max_level - min_level + 1, 3), dtype=np.int64)
-    tree_depth = int(tree.depth)
-    tree_max_level = int(tree.max_level)
     root0 = int(tree.root_shape[0])
     root1 = int(tree.root_shape[1])
     root2 = int(tree.root_shape[2])
     for level in range(min_level, max_level + 1):
-        level_depth = int(tree_depth - (tree_max_level - level))
-        if level_depth < 0:
-            raise ValueError(
-                f"Derived negative level depth for level={level}; depth={tree_depth}, max_level={tree_max_level}."
-            )
-        scale = 1 << level_depth
+        if int(level) < 0:
+            raise ValueError(f"Derived negative level={level}; max_level={tree.max_level}.")
+        scale = 1 << int(level)
         row = level - min_level
         out[row, 0] = root0 * scale
         out[row, 1] = root1 * scale
@@ -412,12 +407,9 @@ def _cell_local_indices_from_bounds(tree: Octree, cell_ids: np.ndarray, levels: 
         mask = levels == int(level)
         if not np.any(mask):
             continue
-        level_depth = int(tree.depth - (int(tree.max_level) - int(level)))
-        if level_depth < 0:
-            raise ValueError(
-                f"Derived negative level depth for level={level}; depth={tree.depth}, max_level={tree.max_level}."
-            )
-        scale = 1 << level_depth
+        if int(level) < 0:
+            raise ValueError(f"Derived negative level={level}; max_level={tree.max_level}.")
+        scale = 1 << int(level)
         n0 = int(tree.root_shape[0]) * scale
         n1 = int(tree.root_shape[1]) * scale
         n2 = int(tree.root_shape[2]) * scale

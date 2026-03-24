@@ -147,3 +147,47 @@ class CartesianOctreeBuilder:
         )
         level_shapes = self.infer_xyz_level_shapes(ds, corners, levels)
         return level_shapes, levels, min_level, max_level
+
+    @staticmethod
+    def infer_leaf_shape(
+        ds: Dataset,
+        corners: np.ndarray,
+        cell_levels: np.ndarray,
+        *,
+        max_level: int,
+    ) -> tuple[int, int, int]:
+        """Infer finest Cartesian `(n_x, n_y, n_z)` counts from geometry at `max_level`."""
+        x = np.asarray(ds[Octree.X_VAR], dtype=float)
+        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
+        z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+        cell_x = x[corners]
+        cell_y = y[corners]
+        cell_z = z[corners]
+        dx = np.ptp(cell_x, axis=1)
+        dy = np.ptp(cell_y, axis=1)
+        dz = np.ptp(cell_z, axis=1)
+        mask = np.asarray(cell_levels, dtype=np.int64) == int(max_level)
+        if not np.any(mask):
+            raise ValueError(f"No cells found at max_level={max_level}.")
+
+        x_min = float(np.min(np.min(cell_x, axis=1)))
+        x_max = float(np.max(np.max(cell_x, axis=1)))
+        y_min = float(np.min(np.min(cell_y, axis=1)))
+        y_max = float(np.max(np.max(cell_y, axis=1)))
+        z_min = float(np.min(np.min(cell_z, axis=1)))
+        z_max = float(np.max(np.max(cell_z, axis=1)))
+        span_x = max(x_max - x_min, np.finfo(float).tiny)
+        span_y = max(y_max - y_min, np.finfo(float).tiny)
+        span_z = max(z_max - z_min, np.finfo(float).tiny)
+
+        finest_dx = _median_positive(dx[mask])
+        finest_dy = _median_positive(dy[mask])
+        finest_dz = _median_positive(dz[mask])
+        n_x = int(round(span_x / finest_dx))
+        n_y = int(round(span_y / finest_dy))
+        n_z = int(round(span_z / finest_dz))
+        if n_x <= 0 or n_y <= 0 or n_z <= 0:
+            raise ValueError(
+                f"Invalid finest Cartesian shape inferred: n_x={n_x}, n_y={n_y}, n_z={n_z}."
+            )
+        return n_x, n_y, n_z

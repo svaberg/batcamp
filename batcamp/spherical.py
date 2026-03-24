@@ -202,30 +202,27 @@ class _SphericalCellLookup:
         self._cell_centers = np.mean(self._points[self._corners], axis=1)
         n_cells = int(self._corners.shape[0])
         if cell_levels is None or int(cell_levels.shape[0]) != n_cells:
-            self._cell_level_rel = np.full(n_cells, int(tree.max_level), dtype=np.int64)
+            self._cell_level = np.full(n_cells, int(tree.max_level), dtype=np.int64)
         else:
-            self._cell_level_rel = np.array(cell_levels, dtype=np.int64)
+            self._cell_level = np.array(cell_levels, dtype=np.int64)
         self._build_index()
 
     def _build_index(self) -> None:
         """Build per-level lookup tables, bins, and per-cell bounds."""
         n_cells = self._corners.shape[0]
-        valid = self._cell_level_rel >= 0
+        valid = self._cell_level >= 0
         if not np.any(valid):
             raise ValueError("Lookup requires at least one valid leaf level.")
 
         self._max_level = int(self.tree.max_level)
-        valid_levels = sorted(set(int(v) for v in self._cell_level_rel[valid].tolist()))
+        valid_levels = sorted(set(int(v) for v in self._cell_level[valid].tolist()))
         shape_by_level: dict[int, tuple[int, int, int]] = {}
         dtheta_by_level: dict[int, float] = {}
         dphi_by_level: dict[int, float] = {}
         for level in valid_levels:
-            depth = int(self.tree.depth - (int(self.tree.max_level) - int(level)))
+            depth = int(level)
             if depth < 0:
-                raise ValueError(
-                    f"Derived negative tree depth for level {level}; "
-                    f"tree.depth={self.tree.depth}, max_level={self.tree.max_level}."
-                )
+                raise ValueError(f"Derived negative level {level}; max_level={self.tree.max_level}.")
             nr = int(self.tree.root_shape[0] * (1 << depth))
             ntheta = int(self.tree.root_shape[1] * (1 << depth))
             nphi = int(self.tree.root_shape[2] * (1 << depth))
@@ -278,7 +275,7 @@ class _SphericalCellLookup:
         n_bins = int(running_offset)
         bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
         for cid in np.flatnonzero(valid):
-            level = int(self._cell_level_rel[cid])
+            level = int(self._cell_level[cid])
             ntheta = int(self._shape_table[level, 1])
             nphi = int(self._shape_table[level, 2])
             dtheta = float(self._dtheta_table[level])
@@ -300,7 +297,7 @@ class _SphericalCellLookup:
             bin_lists[key] = sorted_ids.tolist()
             bin_counts[key] = int(sorted_ids.size)
 
-            level = int(self._cell_level_rel[int(sorted_ids[0])])
+            level = int(self._cell_level[int(sorted_ids[0])])
             nr_level = int(self._shape_table[level, 0])
             m = sorted_ids.size
             if m == 1:
@@ -361,7 +358,7 @@ class _SphericalCellLookup:
             cell_theta_max=self._cell_theta_max,
             cell_phi_start=self._cell_phi_start,
             cell_phi_width=self._cell_phi_width,
-            cell_valid=(self._cell_level_rel >= 0),
+            cell_valid=(self._cell_level >= 0),
             cell_centers=self._cell_centers,
             r_min=float(self._r_min),
             r_max=float(self._r_max),
@@ -369,11 +366,11 @@ class _SphericalCellLookup:
         )
 
     @staticmethod
-    def _path(i0: int, i1: int, i2: int, depth: int) -> GridPath:
+    def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:
         """Build the root-to-leaf grid index path for one cell."""
         out: list[GridIndex] = []
-        for level in range(depth + 1):
-            shift = depth - level
+        for path_level in range(level + 1):
+            shift = level - path_level
             out.append((i0 >> shift, i1 >> shift, i2 >> shift))
         return tuple(out)
 
@@ -584,23 +581,20 @@ class _SphericalCellLookup:
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
         return self._lookup_rpa_cell_id(r, polar, azimuth)
 
-    def hit_from_chosen(self, chosen: int, *, allow_invalid_depth: bool = False) -> LookupHit | None:
+    def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> LookupHit | None:
         """Build a `LookupHit` from an internal cell id."""
         if chosen < 0:
             return None
         center = self._cell_centers[chosen]
-        level = int(self._cell_level_rel[chosen])
-        if level < 0 and not allow_invalid_depth:
+        level = int(self._cell_level[chosen])
+        if level < 0 and not allow_invalid_level:
             return None
         if level < 0:
-            depth = int(self.tree.depth)
+            path_level = int(self.tree.max_level)
         else:
-            depth = int(self.tree.depth - (int(self.tree.max_level) - level))
-            if depth < 0:
-                raise ValueError(
-                    f"Derived negative tree depth for level {level}; "
-                    f"tree.depth={self.tree.depth}, max_level={self.tree.max_level}."
-                )
+            path_level = int(level)
+            if path_level < 0:
+                raise ValueError(f"Derived negative level {level}; max_level={self.tree.max_level}.")
         cell_i0 = int(self._i0[chosen])
         cell_i1 = int(self._i1[chosen])
         cell_i2 = int(self._i2[chosen])
@@ -610,7 +604,7 @@ class _SphericalCellLookup:
             i0=cell_i0,
             i1=cell_i1,
             i2=cell_i2,
-            path=self._path(cell_i0, cell_i1, cell_i2, depth),
+            path=self._path(cell_i0, cell_i1, cell_i2, path_level),
             center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         )
 
@@ -634,7 +628,7 @@ class SphericalOctree(_SphericalCellLookup, Octree):
             if self.contains_cell(near, q, coord="xyz"):
                 return self.hit_from_cell_id(near)
 
-            near_level = int(lookup._cell_level_rel[near])
+            near_level = int(lookup._cell_level[near])
             near_i1 = int(lookup._i1[near])
             near_i2 = int(lookup._i2[near])
             shape_table = lookup._shape_table

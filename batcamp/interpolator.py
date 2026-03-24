@@ -411,9 +411,9 @@ class OctreeInterpolator:
         self.prepare_kernel_cache()
         self.warmup_kernels()
         logger.info(
-            "Interpolator ready: uniform=%s, depth=%d, leaf_shape=%s",
+            "Interpolator ready: uniform=%s, max_level=%d, leaf_shape=%s",
             self.tree.is_uniform,
-            int(self.tree.depth),
+            int(self.tree.max_level),
             tuple(self.tree.leaf_shape),
         )
 
