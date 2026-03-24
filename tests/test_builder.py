@@ -7,10 +7,8 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
-from batcamp import CartesianOctree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeBuilder
-from batcamp import SphericalOctree
 from batcamp.builder import _build_node_arrays
 from batcamp.builder import _resolve_cell_levels
 from batcamp.builder_cartesian import CartesianOctreeBuilder
@@ -267,12 +265,12 @@ def _make_cartesian_tree(
     root_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray | None,
-) -> CartesianOctree:
+) -> Octree:
     levels = None if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
     valid = np.empty((0,), dtype=np.int64) if levels is None else levels[levels >= 0]
     min_level = int(np.min(valid)) if valid.size > 0 else 0
     count = int(valid.size)
-    return CartesianOctree(
+    return Octree(
         leaf_shape=leaf_shape,
         root_shape=root_shape,
         is_full=False,
@@ -290,12 +288,12 @@ def _make_spherical_tree(
     root_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray | None,
-) -> SphericalOctree:
+) -> Octree:
     levels = None if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
     valid = np.empty((0,), dtype=np.int64) if levels is None else levels[levels >= 0]
     min_level = int(np.min(valid)) if valid.size > 0 else 0
     count = int(valid.size)
-    return SphericalOctree(
+    return Octree(
         leaf_shape=leaf_shape,
         root_shape=root_shape,
         is_full=False,
@@ -308,19 +306,19 @@ def _make_spherical_tree(
 
 
 @pytest.fixture(scope="module")
-def cartesian_octree_context() -> tuple[_FakeDataset, CartesianOctree, OctreeInterpolator]:
+def cartesian_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    assert isinstance(tree, CartesianOctree)
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    assert isinstance(tree, Octree)
+    interp = OctreeInterpolator(tree, ["Scalar"])
     return ds, tree, interp
 
 
 def test_xyz_fixture_builds_tree(cartesian_octree_context) -> None:
     """Fixture should provide a bound Cartesian tree and xyz interpolator."""
     _ds, tree, interp = cartesian_octree_context
-    assert isinstance(tree, CartesianOctree)
+    assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
     assert interp.tree is tree
 
@@ -400,7 +398,7 @@ def test_build_xyz_returns_cartesian_tree() -> None:
     """Builder should construct Cartesian octree when tree_coord='xyz'."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    assert isinstance(tree, CartesianOctree)
+    assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
 
@@ -408,7 +406,8 @@ def test_build_default_returns_cartesian_tree() -> None:
     """Default build path should return the Cartesian octree specialization."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds)
-    assert isinstance(tree, CartesianOctree)
+    assert isinstance(tree, Octree)
+    assert tree.tree_coord == "xyz"
 
 
 def test_compute_phi_levels_rejects_missing_phi_source() -> None:
@@ -815,7 +814,7 @@ def test_build_bind_false_stores_tree_coord() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder()._build(ds, tree_coord="xyz", bind=False)
-    assert isinstance(tree, CartesianOctree)
+    assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
 

@@ -245,7 +245,7 @@ def main() -> None:
         (tree, tree_source), tree_s = _time_call(_load_or_build_octree, ds, data_path, cache_root)
         progress.complete(f"[{case.label}] prepare octree", tree_s, detail=f"source={tree_source}")
         progress.start(f"[{case.label}] build interpolator")
-        interp, interp_s = _time_call(OctreeInterpolator, ds, [args.variable], tree=tree)
+        interp, interp_s = _time_call(OctreeInterpolator, tree, [args.variable])
         progress.complete(f"[{case.label}] build interpolator", interp_s)
 
         dmin, dmax = interp.tree.domain_bounds(coord="xyz")

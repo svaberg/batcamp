@@ -12,11 +12,8 @@ from typing import NamedTuple
 from numba import njit
 from numba import prange
 import numpy as np
-from batread.dataset import Dataset
 
-from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import Octree
-from .octree import SUPPORTED_TREE_COORDS
 from .cartesian import CartesianLookupKernelState
 from .cartesian import _lookup_xyz_cell_id_kernel
 from .spherical import SphericalLookupKernelState
@@ -357,52 +354,28 @@ class OctreeInterpolator:
 
     def __init__(
         self,
-        ds: Dataset,
-        values: list[str] | None,
+        tree: Octree,
+        values: list[str] | np.ndarray | None,
         *,
         fill_value: float | np.ndarray = np.nan,
-        tree_coord: Literal["xyz", "rpa"] | None = None,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-        level_rtol: float = 1e-4,
-        level_atol: float = 1e-9,
-        tree: Octree | None = None,
     ) -> None:
-        """Create an interpolator from dataset fields and an octree.
-
-        If `tree` is provided, it is reused. Otherwise a tree is built.
-        """
-        self._ds = ds
-        if ds.corners is None:
-            logger.error("Dataset has no corners; cannot build interpolator.")
-            raise ValueError("Dataset has no cell connectivity (corners).")
-        self._corners = np.array(ds.corners, dtype=np.int64)
+        """Create an interpolator from one built tree and point values."""
+        if not isinstance(tree, Octree):
+            raise TypeError("OctreeInterpolator requires a built Octree as its first argument.")
+        if tree.ds is None or tree.ds.corners is None:
+            logger.error("Octree is not bound to a dataset; cannot build interpolator.")
+            raise ValueError("Octree is not bound to a dataset with corners.")
+        self.tree = tree
+        self.tree._require_lookup()
+        self._ds = tree.ds
+        self._corners = np.array(self._ds.corners, dtype=np.int64)
         self.fill_value = fill_value
 
         logger.debug(
             "Initializing OctreeInterpolator: points=%d, cells=%d",
-            int(ds.points.shape[0]),
+            int(self._ds.points.shape[0]),
             int(self._corners.shape[0]),
         )
-        resolved_tree = tree
-        if resolved_tree is None:
-            build_coord: str | None
-            if tree_coord is None:
-                build_coord = None
-            else:
-                build_coord = str(tree_coord)
-                if build_coord not in SUPPORTED_TREE_COORDS:
-                    raise ValueError(
-                        f"Unsupported tree_coord '{build_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-                    )
-            resolved_tree = Octree.from_dataset(
-                ds,
-                tree_coord=build_coord,
-                axis_rho_tol=axis_rho_tol,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
-        resolved_tree.bind(ds, axis_rho_tol=axis_rho_tol)
-        self.tree = resolved_tree
         self.value_names: tuple[str, ...] = ()
         self._point_values = self._coerce_point_values(values)
         self._tree_coord = str(self.tree.tree_coord)
@@ -427,43 +400,68 @@ class OctreeInterpolator:
             return
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
 
-    def _coerce_point_values(self, values: list[str] | None) -> np.ndarray:
+    def _coerce_point_values(self, values: list[str] | np.ndarray | None) -> np.ndarray:
         """Resolve requested fields into an array indexed by dataset points."""
         n_points = int(self._ds.points.shape[0])
-        names: list[str]
         if values is None:
+            names: list[str]
             names = [str(name) for name in self._ds.variables]
             if len(names) == 0:
                 raise ValueError("Dataset has no variables; cannot interpolate values=None.")
-        else:
-            if isinstance(values, str):
-                raise ValueError("values must be None or list[str]; single-string values are not supported.")
-            if not isinstance(values, list) or len(values) == 0 or not all(isinstance(v, str) for v in values):
-                raise ValueError("values must be None or a non-empty list[str] of field names.")
+            arrays: list[np.ndarray] = []
+            for name in names:
+                arr_name = np.array(self._ds[name])
+                if arr_name.shape[0] != n_points:
+                    logger.error(
+                        "Value size mismatch for field %s: values=%d, n_points=%d",
+                        name,
+                        int(arr_name.shape[0]),
+                        n_points,
+                    )
+                    raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
+                arrays.append(arr_name)
+            self.value_names = tuple(names)
+            if len(arrays) == 1:
+                arr = arrays[0]
+                logger.debug("Using field %s with shape=%s", names[0], tuple(arr.shape))
+                return arr
+            merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
+            logger.debug("Using %d fields with merged shape=%s", len(names), tuple(merged.shape))
+            return merged
+
+        if isinstance(values, str):
+            raise ValueError("values must be None, array-like, or list[str]; single-string values are not supported.")
+        if isinstance(values, list):
+            if len(values) == 0 or not all(isinstance(v, str) for v in values):
+                raise ValueError("values must be None, array-like, or a non-empty list[str] of field names.")
             names = [str(name) for name in values]
+            arrays: list[np.ndarray] = []
+            for name in names:
+                arr_name = np.array(self._ds[name])
+                if arr_name.shape[0] != n_points:
+                    logger.error(
+                        "Value size mismatch for field %s: values=%d, n_points=%d",
+                        name,
+                        int(arr_name.shape[0]),
+                        n_points,
+                    )
+                    raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
+                arrays.append(arr_name)
+            self.value_names = tuple(names)
+            if len(arrays) == 1:
+                arr = arrays[0]
+                logger.debug("Using field %s with shape=%s", names[0], tuple(arr.shape))
+                return arr
+            merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
+            logger.debug("Using %d fields with merged shape=%s", len(names), tuple(merged.shape))
+            return merged
 
-        arrays: list[np.ndarray] = []
-        for name in names:
-            arr_name = np.array(self._ds[name])
-            if arr_name.shape[0] != n_points:
-                logger.error(
-                    "Value size mismatch for field %s: values=%d, n_points=%d",
-                    name,
-                    int(arr_name.shape[0]),
-                    n_points,
-                )
-                raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
-            arrays.append(arr_name)
-
-        self.value_names = tuple(names)
-        if len(arrays) == 1:
-            arr = arrays[0]
-            logger.debug("Using field %s with shape=%s", names[0], tuple(arr.shape))
-            return arr
-
-        merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
-        logger.debug("Using %d fields with merged shape=%s", len(names), tuple(merged.shape))
-        return merged
+        arr = np.asarray(values)
+        if arr.shape[0] != n_points:
+            raise ValueError(f"values length {arr.shape[0]} does not match required n_points={n_points}.")
+        self.value_names = ()
+        logger.debug("Using explicit value array with shape=%s", tuple(arr.shape))
+        return arr
 
     def _prepare_spherical_points(self) -> None:
         """Precompute spherical coordinates `(r, theta, phi)` for each node."""
@@ -486,8 +484,8 @@ class OctreeInterpolator:
         self._cell_r1 = np.max(vr, axis=1)
         self._cell_t0 = np.min(vt, axis=1)
         self._cell_t1 = np.max(vt, axis=1)
-        self._cell_p_start = self.tree.cell_phi_start
-        self._cell_p_width = self.tree.cell_phi_width
+        self._cell_p_start = self.tree._cell_phi_start
+        self._cell_p_width = self.tree._cell_phi_width
 
         tiny = np.finfo(float).tiny
         self._cell_rden = np.maximum(self._cell_r1 - self._cell_r0, tiny)
@@ -538,7 +536,7 @@ class OctreeInterpolator:
         axis-aligned min/max bounds (slab normalization).
         """
         corners = self._corners
-        pts = np.array(self.tree.points, dtype=float)
+        pts = np.array(self.tree._points, dtype=float)
         vx = pts[corners, 0]
         vy = pts[corners, 1]
         vz = pts[corners, 2]
@@ -612,7 +610,7 @@ class OctreeInterpolator:
             cell_phi_full=self._cell_phi_full,
             cell_phi_tiny=self._cell_phi_tiny,
         )
-        self._lookup_state_rpa = self.tree.lookup_state
+        self._lookup_state_rpa = self.tree._lookup_state
 
     def _prepare_kernel_cache_xyz(self) -> None:
         """Build packed arrays for the Cartesian backend."""
@@ -627,7 +625,7 @@ class OctreeInterpolator:
             cell_z0=self._cell_z0,
             cell_zden=self._cell_zden,
         )
-        self._lookup_state_xyz = self.tree.lookup_state
+        self._lookup_state_xyz = self.tree._lookup_state
 
     def _fill_value_vector(self) -> np.ndarray:
         """Convert `fill_value` to one vector of length `n_components`."""
@@ -646,7 +644,7 @@ class OctreeInterpolator:
 
     def warmup_kernels(self) -> None:
         """Trigger JIT compilation ahead of first real query."""
-        q_xyz = np.array(self.tree.points[:1], dtype=np.float64, order="C")
+        q_xyz = np.array(self.tree._points[:1], dtype=np.float64, order="C")
         if q_xyz.shape[0] == 0:
             q_xyz = np.zeros((1, 3), dtype=np.float64)
         fill = self._fill_value_vector()

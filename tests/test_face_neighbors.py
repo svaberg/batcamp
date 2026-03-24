@@ -7,6 +7,7 @@ import pytest
 from batread.dataset import Dataset
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp.ray import _candidate_face_neighbor_nodes_after_exit
 from batcamp.face_neighbors import build_face_neighbors
@@ -33,7 +34,7 @@ def _build_cartesian_uniform_tree() -> Octree:
             Octree.Z_VAR: points[:, 2],
         },
     )
-    return Octree.from_dataset(ds, tree_coord="xyz")
+    return OctreeBuilder().build(ds, tree_coord="xyz")
 
 
 def _build_spherical_uniform_tree() -> Octree:
@@ -54,7 +55,7 @@ def _build_spherical_uniform_tree() -> Octree:
             Octree.Z_VAR: points[:, 2],
         },
     )
-    return Octree.from_dataset(ds, tree_coord="rpa")
+    return OctreeBuilder().build(ds, tree_coord="rpa")
 
 
 def _build_two_level_topology_tree() -> Octree:
@@ -164,7 +165,7 @@ def _oracle_interpolator(tree: Octree) -> OctreeInterpolator:
     """Private test helper: build the regular interpolator used as oracle."""
     ds = tree.ds
     assert ds is not None
-    return OctreeInterpolator(ds, [Octree.X_VAR], tree=tree)
+    return OctreeInterpolator(tree, [Octree.X_VAR])
 
 
 def _oracle_ray_cell_ids(
@@ -481,7 +482,7 @@ def _axis_sample_ray(
 def _sample_tree_and_ray(file_name: str, tree_coord: str, *, axis: str = "x") -> tuple[Octree, np.ndarray, np.ndarray, float]:
     """Private test helper: load one real file and choose one representative axis ray."""
     ds = Dataset.from_file(str(data_file(file_name)))
-    tree = Octree.from_dataset(ds, tree_coord=tree_coord)
+    tree = OctreeBuilder().build(ds, tree_coord=tree_coord)
     origin, direction, t_end = _axis_sample_ray(tree, axis)
     return tree, origin, direction, t_end
 
@@ -780,7 +781,7 @@ def test_sample_lookup_oracle_transitions_are_admissible_by_face_mask(file_name:
 def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: str, record_property) -> None:
     path, resolve_path_s = _time_call(data_file, file_name)
     ds, read_dataset_s = _time_call(Dataset.from_file, str(path))
-    tree, build_tree_s = _time_call(Octree.from_dataset, ds, tree_coord=tree_coord)
+    tree, build_tree_s = _time_call(OctreeBuilder().build, ds, tree_coord=tree_coord)
     topo, build_topology_s = _build_face_neighbors_timed(tree, label=file_name)
     _unused, validate_invariants_s = _time_call(_assert_basic_face_neighbor_invariants, topo)
 

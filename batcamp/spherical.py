@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import math
-from typing import ClassVar
 from typing import NamedTuple
 
 from numba import njit
@@ -175,21 +174,17 @@ def _lookup_rpa_cell_id_kernel(
 class _SphericalCellLookup:
     """Cell lookup helper for spherical trees."""
 
-    def _init_lookup_state(
-        self,
-        tree: Octree,
-    ) -> None:
+    def _init_lookup_state(self) -> None:
         """Build lookup arrays from a bound spherical tree."""
-        if tree.ds is None or tree.ds.corners is None:
+        if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        ds = tree.ds
+        ds = self.ds
         corners = np.array(ds.corners, dtype=np.int64)
-        cell_levels = tree.cell_levels
-        axis_rho_tol = float(tree.axis_rho_tol)
+        cell_levels = self.cell_levels
+        axis_rho_tol = float(self.axis_rho_tol)
         if not set(Octree.XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Lookup requires X/Y/Z variables.")
 
-        self.tree = tree
         self._axis_rho_tol = axis_rho_tol
         self._corners = np.array(corners, dtype=np.int64)
         self._points = np.column_stack(
@@ -204,7 +199,7 @@ class _SphericalCellLookup:
         if cell_levels is None or int(cell_levels.shape[0]) != n_cells:
             raise ValueError("Spherical lookup requires exact builder-provided cell_levels.")
         self._cell_level = np.array(cell_levels, dtype=np.int64)
-        self._build_index()
+        _SphericalCellLookup._build_index(self)
 
     def _build_index(self) -> None:
         """Build per-level lookup tables, bins, and per-cell bounds."""
@@ -213,7 +208,7 @@ class _SphericalCellLookup:
         if not np.any(valid):
             raise ValueError("Lookup requires at least one valid leaf level.")
 
-        self._max_level = int(self.tree.max_level)
+        self._max_level = int(self.max_level)
         valid_levels = sorted(set(int(v) for v in self._cell_level[valid].tolist()))
         shape_by_level: dict[int, tuple[int, int, int]] = {}
         dtheta_by_level: dict[int, float] = {}
@@ -221,10 +216,10 @@ class _SphericalCellLookup:
         for level in valid_levels:
             depth = int(level)
             if depth < 0:
-                raise ValueError(f"Derived negative level {level}; max_level={self.tree.max_level}.")
-            nr = int(self.tree.root_shape[0] * (1 << depth))
-            ntheta = int(self.tree.root_shape[1] * (1 << depth))
-            nphi = int(self.tree.root_shape[2] * (1 << depth))
+                raise ValueError(f"Derived negative level {level}; max_level={self.max_level}.")
+            nr = int(self.root_shape[0] * (1 << depth))
+            ntheta = int(self.root_shape[1] * (1 << depth))
+            nphi = int(self.root_shape[2] * (1 << depth))
             shape_by_level[level] = (nr, ntheta, nphi)
             dtheta_by_level[level] = math.pi / float(ntheta)
             dphi_by_level[level] = _TWO_PI / float(nphi)
@@ -270,7 +265,7 @@ class _SphericalCellLookup:
             vals = phi_corners[cid, ~axis_mask[cid]]
             if vals.size < 2:
                 vals = phi_corners[cid]
-            start, width = self._minimal_phi_interval(vals)
+            start, width = _SphericalCellLookup._minimal_phi_interval(vals)
             phi_start[cid] = start
             phi_width[cid] = width
         self._cell_phi_start = phi_start
@@ -281,28 +276,28 @@ class _SphericalCellLookup:
             "_node_child", "_root_node_ids", "_node_parent", "_cell_node_id",
             "_node_r_min", "_node_r_max", "_node_theta_min", "_node_theta_max", "_node_phi_start", "_node_phi_width",
         )
-        missing = [name for name in required if not hasattr(self.tree, name)]
+        missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Spherical lookup requires builder-provided octree state: missing {missing}.")
-        self._i0 = np.asarray(self.tree._i0, dtype=np.int64)
-        self._i1 = np.asarray(self.tree._i1, dtype=np.int64)
-        self._i2 = np.asarray(self.tree._i2, dtype=np.int64)
-        self._node_depth = np.asarray(self.tree._node_depth, dtype=np.int64)
-        self._node_i0 = np.asarray(self.tree._node_i0, dtype=np.int64)
-        self._node_i1 = np.asarray(self.tree._node_i1, dtype=np.int64)
-        self._node_i2 = np.asarray(self.tree._node_i2, dtype=np.int64)
-        self._node_value = np.asarray(self.tree._node_value, dtype=np.int64)
-        self._node_child = np.asarray(self.tree._node_child, dtype=np.int64)
-        self._root_node_ids = np.asarray(self.tree._root_node_ids, dtype=np.int64)
-        self._node_parent = np.asarray(self.tree._node_parent, dtype=np.int64)
-        self._cell_node_id = np.asarray(self.tree._cell_node_id, dtype=np.int64)
-        self._node_r_min = np.asarray(self.tree._node_r_min, dtype=np.float64)
-        self._node_r_max = np.asarray(self.tree._node_r_max, dtype=np.float64)
-        self._node_theta_min = np.asarray(self.tree._node_theta_min, dtype=np.float64)
-        self._node_theta_max = np.asarray(self.tree._node_theta_max, dtype=np.float64)
-        self._node_phi_start = np.asarray(self.tree._node_phi_start, dtype=np.float64)
-        self._node_phi_width = np.asarray(self.tree._node_phi_width, dtype=np.float64)
-        self._radial_edges = np.asarray(self.tree._radial_edges, dtype=np.float64)
+        self._i0 = np.asarray(self._i0, dtype=np.int64)
+        self._i1 = np.asarray(self._i1, dtype=np.int64)
+        self._i2 = np.asarray(self._i2, dtype=np.int64)
+        self._node_depth = np.asarray(self._node_depth, dtype=np.int64)
+        self._node_i0 = np.asarray(self._node_i0, dtype=np.int64)
+        self._node_i1 = np.asarray(self._node_i1, dtype=np.int64)
+        self._node_i2 = np.asarray(self._node_i2, dtype=np.int64)
+        self._node_value = np.asarray(self._node_value, dtype=np.int64)
+        self._node_child = np.asarray(self._node_child, dtype=np.int64)
+        self._root_node_ids = np.asarray(self._root_node_ids, dtype=np.int64)
+        self._node_parent = np.asarray(self._node_parent, dtype=np.int64)
+        self._cell_node_id = np.asarray(self._cell_node_id, dtype=np.int64)
+        self._node_r_min = np.asarray(self._node_r_min, dtype=np.float64)
+        self._node_r_max = np.asarray(self._node_r_max, dtype=np.float64)
+        self._node_theta_min = np.asarray(self._node_theta_min, dtype=np.float64)
+        self._node_theta_max = np.asarray(self._node_theta_max, dtype=np.float64)
+        self._node_phi_start = np.asarray(self._node_phi_start, dtype=np.float64)
+        self._node_phi_width = np.asarray(self._node_phi_width, dtype=np.float64)
+        self._radial_edges = np.asarray(self._radial_edges, dtype=np.float64)
         n_bins = int(running_offset)
         bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
         for cid in np.flatnonzero(valid):
@@ -485,9 +480,9 @@ class _SphericalCellLookup:
         q = np.array(point, dtype=float).reshape(3)
         resolved = str(coord)
         if resolved == "xyz":
-            return self._lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
+            return _SphericalCellLookup._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
         if resolved == "rpa":
-            return self._lookup_rpa_cell_id(float(q[0]), float(q[1]), float(q[2]))
+            return _SphericalCellLookup._lookup_rpa_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
         raise ValueError("coord must be 'xyz' or 'rpa'.")
 
     def contains_cell(
@@ -502,7 +497,8 @@ class _SphericalCellLookup:
         q = np.array(point, dtype=float).reshape(3)
         resolved = str(coord)
         if resolved == "xyz":
-            return self._contains_xyz_cell(
+            return _SphericalCellLookup._contains_xyz_cell(
+                self,
                 int(cell_id),
                 float(q[0]),
                 float(q[1]),
@@ -510,7 +506,8 @@ class _SphericalCellLookup:
                 tol=float(tol),
             )
         if resolved == "rpa":
-            return self._contains_rpa_cell(
+            return _SphericalCellLookup._contains_rpa_cell(
+                self,
                 int(cell_id),
                 float(q[0]),
                 float(q[1]),
@@ -558,7 +555,7 @@ class _SphericalCellLookup:
         else:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return self._contains_rpa_cell(int(cell_id), r, polar, azimuth, tol=float(tol))
+        return _SphericalCellLookup._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
 
     def cell_step_hint(self, cell_id: int) -> float:
         """Return an initial step-size hint for Python ray tracing."""
@@ -579,7 +576,7 @@ class _SphericalCellLookup:
         else:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return self._lookup_rpa_cell_id(r, polar, azimuth)
+        return _SphericalCellLookup._lookup_rpa_cell_id(self, r, polar, azimuth)
 
     def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> LookupHit | None:
         """Build a `LookupHit` from an internal cell id."""
@@ -590,11 +587,11 @@ class _SphericalCellLookup:
         if level < 0 and not allow_invalid_level:
             return None
         if level < 0:
-            path_level = int(self.tree.max_level)
+            path_level = int(self.max_level)
         else:
             path_level = int(level)
             if path_level < 0:
-                raise ValueError(f"Derived negative level {level}; max_level={self.tree.max_level}.")
+                raise ValueError(f"Derived negative level {level}; max_level={self.max_level}.")
         cell_i0 = int(self._i0[chosen])
         cell_i1 = int(self._i1[chosen])
         cell_i2 = int(self._i2[chosen])
@@ -604,21 +601,6 @@ class _SphericalCellLookup:
             i0=cell_i0,
             i1=cell_i1,
             i2=cell_i2,
-            path=self._path(cell_i0, cell_i1, cell_i2, path_level),
+            path=_SphericalCellLookup._path(cell_i0, cell_i1, cell_i2, path_level),
             center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         )
-
-
-
-class SphericalOctree(_SphericalCellLookup, Octree):
-    """Octree specialization for spherical `(r, polar, azimuth)` datasets."""
-
-    TREE_COORD: ClassVar[str | None] = "rpa"
-
-    def build_lookup(
-        self,
-    ) -> None:
-        """Build lookup arrays for this spherical tree."""
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Call bind(...) before lookup.")
-        self._init_lookup_state(self)

@@ -11,6 +11,7 @@ from scipy.spatial import Delaunay
 
 from sample_data_helper import data_file
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 
 pytestmark = [
@@ -57,7 +58,8 @@ def test_build_and_query_runtime_guardrail() -> None:
     rng = np.random.default_rng(0)
 
     t0 = perf_counter()
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    tree = OctreeBuilder().build(ds)
+    interp = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
     build_s = perf_counter() - t0
 
     xyz = np.column_stack(
@@ -102,7 +104,7 @@ def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: 
     oct_query_times: list[float] = []
     oct_results: list[np.ndarray] = []
     t0 = perf_counter()
-    oct_interp = OctreeInterpolator(ds, [_RHO], tree_coord=tree_coord)
+    oct_interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord=tree_coord), [_RHO])
     for q in queries:
         t1 = perf_counter()
         out = np.asarray(

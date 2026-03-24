@@ -5,7 +5,7 @@ import pytest
 
 from batcamp import OCTREE_FILE_VERSION
 from batcamp import Octree
-from batcamp import SphericalOctree
+from batcamp import OctreeBuilder
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
@@ -29,7 +29,7 @@ def tree_dataset_pair() -> tuple[Octree, _FakeDataset]:
             Octree.Z_VAR: points[:, 2],
         },
     )
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     return tree, ds
 
 
@@ -40,7 +40,7 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     tree.save(path)
 
     loaded = Octree.load(path, ds=ds)
-    assert isinstance(loaded, SphericalOctree)
+    assert isinstance(loaded, Octree)
     assert loaded.leaf_shape == tree.leaf_shape
     assert loaded.root_shape == tree.root_shape
     assert loaded.level_counts == tree.level_counts

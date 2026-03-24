@@ -9,7 +9,6 @@ Cartesian backend are exact under this axis-aligned representation.
 
 from __future__ import annotations
 
-from typing import ClassVar
 from typing import NamedTuple
 
 import math
@@ -157,19 +156,18 @@ class _CartesianCellLookup:
     The accelerator stores each cell as an axis-aligned box in Cartesian space.
     """
 
-    def _init_lookup_state(self, tree: Octree) -> None:
+    def _init_lookup_state(self) -> None:
         """Build per-cell lookup arrays from a bound Cartesian tree.
 
         Cell geometry is reduced to per-axis min/max slab bounds.
         """
-        if tree.ds is None or tree.ds.corners is None:
+        if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        ds = tree.ds
+        ds = self.ds
         corners = np.array(ds.corners, dtype=np.int64)
         if not set(Octree.XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Lookup requires X/Y/Z variables.")
 
-        self.tree = tree
         self._corners = np.array(corners, dtype=np.int64)
         self._points = np.column_stack(
             (
@@ -208,9 +206,9 @@ class _CartesianCellLookup:
         )
 
         n_cells = int(self._corners.shape[0])
-        if tree.cell_levels is None or tree.cell_levels.shape[0] != n_cells:
+        if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
             raise ValueError("Cartesian lookup requires exact builder-provided cell_levels.")
-        self._cell_level = np.array(tree.cell_levels, dtype=np.int64)
+        self._cell_level = np.array(self.cell_levels, dtype=np.int64)
         self._cell_valid = self._cell_level >= 0
 
         required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
@@ -226,27 +224,27 @@ class _CartesianCellLookup:
             "_node_z_min",
             "_node_z_max",
         )
-        missing = [name for name in required if not hasattr(tree, name)]
+        missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Cartesian lookup requires builder-provided octree state: missing {missing}.")
-        self._i0 = np.asarray(tree._i0, dtype=np.int64)
-        self._i1 = np.asarray(tree._i1, dtype=np.int64)
-        self._i2 = np.asarray(tree._i2, dtype=np.int64)
-        self._node_depth = np.asarray(tree._node_depth, dtype=np.int64)
-        self._node_i0 = np.asarray(tree._node_i0, dtype=np.int64)
-        self._node_i1 = np.asarray(tree._node_i1, dtype=np.int64)
-        self._node_i2 = np.asarray(tree._node_i2, dtype=np.int64)
-        self._node_value = np.asarray(tree._node_value, dtype=np.int64)
-        self._node_child = np.asarray(tree._node_child, dtype=np.int64)
-        self._root_node_ids = np.asarray(tree._root_node_ids, dtype=np.int64)
-        self._node_parent = np.asarray(tree._node_parent, dtype=np.int64)
-        self._cell_node_id = np.asarray(tree._cell_node_id, dtype=np.int64)
-        self._node_x_min = np.asarray(tree._node_x_min, dtype=np.float64)
-        self._node_x_max = np.asarray(tree._node_x_max, dtype=np.float64)
-        self._node_y_min = np.asarray(tree._node_y_min, dtype=np.float64)
-        self._node_y_max = np.asarray(tree._node_y_max, dtype=np.float64)
-        self._node_z_min = np.asarray(tree._node_z_min, dtype=np.float64)
-        self._node_z_max = np.asarray(tree._node_z_max, dtype=np.float64)
+        self._i0 = np.asarray(self._i0, dtype=np.int64)
+        self._i1 = np.asarray(self._i1, dtype=np.int64)
+        self._i2 = np.asarray(self._i2, dtype=np.int64)
+        self._node_depth = np.asarray(self._node_depth, dtype=np.int64)
+        self._node_i0 = np.asarray(self._node_i0, dtype=np.int64)
+        self._node_i1 = np.asarray(self._node_i1, dtype=np.int64)
+        self._node_i2 = np.asarray(self._node_i2, dtype=np.int64)
+        self._node_value = np.asarray(self._node_value, dtype=np.int64)
+        self._node_child = np.asarray(self._node_child, dtype=np.int64)
+        self._root_node_ids = np.asarray(self._root_node_ids, dtype=np.int64)
+        self._node_parent = np.asarray(self._node_parent, dtype=np.int64)
+        self._cell_node_id = np.asarray(self._cell_node_id, dtype=np.int64)
+        self._node_x_min = np.asarray(self._node_x_min, dtype=np.float64)
+        self._node_x_max = np.asarray(self._node_x_max, dtype=np.float64)
+        self._node_y_min = np.asarray(self._node_y_min, dtype=np.float64)
+        self._node_y_max = np.asarray(self._node_y_max, dtype=np.float64)
+        self._node_z_min = np.asarray(self._node_z_min, dtype=np.float64)
+        self._node_z_max = np.asarray(self._node_z_max, dtype=np.float64)
         self._lookup_state = CartesianLookupKernelState(
             cell_x_min=self._cell_x_min,
             cell_x_max=self._cell_x_max,
@@ -324,7 +322,8 @@ class _CartesianCellLookup:
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
         q = np.array(point, dtype=float).reshape(3)
-        return self._contains_xyz_cell(
+        return _CartesianCellLookup._contains_xyz_cell(
+            self,
             int(cell_id),
             float(q[0]),
             float(q[1]),
@@ -343,7 +342,7 @@ class _CartesianCellLookup:
         if resolved != "xyz":
             raise ValueError("Cartesian lookup supports only coord='xyz'.")
         q = np.array(point, dtype=float).reshape(3)
-        return self._lookup_xyz_cell_id(float(q[0]), float(q[1]), float(q[2]))
+        return _CartesianCellLookup._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
 
     def _contains_xyz_cell(
         self,
@@ -391,11 +390,11 @@ class _CartesianCellLookup:
         if level < 0 and not allow_invalid_level:
             return None
         if level < 0:
-            path_level = int(self.tree.max_level)
+            path_level = int(self.max_level)
         else:
             path_level = int(level)
             if path_level < 0:
-                raise ValueError(f"Derived negative level {level}; max_level={self.tree.max_level}.")
+                raise ValueError(f"Derived negative level {level}; max_level={self.max_level}.")
         cell_i0 = int(self._i0[chosen])
         cell_i1 = int(self._i1[chosen])
         cell_i2 = int(self._i2[chosen])
@@ -405,22 +404,6 @@ class _CartesianCellLookup:
             i0=cell_i0,
             i1=cell_i1,
             i2=cell_i2,
-            path=self._path(cell_i0, cell_i1, cell_i2, path_level),
+            path=_CartesianCellLookup._path(cell_i0, cell_i1, cell_i2, path_level),
             center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         )
-
-class CartesianOctree(_CartesianCellLookup, Octree):
-    """Octree specialization for Cartesian `(x, y, z)` datasets.
-
-    For this backend, cells are represented as axis-aligned Cartesian boxes.
-    """
-
-    TREE_COORD: ClassVar[str | None] = "xyz"
-
-    def build_lookup(
-        self,
-    ) -> None:
-        """Build lookup arrays for this Cartesian tree."""
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Call bind(...) before lookup.")
-        self._init_lookup_state(self)

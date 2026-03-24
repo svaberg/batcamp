@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from tests.fake_dataset import FakeDataset
 from tests.fake_dataset import build_cartesian_hex_mesh
@@ -335,7 +336,7 @@ def main() -> None:
         raise ValueError("max_seconds_per_image must be positive.")
 
     for label, ds in cases:
-        interp = OctreeInterpolator(ds, ["Pattern"], tree_coord="xyz")
+        interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="xyz"), ["Pattern"])
         resolution = int(min_resolution)
         while resolution <= max_resolution:
             t0 = perf_counter()

@@ -495,7 +495,7 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     corners = np.asarray(getattr(tree, "_corners"), dtype=np.int64)
     points = np.asarray(getattr(tree, "_points"), dtype=float)
     centers = np.asarray(getattr(tree, "_cell_centers"), dtype=float)
-    lookup_state = tree.lookup_state
+    lookup_state = tree._lookup_state
     n_cells = int(corners.shape[0])
 
     face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
@@ -589,7 +589,8 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
 
 def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> CartesianRayCellGeometry:
     """Build truncated Cartesian ray-cell geometry from one frontier face_neighbors."""
-    points = np.asarray(tree.points, dtype=float)
+    tree._require_lookup()
+    points = np.asarray(tree._points, dtype=float)
     point_groups = _node_point_candidates(tree, face_neighbors)
     n_cells = int(face_neighbors.node_count)
 
@@ -635,7 +636,7 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
         cell_yden[node_id] = dy
         cell_zden[node_id] = dz
 
-    seed_lookup = tree.lookup_state
+    seed_lookup = tree._lookup_state
     if not isinstance(seed_lookup, CartesianLookupKernelState):
         raise TypeError(
             "Cartesian truncated ray geometry requires CartesianLookupKernelState; "
@@ -654,6 +655,8 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
         node_value=np.arange(n_cells, dtype=np.int64),
         node_child=np.full((n_cells, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_cells, dtype=np.int64),
+        node_parent=np.full(n_cells, -1, dtype=np.int64),
+        cell_node_id=np.arange(n_cells, dtype=np.int64),
         node_x_min=cell_x0,
         node_x_max=cell_x1,
         node_y_min=cell_y0,
@@ -677,7 +680,8 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
 
 def _build_spherical_ray_cell_geometry(tree: Octree, face_neighbors) -> SphericalRayCellGeometry:
     """Build truncated spherical ray-cell geometry from one frontier face_neighbors."""
-    points = np.asarray(tree.points, dtype=float)
+    tree._require_lookup()
+    points = np.asarray(tree._points, dtype=float)
     point_groups = _node_point_candidates(tree, face_neighbors)
     point_r = np.linalg.norm(points, axis=1)
     point_phi = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
@@ -793,6 +797,7 @@ def _build_sparse_spherical_seed_lookup_state(
     geometry: SphericalRayCellGeometry,
 ) -> SphericalLookupKernelState:
     """Build one sparse coarse spherical lookup state keyed by representative leaf ids."""
+    tree._require_lookup()
     n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
     rep_cell_ids = np.asarray(face_neighbors.node_cell_ids, dtype=np.int64)
     n_nodes = int(rep_cell_ids.shape[0])
@@ -815,11 +820,15 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_valid[cid] = True
         cell_centers[cid, :] = geometry.cell_centers[node_id, :]
 
-    if not isinstance(tree.lookup_state, SphericalLookupKernelState):
+    if not isinstance(tree._lookup_state, SphericalLookupKernelState):
         raise TypeError(
             "Spherical truncated ray geometry requires SphericalLookupKernelState; "
-            f"got {type(tree.lookup_state).__name__}."
+            f"got {type(tree._lookup_state).__name__}."
         )
+
+    cell_node_id = np.full(n_leaf_cells, -1, dtype=np.int64)
+    for node_id, rep_cid in enumerate(rep_cell_ids):
+        cell_node_id[int(rep_cid)] = int(node_id)
 
     return SphericalLookupKernelState(
         cell_r_min=cell_r_min,
@@ -835,6 +844,8 @@ def _build_sparse_spherical_seed_lookup_state(
         node_value=np.asarray(rep_cell_ids, dtype=np.int64),
         node_child=np.full((n_nodes, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_nodes, dtype=np.int64),
+        node_parent=np.full(n_nodes, -1, dtype=np.int64),
+        cell_node_id=cell_node_id,
         node_r_min=np.asarray(geometry.cell_r0, dtype=np.float64),
         node_r_max=np.asarray(geometry.cell_r0 + geometry.cell_rden, dtype=np.float64),
         node_theta_min=np.asarray(geometry.cell_t0, dtype=np.float64),
@@ -2268,7 +2279,7 @@ class OctreeRayTracer:
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
         _r_lo, r_hi = tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
-        self._seed_lookup_state = tree.lookup_state
+        self._seed_lookup_state = tree._lookup_state
         self._seed_cell_plane_state = None
 
         if int(self.max_level) >= int(tree.max_level):

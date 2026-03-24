@@ -440,12 +440,11 @@ def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> Octre
     if valid_levels.size == 0:
         raise ValueError("Octree contains no valid cell levels (all < 0).")
 
-    min_tree_level = int(np.min(valid_levels))
     max_tree_level = int(np.max(valid_levels))
     target_max_level = int(max_tree_level if max_level is None else max_level)
-    if target_max_level < min_tree_level or target_max_level > max_tree_level:
+    if target_max_level < 0 or target_max_level > max_tree_level:
         raise ValueError(
-            f"max_level={target_max_level} is outside [{min_tree_level}, {max_tree_level}] for this tree."
+            f"max_level={target_max_level} is outside [0, {max_tree_level}] for this tree."
         )
 
     levels, i0, i1, i2, node_cell_ids, cell_to_node_id = _frontier_nodes_from_octree(tree, target_max_level)

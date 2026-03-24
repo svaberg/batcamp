@@ -54,8 +54,8 @@ def test_loaded_tree_interpolator_match(advanced_context, tmp_path) -> None:
     tree.save(path)
     loaded = Octree.load(path, ds=ds)
 
-    interp_a = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
-    interp_b = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=loaded)
+    interp_a = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
+    interp_b = OctreeInterpolator(loaded, ["Rho [g/cm^3]"])
 
     queries = _select_center_queries(tree, n_query=64, seed=7)
     vals_a, cids_a = interp_a(queries, return_cell_ids=True)

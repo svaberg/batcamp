@@ -20,6 +20,7 @@ import pooch
 from batread.dataset import Dataset
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import FlatCamera
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
@@ -150,7 +151,7 @@ def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> tup
         return Octree.load(cache_path, ds=ds), "cache"
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    tree = Octree.from_dataset(ds)
+    tree = OctreeBuilder().build(ds)
     tree.save(cache_path)
     return tree, "build"
 
@@ -866,7 +867,7 @@ def main() -> None:
             detail=f"source={face_neighbors_source}",
         )
         progress.start(f"[{case.label}] build interpolator")
-        interp, interp_s = _time_call(OctreeInterpolator, ds, ["Rho [g/cm^3]"], tree=tree)
+        interp, interp_s = _time_call(OctreeInterpolator, tree, ["Rho [g/cm^3]"])
         progress.complete(f"[{case.label}] build interpolator", interp_s)
         progress.start(f"[{case.label}] build ray interpolator")
         ray, ray_s0 = _time_call(OctreeRayInterpolator, interp)

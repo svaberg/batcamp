@@ -6,6 +6,7 @@ import pytest
 from batread.dataset import Dataset
 
 from batcamp import OctreeInterpolator
+from batcamp import OctreeBuilder
 from batcamp import OctreeRayInterpolator
 from batcamp import OctreeRayTracer
 from batcamp.octree import Octree
@@ -33,7 +34,7 @@ def _diagnostic_ray_setup() -> tuple[np.ndarray, np.ndarray, float, float]:
 def _sc_interp() -> OctreeInterpolator:
     """Private test helper: shared SC interpolator for ray contract tests."""
     ds = Dataset.from_file(str(data_file("3d__var_4_n00044000.plt")))
-    return OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    return OctreeInterpolator(OctreeBuilder().build(ds), ["Rho [g/cm^3]"])
 
 
 def _integrate_rho2_with_rays(
@@ -157,7 +158,7 @@ def test_trace_and_sample_sc(_sc_interp: OctreeInterpolator) -> None:
 def test_rho2_matches_resample_baseline(file_name: str) -> None:
     """Ray contract: outside-start rays that hit data must integrate correctly."""
     ds = Dataset.from_file(str(data_file(file_name)))
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Rho [g/cm^3]"])
     ray = OctreeRayInterpolator(interp)
 
     dmin, dmax = interp.tree.domain_bounds(coord="xyz")
@@ -248,7 +249,7 @@ def test_fov_camera_vertical_extent_matches_requested_fov() -> None:
 def test_ray_interpolator_accepts_one_direction_per_ray() -> None:
     """Ray contract: per-ray directions from FOV camera go through the ray interpolator."""
     ds = _build_single_cell_trilinear_dataset()
-    interp = OctreeInterpolator(ds, ["TrilinearXY"], tree_coord="xyz")
+    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="xyz"), ["TrilinearXY"])
     ray = OctreeRayInterpolator(interp)
     camera = FovCamera(
         eye_xyz=np.array([-1.0, 0.5, 0.5], dtype=float),

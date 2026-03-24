@@ -5,6 +5,7 @@ import pytest
 from batread.dataset import Dataset
 
 from batcamp import Octree
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 from batcamp.ray import _ray_cell_geometry_for_max_level
@@ -164,7 +165,7 @@ def _dense_ray_oracle(
 def test_sample_rejects_bad_args() -> None:
     """Ray sampling should reject non-positive sample count and zero direction."""
     ds = _build_fake_dataset()
-    interp = OctreeInterpolator(ds, ["Scalar"])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Scalar"])
     ray = OctreeRayInterpolator(interp)
     with pytest.raises(ValueError, match="n_samples must be positive"):
         ray.sample(np.array([1.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0]), 0.0, 1.0, 0)
@@ -175,7 +176,7 @@ def test_sample_rejects_bad_args() -> None:
 def test_integrate_rejects_bad_args() -> None:
     """Bulk ray integration should validate origin shape, chunk size and interval."""
     ds = _build_fake_dataset()
-    interp = OctreeInterpolator(ds, ["Scalar"])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Scalar"])
     ray = OctreeRayInterpolator(interp)
     with pytest.raises(ValueError, match="origins_xyz must have shape"):
         ray.integrate_field_along_rays(np.array([1.0, 2.0]), np.array([1.0, 0.0, 0.0]), 0.0, 1.0)
@@ -194,8 +195,8 @@ def test_integrate_rejects_bad_args() -> None:
 def test_cartesian_outside_inward_traces_and_integrates() -> None:
     """Outside-start inward rays should enter the domain and produce valid arrays."""
     ds = _build_fake_cartesian_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(tree, ["Scalar"])
     ray = OctreeRayInterpolator(interp)
 
     dmin, dmax = tree.domain_bounds(coord="xyz")
@@ -226,8 +227,8 @@ def test_cartesian_outside_inward_traces_and_integrates() -> None:
 def test_spherical_outside_inward_traces_and_integrates() -> None:
     """Outside-start inward rays should trace/integrate on spherical trees too."""
     ds = _build_fake_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="rpa")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    interp = OctreeInterpolator(tree, ["Scalar"])
     ray = OctreeRayInterpolator(interp)
 
     dmin, dmax = tree.domain_bounds(coord="xyz")
@@ -253,8 +254,8 @@ def test_spherical_outside_inward_traces_and_integrates() -> None:
 def test_adaptive_midpoint_offsets_consistent() -> None:
     """Adaptive midpoint packing should return monotone offsets and matching lengths."""
     ds = _build_fake_cartesian_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(tree, ["Scalar"])
     ray = OctreeRayInterpolator(interp)
 
     origins = np.array(
@@ -282,8 +283,8 @@ def test_adaptive_midpoint_offsets_consistent() -> None:
 def test_midpoint_matches_exact_for_linear_field() -> None:
     """Midpoint quadrature should match exact integral for globally linear fields."""
     ds = _build_fake_cartesian_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(tree, ["Scalar"])
     ray = OctreeRayInterpolator(interp)
 
     origins = np.array(
@@ -305,8 +306,8 @@ def test_midpoint_matches_exact_for_linear_field() -> None:
 def test_direct_ray_integral_matches_exact_for_trilinear_field() -> None:
     """Direct ray integral should match the exact value on a trilinear field."""
     ds = _build_single_cell_trilinear_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["TrilinearXY"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(tree, ["TrilinearXY"])
     ray = OctreeRayInterpolator(interp)
 
     origin = np.array([0.0, 0.0, 0.5], dtype=float)
@@ -323,8 +324,8 @@ def test_cartesian_max_level_zero_matches_root_cell_interpolation() -> None:
     """`max_level=0` should match one-root-cell interpolation on a level-1 Cartesian mesh."""
     fine = _build_depth1_cartesian_dataset()
     coarse = _build_root_cartesian_dataset()
-    fine_interp = OctreeInterpolator(fine, ["Curved"], tree=Octree.from_dataset(fine, tree_coord="xyz"))
-    coarse_interp = OctreeInterpolator(coarse, ["Curved"], tree=Octree.from_dataset(coarse, tree_coord="xyz"))
+    fine_interp = OctreeInterpolator(OctreeBuilder().build(fine, tree_coord="xyz"), ["Curved"])
+    coarse_interp = OctreeInterpolator(OctreeBuilder().build(coarse, tree_coord="xyz"), ["Curved"])
 
     cut = OctreeRayInterpolator(fine_interp, max_level=0)
     root = OctreeRayInterpolator(coarse_interp)
@@ -343,7 +344,7 @@ def test_cartesian_max_level_zero_matches_root_cell_interpolation() -> None:
 def test_cartesian_max_level_full_matches_default() -> None:
     """Full-level Cartesian `max_level` should match the default ray path exactly."""
     fine = _build_depth1_cartesian_dataset()
-    interp = OctreeInterpolator(fine, ["Curved"], tree=Octree.from_dataset(fine, tree_coord="xyz"))
+    interp = OctreeInterpolator(OctreeBuilder().build(fine, tree_coord="xyz"), ["Curved"])
 
     default = OctreeRayInterpolator(interp)
     full = OctreeRayInterpolator(interp, max_level=int(interp.tree.max_level))
@@ -367,8 +368,8 @@ def test_spherical_max_level_zero_matches_root_cell_interpolation() -> None:
     """`max_level=0` should match one-root-cell interpolation on a level-1 spherical mesh."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
-    fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
-    coarse_interp = OctreeInterpolator(coarse, ["Scalar"], tree=Octree.from_dataset(coarse, tree_coord="rpa"))
+    fine_interp = OctreeInterpolator(OctreeBuilder().build(fine, tree_coord="rpa"), ["Scalar"])
+    coarse_interp = OctreeInterpolator(OctreeBuilder().build(coarse, tree_coord="rpa"), ["Scalar"])
 
     cut = OctreeRayInterpolator(fine_interp, max_level=0)
     root = OctreeRayInterpolator(coarse_interp)
@@ -392,7 +393,7 @@ def test_spherical_max_level_zero_geometry_matches_root_cells() -> None:
     """Spherical `max_level=0` geometry should reproduce the true root-cell corners."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     coarse = _build_fake_dataset(nr=1, ntheta=2, nphi=4)
-    tree = Octree.from_dataset(fine, tree_coord="rpa")
+    tree = OctreeBuilder().build(fine, tree_coord="rpa")
     geometry = _ray_cell_geometry_for_max_level(tree, 0)
 
     grouped = sorted(_corner_point_multiset(fine.points, geometry.corners[node_id]) for node_id in range(8))
@@ -404,7 +405,7 @@ def test_spherical_max_level_zero_geometry_matches_root_cells() -> None:
 def test_spherical_max_level_full_matches_default() -> None:
     """Full-level spherical `max_level` should match the default ray path exactly."""
     fine = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
-    interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
+    interp = OctreeInterpolator(OctreeBuilder().build(fine, tree_coord="rpa"), ["Scalar"])
 
     default = OctreeRayInterpolator(interp)
     full = OctreeRayInterpolator(interp, max_level=int(interp.tree.max_level))
@@ -428,8 +429,8 @@ def test_spherical_max_level_one_matches_level_one_mesh() -> None:
     """Spherical `max_level=1` should match a true level-1 mesh on the same rays."""
     fine = _build_fake_dataset(nr=4, ntheta=8, nphi=16)
     coarse = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
-    fine_interp = OctreeInterpolator(fine, ["Scalar"], tree=Octree.from_dataset(fine, tree_coord="rpa"))
-    coarse_interp = OctreeInterpolator(coarse, ["Scalar"], tree=Octree.from_dataset(coarse, tree_coord="rpa"))
+    fine_interp = OctreeInterpolator(OctreeBuilder().build(fine, tree_coord="rpa"), ["Scalar"])
+    coarse_interp = OctreeInterpolator(OctreeBuilder().build(coarse, tree_coord="rpa"), ["Scalar"])
 
     cut = OctreeRayInterpolator(fine_interp, max_level=1)
     ref = OctreeRayInterpolator(coarse_interp)
@@ -452,7 +453,7 @@ def test_spherical_max_level_one_matches_level_one_mesh() -> None:
 def test_example_specific_failing_ray_matches_dense_oracle() -> None:
     """Provided example: known bad 8x8 ray should match a dense line-sampling oracle."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Rho [g/cm^3]"])
     ray = OctreeRayInterpolator(interp)
 
     dmin, dmax = interp.tree.domain_bounds(coord="xyz")
@@ -472,7 +473,7 @@ def test_example_specific_failing_ray_matches_dense_oracle() -> None:
 def test_example_nan_ray_should_not_miss_finite_grid_signal() -> None:
     """Provided example: known `grid_pos_ray_nan` ray should stay finite."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Rho [g/cm^3]"])
     ray = OctreeRayInterpolator(interp)
 
     dmin, dmax = interp.tree.domain_bounds(coord="xyz")
@@ -498,8 +499,8 @@ def test_example_nan_ray_should_not_miss_finite_grid_signal() -> None:
 def test_vector_integrals_shape_on_all_miss() -> None:
     """Vector ray integration should keep `(n_rays, n_components)` shape on all misses."""
     ds = _build_fake_cartesian_dataset()
-    tree = Octree.from_dataset(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(ds, ["Scalar", "Scalar2"], tree=tree)
+    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    interp = OctreeInterpolator(tree, ["Scalar", "Scalar2"])
     ray = OctreeRayInterpolator(interp)
 
     origins = np.array([[10.0, 10.0, 10.0], [20.0, 20.0, 20.0]], dtype=float)
