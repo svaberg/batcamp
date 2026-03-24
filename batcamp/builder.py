@@ -153,6 +153,96 @@ def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
         )
 
 
+def _build_node_arrays(
+    depths: np.ndarray,
+    i0: np.ndarray,
+    i1: np.ndarray,
+    i2: np.ndarray,
+    leaf_value: np.ndarray,
+    *,
+    tree_depth: int,
+    label: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build sorted occupied-node arrays from exact leaf addresses."""
+    leaf_depth = np.asarray(depths, dtype=np.int64)
+    leaf_i0 = np.asarray(i0, dtype=np.int64)
+    leaf_i1 = np.asarray(i1, dtype=np.int64)
+    leaf_i2 = np.asarray(i2, dtype=np.int64)
+    leaf_value_arr = np.asarray(leaf_value, dtype=np.int64)
+
+    leaf_order = np.lexsort((leaf_i2, leaf_i1, leaf_i0, leaf_depth))
+    leaf_depth = leaf_depth[leaf_order]
+    leaf_i0 = leaf_i0[leaf_order]
+    leaf_i1 = leaf_i1[leaf_order]
+    leaf_i2 = leaf_i2[leaf_order]
+    leaf_value_arr = leaf_value_arr[leaf_order]
+
+    same_leaf = (
+        (leaf_depth[1:] == leaf_depth[:-1])
+        & (leaf_i0[1:] == leaf_i0[:-1])
+        & (leaf_i1[1:] == leaf_i1[:-1])
+        & (leaf_i2[1:] == leaf_i2[:-1])
+    )
+    if np.any(same_leaf):
+        dup = int(np.flatnonzero(same_leaf)[0])
+        raise ValueError(
+            f"{label} cells overlap at octree address "
+            f"{(int(leaf_depth[dup]), int(leaf_i0[dup]), int(leaf_i1[dup]), int(leaf_i2[dup]))}."
+        )
+
+    node_depth_parts = [leaf_depth]
+    node_i0_parts = [leaf_i0]
+    node_i1_parts = [leaf_i1]
+    node_i2_parts = [leaf_i2]
+    node_value_parts = [leaf_value_arr]
+    for parent_depth in range(int(tree_depth)):
+        mask = depths > int(parent_depth)
+        if not np.any(mask):
+            continue
+        up = np.asarray(depths[mask] - int(parent_depth), dtype=np.int64)
+        parent_nodes = np.column_stack(
+            (
+                np.full(int(np.count_nonzero(mask)), int(parent_depth), dtype=np.int64),
+                np.right_shift(i0[mask], up),
+                np.right_shift(i1[mask], up),
+                np.right_shift(i2[mask], up),
+            )
+        )
+        parent_nodes = np.unique(parent_nodes, axis=0)
+        node_depth_parts.append(parent_nodes[:, 0].astype(np.int64, copy=False))
+        node_i0_parts.append(parent_nodes[:, 1].astype(np.int64, copy=False))
+        node_i1_parts.append(parent_nodes[:, 2].astype(np.int64, copy=False))
+        node_i2_parts.append(parent_nodes[:, 3].astype(np.int64, copy=False))
+        node_value_parts.append(np.full(parent_nodes.shape[0], -2, dtype=np.int64))
+
+    node_depth = np.concatenate(node_depth_parts)
+    node_i0 = np.concatenate(node_i0_parts)
+    node_i1 = np.concatenate(node_i1_parts)
+    node_i2 = np.concatenate(node_i2_parts)
+    node_value = np.concatenate(node_value_parts)
+    node_order = np.lexsort((node_i2, node_i1, node_i0, node_depth))
+    node_depth = node_depth[node_order]
+    node_i0 = node_i0[node_order]
+    node_i1 = node_i1[node_order]
+    node_i2 = node_i2[node_order]
+    node_value = node_value[node_order]
+
+    same_node = (
+        (node_depth[1:] == node_depth[:-1])
+        & (node_i0[1:] == node_i0[:-1])
+        & (node_i1[1:] == node_i1[:-1])
+        & (node_i2[1:] == node_i2[:-1])
+    )
+    if np.any(same_node):
+        dup = int(np.flatnonzero(same_node)[0])
+        raise ValueError(
+            f"{label} cells overlap across parent/child addresses at "
+            f"({int(node_depth[dup])}, {int(node_i0[dup])}, {int(node_i1[dup])}, {int(node_i2[dup])})."
+        )
+
+    return node_depth, node_i0, node_i1, node_i2, node_value
+
+
 class OctreeBuilder:
     """Build octrees from dataset cell connectivity."""
 
@@ -285,7 +375,12 @@ class OctreeBuilder:
             max_level=int(max_level + level_offset),
             tree_coord=tree_coord,
             cell_levels=levels_abs,
+            axis_rho_tol=float(axis_rho_tol),
         )
+        if tree_coord == "rpa":
+            self._rpa_builder.populate_tree_state(tree, ds, corners_arr)
+        else:
+            self._xyz_builder.populate_tree_state(tree, ds, corners_arr)
         if bind:
             tree.bind(ds, axis_rho_tol=axis_rho_tol)
         return tree

@@ -21,14 +21,36 @@ class OctreeArrayState:
     """Array payload persisted alongside octree core metadata."""
 
     cell_levels: np.ndarray
+    cell_i0: np.ndarray
+    cell_i1: np.ndarray
+    cell_i2: np.ndarray
+    node_depth: np.ndarray
+    node_i0: np.ndarray
+    node_i1: np.ndarray
+    node_i2: np.ndarray
+    node_value: np.ndarray
+    radial_edges: np.ndarray
 
     @classmethod
     def from_tree(cls, tree: Octree) -> "OctreeArrayState":
         """Capture array payload from one in-memory tree."""
         if tree.cell_levels is None:
             raise ValueError("Cannot persist octree without cell_levels.")
+        required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
+        missing = [name for name in required if not hasattr(tree, name)]
+        if missing:
+            raise ValueError(f"Cannot persist octree without exact tree state: missing {missing}.")
         return cls(
             cell_levels=np.asarray(tree.cell_levels, dtype=np.int64),
+            cell_i0=np.asarray(tree._i0, dtype=np.int64),
+            cell_i1=np.asarray(tree._i1, dtype=np.int64),
+            cell_i2=np.asarray(tree._i2, dtype=np.int64),
+            node_depth=np.asarray(tree._node_depth, dtype=np.int64),
+            node_i0=np.asarray(tree._node_i0, dtype=np.int64),
+            node_i1=np.asarray(tree._node_i1, dtype=np.int64),
+            node_i2=np.asarray(tree._node_i2, dtype=np.int64),
+            node_value=np.asarray(tree._node_value, dtype=np.int64),
+            radial_edges=np.asarray(getattr(tree, "_radial_edges", np.empty((0,), dtype=np.float64)), dtype=np.float64),
         )
 
 
@@ -79,6 +101,15 @@ class OctreePersistenceState:
             max_level=int(self.max_level),
             axis_rho_tol=float(self.axis_rho_tol),
             cell_levels=np.asarray(arrays.cell_levels, dtype=np.int64),
+            cell_i0=np.asarray(arrays.cell_i0, dtype=np.int64),
+            cell_i1=np.asarray(arrays.cell_i1, dtype=np.int64),
+            cell_i2=np.asarray(arrays.cell_i2, dtype=np.int64),
+            node_depth=np.asarray(arrays.node_depth, dtype=np.int64),
+            node_i0=np.asarray(arrays.node_i0, dtype=np.int64),
+            node_i1=np.asarray(arrays.node_i1, dtype=np.int64),
+            node_i2=np.asarray(arrays.node_i2, dtype=np.int64),
+            node_value=np.asarray(arrays.node_value, dtype=np.int64),
+            radial_edges=np.asarray(arrays.radial_edges, dtype=np.float64),
         )
 
     @classmethod
@@ -95,6 +126,15 @@ class OctreePersistenceState:
             "max_level",
             "axis_rho_tol",
             "cell_levels",
+            "cell_i0",
+            "cell_i1",
+            "cell_i2",
+            "node_depth",
+            "node_i0",
+            "node_i1",
+            "node_i2",
+            "node_value",
+            "radial_edges",
         )
         with np.load(path, allow_pickle=False) as data:
             missing = [key for key in required if key not in data]
@@ -127,7 +167,18 @@ class OctreePersistenceState:
                 tree_coord=tree_coord,
                 axis_rho_tol=float(data["axis_rho_tol"]),
             )
-            arrays = OctreeArrayState(cell_levels=np.asarray(data["cell_levels"], dtype=np.int64))
+            arrays = OctreeArrayState(
+                cell_levels=np.asarray(data["cell_levels"], dtype=np.int64),
+                cell_i0=np.asarray(data["cell_i0"], dtype=np.int64),
+                cell_i1=np.asarray(data["cell_i1"], dtype=np.int64),
+                cell_i2=np.asarray(data["cell_i2"], dtype=np.int64),
+                node_depth=np.asarray(data["node_depth"], dtype=np.int64),
+                node_i0=np.asarray(data["node_i0"], dtype=np.int64),
+                node_i1=np.asarray(data["node_i1"], dtype=np.int64),
+                node_i2=np.asarray(data["node_i2"], dtype=np.int64),
+                node_value=np.asarray(data["node_value"], dtype=np.int64),
+                radial_edges=np.asarray(data["radial_edges"], dtype=np.float64),
+            )
             return state, arrays
 
     def instantiate_tree(
@@ -137,7 +188,7 @@ class OctreePersistenceState:
         arrays: OctreeArrayState,
     ) -> Octree:
         """Instantiate one octree object from loaded metadata."""
-        return tree_cls(
+        tree = tree_cls(
             leaf_shape=self.leaf_shape,
             root_shape=self.root_shape,
             is_full=self.is_full,
@@ -148,3 +199,13 @@ class OctreePersistenceState:
             cell_levels=arrays.cell_levels,
             axis_rho_tol=self.axis_rho_tol,
         )
+        tree._i0 = np.asarray(arrays.cell_i0, dtype=np.int64)
+        tree._i1 = np.asarray(arrays.cell_i1, dtype=np.int64)
+        tree._i2 = np.asarray(arrays.cell_i2, dtype=np.int64)
+        tree._node_depth = np.asarray(arrays.node_depth, dtype=np.int64)
+        tree._node_i0 = np.asarray(arrays.node_i0, dtype=np.int64)
+        tree._node_i1 = np.asarray(arrays.node_i1, dtype=np.int64)
+        tree._node_i2 = np.asarray(arrays.node_i2, dtype=np.int64)
+        tree._node_value = np.asarray(arrays.node_value, dtype=np.int64)
+        tree._radial_edges = np.asarray(arrays.radial_edges, dtype=np.float64)
+        return tree

@@ -2,20 +2,33 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from batread.dataset import Dataset
 
-from sample_data_helper import data_file
 from batcamp import OCTREE_FILE_VERSION
 from batcamp import Octree
 from batcamp import SphericalOctree
+from fake_dataset import FakeDataset as _FakeDataset
+from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
 
 @pytest.fixture(scope="module")
-def tree_dataset_pair() -> tuple[Octree, Dataset]:
-    """Return one built octree and source dataset for persistence tests."""
-    input_file = data_file("3d__var_4_n00005000.plt")
-    assert input_file.exists(), f"Missing sample file: {input_file}"
-    ds = Dataset.from_file(str(input_file))
+def tree_dataset_pair() -> tuple[Octree, _FakeDataset]:
+    """Return one synthetic spherical octree and source dataset for persistence tests."""
+    points, corners = _build_spherical_hex_mesh(
+        nr=2,
+        ntheta=4,
+        nphi=8,
+        r_min=1.0,
+        r_max=3.0,
+    )
+    ds = _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: points[:, 0],
+            Octree.Y_VAR: points[:, 1],
+            Octree.Z_VAR: points[:, 2],
+        },
+    )
     tree = Octree.from_dataset(ds, tree_coord="rpa")
     return tree, ds
 
@@ -36,6 +49,12 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
 
     assert loaded.cell_levels is not None and tree.cell_levels is not None
     assert np.array_equal(loaded.cell_levels, tree.cell_levels)
+    assert np.array_equal(np.asarray(loaded._i0, dtype=np.int64), np.asarray(tree._i0, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._i1, dtype=np.int64), np.asarray(tree._i1, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._i2, dtype=np.int64), np.asarray(tree._i2, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._node_depth, dtype=np.int64), np.asarray(tree._node_depth, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._node_value, dtype=np.int64), np.asarray(tree._node_value, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
     hit_tree = tree.lookup_point(q_xyz, coord="xyz")

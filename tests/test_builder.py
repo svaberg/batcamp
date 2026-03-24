@@ -472,6 +472,21 @@ def test_regular_spherical_tree_uses_absolute_levels() -> None:
     assert np.all(tree.cell_levels == tree.max_level)
 
 
+def test_build_materializes_exact_tree_state_before_lookup() -> None:
+    """Builder should attach exact tree indices before lookup is ever built."""
+    xyz_tree = OctreeBuilder()._build(_build_regular_xyz_dataset(), tree_coord="xyz", bind=False)
+    assert xyz_tree.cell_levels is not None
+    assert np.asarray(xyz_tree._i0, dtype=np.int64).shape == xyz_tree.cell_levels.shape
+    assert np.asarray(xyz_tree._node_depth, dtype=np.int64).ndim == 1
+    assert np.asarray(xyz_tree._radial_edges, dtype=np.float64).size == 0
+
+    rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa", bind=False)
+    assert rpa_tree.cell_levels is not None
+    assert np.asarray(rpa_tree._i0, dtype=np.int64).shape == rpa_tree.cell_levels.shape
+    assert np.asarray(rpa_tree._node_depth, dtype=np.int64).ndim == 1
+    assert np.asarray(rpa_tree._radial_edges, dtype=np.float64).size == int(rpa_tree.leaf_shape[0]) + 1
+
+
 def test_regular_spherical_lookup_materializes_exact_indices() -> None:
     """Regular spherical grids should expose exact root-relative cell indices."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
@@ -484,17 +499,16 @@ def test_regular_spherical_lookup_materializes_exact_indices() -> None:
 
 
 def test_spherical_lookup_rejects_non_exact_geometry() -> None:
-    """Irregular spherical geometry should fail instead of fabricating octree addresses."""
+    """Irregular spherical geometry should fail in the builder."""
     regular = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(regular)
-    tree = OctreeBuilder()._build(
-        _build_irregular_spherical_dataset(),
-        tree_coord="rpa",
-        cell_levels=cell_levels,
-        bind=True,
-    )
     with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
-        _ = tree.lookup_state
+        OctreeBuilder()._build(
+            _build_irregular_spherical_dataset(),
+            tree_coord="rpa",
+            cell_levels=cell_levels,
+            bind=True,
+        )
 
 
 def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
@@ -525,14 +539,8 @@ def test_build_bind_false_returns_unbound_until_bind() -> None:
 
 def test_build_bind_false_stores_tree_coord() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
-    ds = _build_regular_dataset()
-    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
-    tree = OctreeBuilder()._build(
-        ds,
-        tree_coord="xyz",
-        cell_levels=cell_levels,
-        bind=False,
-    )
+    ds = _build_regular_xyz_dataset()
+    tree = OctreeBuilder()._build(ds, tree_coord="xyz", bind=False)
     assert isinstance(tree, CartesianOctree)
     assert tree.tree_coord == "xyz"
 
@@ -571,8 +579,7 @@ def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
 
 
 def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:
-    """Gappy spherical shells are not supported as one exact octree lookup grid."""
+    """Gappy spherical shells should be rejected by the builder."""
     ds = _build_disjoint_spherical_shell_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     with pytest.raises(ValueError, match="radial edge count does not match leaf_shape"):
-        _ = tree.lookup_state
+        OctreeBuilder().build(ds, tree_coord="rpa")

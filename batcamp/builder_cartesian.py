@@ -7,6 +7,7 @@ import numpy as np
 from batread.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
+from .builder import _build_node_arrays
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
 from .octree import Octree
@@ -212,3 +213,153 @@ class CartesianOctreeBuilder:
                 f"Invalid finest Cartesian shape inferred: n_x={n_x}, n_y={n_y}, n_z={n_z}."
             )
         return n_x, n_y, n_z
+
+    @staticmethod
+    def populate_tree_state(
+        tree: Octree,
+        ds: Dataset,
+        corners: np.ndarray,
+    ) -> None:
+        """Attach exact Cartesian octree addresses to one built tree."""
+        if tree.cell_levels is None:
+            raise ValueError("Cartesian tree state requires cell_levels.")
+
+        points = np.column_stack(
+            (
+                np.asarray(ds[Octree.X_VAR], dtype=float),
+                np.asarray(ds[Octree.Y_VAR], dtype=float),
+                np.asarray(ds[Octree.Z_VAR], dtype=float),
+            )
+        )
+        cell_xyz = points[np.asarray(corners, dtype=np.int64)]
+        cell_x_min = np.min(cell_xyz[:, :, 0], axis=1)
+        cell_x_max = np.max(cell_xyz[:, :, 0], axis=1)
+        cell_y_min = np.min(cell_xyz[:, :, 1], axis=1)
+        cell_y_max = np.max(cell_xyz[:, :, 1], axis=1)
+        cell_z_min = np.min(cell_xyz[:, :, 2], axis=1)
+        cell_z_max = np.max(cell_xyz[:, :, 2], axis=1)
+
+        xyz_min = np.array(
+            [
+                float(np.min(cell_x_min)),
+                float(np.min(cell_y_min)),
+                float(np.min(cell_z_min)),
+            ],
+            dtype=float,
+        )
+        xyz_max = np.array(
+            [
+                float(np.max(cell_x_max)),
+                float(np.max(cell_y_max)),
+                float(np.max(cell_z_max)),
+            ],
+            dtype=float,
+        )
+        xyz_span = np.maximum(xyz_max - xyz_min, np.finfo(float).tiny)
+        leaf_shape = np.asarray(tree.leaf_shape, dtype=np.int64)
+        fine_step = xyz_span / np.asarray(leaf_shape, dtype=float)
+        float32_eps = float(np.finfo(np.float32).eps)
+        axis_tol = np.empty(3, dtype=float)
+        for k in range(3):
+            coord_scale = max(abs(float(xyz_min[k])), abs(float(xyz_max[k])), 1.0)
+            axis_tol[k] = min(
+                0.25 * float(fine_step[k]),
+                max(8.0 * float32_eps * coord_scale, 1e-9 * max(float(xyz_span[k]), 1.0)),
+            )
+
+        levels = np.asarray(tree.cell_levels, dtype=np.int64)
+        valid_ids = np.flatnonzero(levels >= 0).astype(np.int64)
+        if valid_ids.size == 0:
+            raise ValueError("Cartesian tree state requires at least one valid cell level.")
+
+        depths = np.asarray(levels[valid_ids], dtype=np.int64)
+        tree_depth = int(tree.max_level)
+        shifts = np.asarray(tree_depth - depths, dtype=np.int64)
+        if np.any(shifts < 0):
+            bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
+            raise ValueError(f"Cartesian cell {bad} depth exceeds tree_depth={tree_depth}.")
+        width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
+
+        x0_f = np.rint((cell_x_min[valid_ids] - float(xyz_min[0])) / float(fine_step[0])).astype(np.int64)
+        x1_f = np.rint((cell_x_max[valid_ids] - float(xyz_min[0])) / float(fine_step[0])).astype(np.int64)
+        y0_f = np.rint((cell_y_min[valid_ids] - float(xyz_min[1])) / float(fine_step[1])).astype(np.int64)
+        y1_f = np.rint((cell_y_max[valid_ids] - float(xyz_min[1])) / float(fine_step[1])).astype(np.int64)
+        z0_f = np.rint((cell_z_min[valid_ids] - float(xyz_min[2])) / float(fine_step[2])).astype(np.int64)
+        z1_f = np.rint((cell_z_max[valid_ids] - float(xyz_min[2])) / float(fine_step[2])).astype(np.int64)
+
+        fine_n0 = int(leaf_shape[0])
+        fine_n1 = int(leaf_shape[1])
+        fine_n2 = int(leaf_shape[2])
+        in_bounds = (
+            (x0_f >= 0) & (x1_f <= fine_n0)
+            & (y0_f >= 0) & (y1_f <= fine_n1)
+            & (z0_f >= 0) & (z1_f <= fine_n2)
+        )
+        if not np.all(in_bounds):
+            bad = int(valid_ids[np.flatnonzero(~in_bounds)[0]])
+            raise ValueError(f"Cartesian cell {bad} address is outside inferred grid bounds.")
+
+        spans_ok = (
+            ((x1_f - x0_f) == width_units)
+            & ((y1_f - y0_f) == width_units)
+            & ((z1_f - z0_f) == width_units)
+        )
+        if not np.all(spans_ok):
+            bad = int(valid_ids[np.flatnonzero(~spans_ok)[0]])
+            raise ValueError(f"Cartesian cell {bad} width does not match inferred level {int(levels[bad])}.")
+
+        aligned = (
+            ((x0_f % width_units) == 0)
+            & ((y0_f % width_units) == 0)
+            & ((z0_f % width_units) == 0)
+        )
+        if not np.all(aligned):
+            bad = int(valid_ids[np.flatnonzero(~aligned)[0]])
+            raise ValueError(f"Cartesian cell {bad} fine-grid origin is not aligned to its inferred level.")
+
+        x0_snap = float(xyz_min[0]) + x0_f * float(fine_step[0])
+        x1_snap = float(xyz_min[0]) + x1_f * float(fine_step[0])
+        y0_snap = float(xyz_min[1]) + y0_f * float(fine_step[1])
+        y1_snap = float(xyz_min[1]) + y1_f * float(fine_step[1])
+        z0_snap = float(xyz_min[2]) + z0_f * float(fine_step[2])
+        z1_snap = float(xyz_min[2]) + z1_f * float(fine_step[2])
+        snap_ok = (
+            np.isclose(cell_x_min[valid_ids], x0_snap, rtol=0.0, atol=float(axis_tol[0]))
+            & np.isclose(cell_x_max[valid_ids], x1_snap, rtol=0.0, atol=float(axis_tol[0]))
+            & np.isclose(cell_y_min[valid_ids], y0_snap, rtol=0.0, atol=float(axis_tol[1]))
+            & np.isclose(cell_y_max[valid_ids], y1_snap, rtol=0.0, atol=float(axis_tol[1]))
+            & np.isclose(cell_z_min[valid_ids], z0_snap, rtol=0.0, atol=float(axis_tol[2]))
+            & np.isclose(cell_z_max[valid_ids], z1_snap, rtol=0.0, atol=float(axis_tol[2]))
+        )
+        if not np.all(snap_ok):
+            bad = int(valid_ids[np.flatnonzero(~snap_ok)[0]])
+            raise ValueError(f"Cartesian cell {bad} bounds do not align with inferred octree grid.")
+
+        cell_i0 = np.full(levels.shape[0], -1, dtype=np.int64)
+        cell_i1 = np.full(levels.shape[0], -1, dtype=np.int64)
+        cell_i2 = np.full(levels.shape[0], -1, dtype=np.int64)
+        i0 = np.right_shift(x0_f, shifts)
+        i1 = np.right_shift(y0_f, shifts)
+        i2 = np.right_shift(z0_f, shifts)
+        cell_i0[valid_ids] = i0
+        cell_i1[valid_ids] = i1
+        cell_i2[valid_ids] = i2
+
+        node_depth, node_i0, node_i1, node_i2, node_value = _build_node_arrays(
+            depths,
+            i0,
+            i1,
+            i2,
+            valid_ids,
+            tree_depth=tree_depth,
+            label="Cartesian",
+        )
+        tree._i0 = cell_i0
+        tree._i1 = cell_i1
+        tree._i2 = cell_i2
+        tree._node_depth = node_depth
+        tree._node_i0 = node_i0
+        tree._node_i1 = node_i1
+        tree._node_i2 = node_i2
+        tree._node_value = node_value
+        tree._radial_edges = np.empty((0,), dtype=np.float64)
