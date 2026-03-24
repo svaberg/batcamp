@@ -59,6 +59,7 @@ class SphericalLookupKernelState(NamedTuple):
     cell_centers: np.ndarray
     r_min: float
     r_max: float
+    radial_edges: np.ndarray
     max_radius: int
     leaf_shape: np.ndarray
     tree_depth: int
@@ -75,11 +76,43 @@ class SphericalLookupKernelState(NamedTuple):
 @njit(cache=True)
 def _lookup_axis_index(q: float, q_min: float, q_span: float, n_fine: int) -> int:
     """Map one scalar coordinate to a finest-grid index, clamped to bounds."""
-    idx = int(math.floor(((q - q_min) / q_span) * n_fine))
+    pos = ((q - q_min) / q_span) * n_fine
+    if pos <= 0.0:
+        return 0
+    if pos >= n_fine:
+        return int(n_fine - 1)
+    # On an exact shared boundary, give ownership to the lower-index cell.
+    idx = int(math.ceil(pos)) - 1
     if idx < 0:
         return 0
     if idx >= n_fine:
         return int(n_fine - 1)
+    return idx
+
+
+@njit(cache=True)
+def _lookup_interval_index(q: float, edges: np.ndarray) -> int:
+    """Map one scalar coordinate to the interval index of a sorted edge array."""
+    n_bins = int(edges.shape[0]) - 1
+    if n_bins <= 0:
+        return -1
+    if q <= edges[0]:
+        return 0
+    if q >= edges[n_bins]:
+        return int(n_bins - 1)
+    lo = 0
+    hi = int(edges.shape[0])
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if q <= edges[mid]:
+            hi = mid
+        else:
+            lo = mid + 1
+    idx = lo - 1
+    if idx < 0:
+        return 0
+    if idx >= n_bins:
+        return int(n_bins - 1)
     return idx
 
 
@@ -146,6 +179,8 @@ def _contains_rpa_cell(
         return False
     if polar < (lookup_state.cell_theta_min[cid] - tol) or polar > (lookup_state.cell_theta_max[cid] + tol):
         return False
+    if abs(r * math.sin(polar)) <= tol:
+        return True
     width = lookup_state.cell_phi_width[cid]
     dphi = (azimuth - lookup_state.cell_phi_start[cid]) % _TWO_PI
     if width >= (_TWO_PI - tol):
@@ -178,33 +213,39 @@ def _lookup_rpa_cell_id_kernel(
     ):
         return int(prev_cid)
 
-    if lookup_state.node_value.shape[0] > 0 and int(lookup_state.tree_depth) >= 0:
-        fine_i0 = _lookup_axis_index(
-            r,
-            lookup_state.r_min,
-            max(lookup_state.r_max - lookup_state.r_min, np.finfo(np.float64).tiny),
-            int(lookup_state.leaf_shape[0]),
-        )
-        fine_i1 = _lookup_axis_index(
-            polar,
-            0.0,
-            math.pi,
-            int(lookup_state.leaf_shape[1]),
-        )
-        fine_i2 = _lookup_axis_index(
-            azimuth,
-            0.0,
-            _TWO_PI,
-            int(lookup_state.leaf_shape[2]),
-        )
+    fine_i0 = _lookup_axis_index(
+        r,
+        lookup_state.r_min,
+        max(lookup_state.r_max - lookup_state.r_min, np.finfo(np.float64).tiny),
+        int(lookup_state.leaf_shape[0]),
+    )
+    if lookup_state.radial_edges.shape[0] > 1:
+        fine_i0 = _lookup_interval_index(r, lookup_state.radial_edges)
+    fine_i1 = _lookup_axis_index(
+        polar,
+        0.0,
+        math.pi,
+        int(lookup_state.leaf_shape[1]),
+    )
+    fine_i2 = _lookup_axis_index(
+        azimuth,
+        0.0,
+        _TWO_PI,
+        int(lookup_state.leaf_shape[2]),
+    )
 
-        tree_depth = int(lookup_state.tree_depth)
+    tree_depth = int(lookup_state.tree_depth)
+    if abs(r * math.sin(polar)) <= _LOOKUP_CONTAIN_TOL:
         for depth in range(tree_depth + 1):
             shift = tree_depth - depth
             i0 = fine_i0 >> shift
             i1 = fine_i1 >> shift
-            i2 = fine_i2 >> shift
-            node_value = _find_node_value(depth, i0, i1, i2, lookup_state)
+            nphi = int(lookup_state.leaf_shape[2]) >> shift
+            node_value = _MISSING_NODE_VALUE
+            for i2 in range(nphi):
+                node_value = _find_node_value(depth, i0, i1, i2, lookup_state)
+                if node_value != _MISSING_NODE_VALUE:
+                    break
             if node_value == _MISSING_NODE_VALUE:
                 return -1
             if node_value >= 0:
@@ -212,75 +253,51 @@ def _lookup_rpa_cell_id_kernel(
                 if _contains_rpa_cell(cid, r, polar, azimuth, lookup_state):
                     return cid
                 return -1
+        return -1
 
-    sin_polar = math.sin(polar)
-    qx = r * sin_polar * math.cos(azimuth)
-    qy = r * sin_polar * math.sin(azimuth)
-    qz = r * math.cos(polar)
-
-    for radius in range(lookup_state.max_radius + 1):
-        for level_index in range(lookup_state.levels_desc.shape[0]):
-            level = int(lookup_state.levels_desc[level_index])
-            ntheta = int(lookup_state.shape_table[level, 1])
-            nphi = int(lookup_state.shape_table[level, 2])
-            if ntheta <= 0 or nphi <= 0:
-                continue
-
-            dtheta = lookup_state.dtheta_table[level]
-            dphi = lookup_state.dphi_table[level]
-            if not (math.isfinite(dtheta) and math.isfinite(dphi) and dtheta > 0.0 and dphi > 0.0):
-                continue
-
-            ipolar = int(math.floor(polar / dtheta))
-            iazimuth = int(math.floor(azimuth / dphi))
-            if ipolar < 0:
-                ipolar = 0
-            elif ipolar >= ntheta:
-                ipolar = ntheta - 1
-            if iazimuth < 0:
-                iazimuth = 0
-            elif iazimuth >= nphi:
-                iazimuth = nphi - 1
-
-            level_offset = int(lookup_state.bin_level_offset[level])
-            if level_offset < 0:
-                continue
-
-            inside_best = -1
-            inside_best_d2 = np.inf
-
-            for dt in range(-radius, radius + 1):
-                tt = ipolar + dt
-                if tt < 0 or tt >= ntheta:
-                    continue
-                for dp in range(-radius, radius + 1):
-                    pp = (iazimuth + dp) % nphi
-                    key = level_offset + tt * nphi + pp
-                    start = int(lookup_state.bin_offsets[key])
-                    end = int(lookup_state.bin_offsets[key + 1])
-                    for pos in range(start, end):
-                        cid = int(lookup_state.bin_cell_ids[pos])
-                        dx = lookup_state.cell_centers[cid, 0] - qx
-                        dy = lookup_state.cell_centers[cid, 1] - qy
-                        dz = lookup_state.cell_centers[cid, 2] - qz
-                        d2 = dx * dx + dy * dy + dz * dz
-
-                        if _contains_rpa_cell(
-                            cid,
-                            r,
-                            polar,
-                            azimuth,
-                            lookup_state,
-                        ) and d2 < inside_best_d2:
-                            inside_best_d2 = d2
-                            inside_best = cid
-
-            if inside_best >= 0:
-                return inside_best
+    for depth in range(tree_depth + 1):
+        shift = tree_depth - depth
+        i0 = fine_i0 >> shift
+        i1 = fine_i1 >> shift
+        i2 = fine_i2 >> shift
+        node_value = _find_node_value(depth, i0, i1, i2, lookup_state)
+        if node_value == _MISSING_NODE_VALUE:
+            return -1
+        if node_value >= 0:
+            cid = int(node_value)
+            if _contains_rpa_cell(cid, r, polar, azimuth, lookup_state):
+                return cid
+            return -1
     return -1
 
 class _SphericalCellLookup:
     """Cell lookup helper for spherical trees."""
+
+    @staticmethod
+    def _cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray, np.ndarray]:
+        """Cluster sorted boundary values within one absolute tolerance."""
+        ordered = np.sort(np.asarray(values, dtype=float).reshape(-1))
+        if ordered.size == 0:
+            return ordered, ordered
+        clusters: list[list[float]] = [[float(ordered[0])]]
+        prev = float(ordered[0])
+        for value in ordered[1:]:
+            current = float(value)
+            if abs(current - prev) <= float(atol):
+                clusters[-1].append(current)
+                prev = current
+                continue
+            clusters.append([current])
+            prev = current
+
+        centers = np.empty(len(clusters), dtype=float)
+        tolerances = np.empty(len(clusters), dtype=float)
+        for idx, cluster in enumerate(clusters):
+            arr = np.asarray(cluster, dtype=float)
+            center = float(np.mean(arr))
+            centers[idx] = center
+            tolerances[idx] = max(float(np.max(np.abs(arr - center))), float(atol))
+        return centers, tolerances
 
     def _init_lookup_state(
         self,
@@ -365,21 +382,31 @@ class _SphericalCellLookup:
         self._leaf_shape = np.asarray(self.tree.leaf_shape, dtype=np.int64)
         self._tree_depth = int(self.tree.max_level)
         points_r = np.linalg.norm(self._points, axis=1)
-        cell_r_center = np.linalg.norm(self._cell_centers, axis=1)
         cell_r_min = np.min(points_r[self._corners], axis=1)
         cell_r_max = np.max(points_r[self._corners], axis=1)
         theta_points = np.arccos(
             np.clip(self._points[:, 2] / np.maximum(points_r, np.finfo(float).tiny), -1.0, 1.0)
         )
         phi_points = np.mod(np.arctan2(self._points[:, 1], self._points[:, 0]), 2.0 * math.pi)
-        ctheta = np.mean(theta_points[self._corners], axis=1)
         rho_points = np.hypot(self._points[:, 0], self._points[:, 1])
         axis_mask = rho_points[self._corners] <= self._axis_rho_tol
-        cphi = np.mod(np.arctan2(self._cell_centers[:, 1], self._cell_centers[:, 0]), 2.0 * math.pi)
         self._cell_r_min = cell_r_min
         self._cell_r_max = cell_r_max
         self._r_min = float(np.min(cell_r_min))
         self._r_max = float(np.max(cell_r_max))
+        radial_tol = 1e-7 * max(float(self._r_max - self._r_min), 1.0)
+        radial_edges, radial_edge_tol = self._cluster_close_values(
+            np.concatenate((self._cell_r_min[valid], self._cell_r_max[valid])),
+            atol=radial_tol,
+        )
+        expected_edges = int(self._leaf_shape[0]) + 1
+        if radial_edges.size != expected_edges:
+            raise ValueError(
+                "Spherical radial edge count does not match leaf_shape: "
+                f"edges={int(radial_edges.size)}, expected={expected_edges}."
+            )
+        self._radial_edges = radial_edges
+        self._radial_edge_tol = radial_edge_tol
         self._cell_theta_min = np.min(theta_points[self._corners], axis=1)
         self._cell_theta_max = np.max(theta_points[self._corners], axis=1)
 
@@ -399,58 +426,26 @@ class _SphericalCellLookup:
         self._i0 = np.full(n_cells, -1, dtype=np.int64)
         self._i1 = np.full(n_cells, -1, dtype=np.int64)
         self._i2 = np.full(n_cells, -1, dtype=np.int64)
-        exact_regular = self._init_exact_addresses()
+        self._init_exact_addresses()
         n_bins = int(running_offset)
         bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
-        if exact_regular:
-            for cid in np.flatnonzero(valid):
-                level = int(self._cell_level[cid])
-                tt = int(self._i1[cid])
-                pp = int(self._i2[cid])
-                nphi = int(self._shape_table[level, 2])
-                key = int(self._bin_level_offset[level] + tt * nphi + pp)
-                bin_lists[key].append(int(cid))
-        else:
-            self._node_depth = np.empty((0,), dtype=np.int64)
-            self._node_i0 = np.empty((0,), dtype=np.int64)
-            self._node_i1 = np.empty((0,), dtype=np.int64)
-            self._node_i2 = np.empty((0,), dtype=np.int64)
-            self._node_value = np.empty((0,), dtype=np.int64)
-            for cid in np.flatnonzero(valid):
-                level = int(self._cell_level[cid])
-                ntheta = int(self._shape_table[level, 1])
-                nphi = int(self._shape_table[level, 2])
-                dtheta = float(self._dtheta_table[level])
-                dphi = float(self._dphi_table[level])
-                tt = int(np.clip(np.floor(ctheta[cid] / dtheta), 0, ntheta - 1))
-                pp = int(np.clip(np.floor(cphi[cid] / dphi), 0, nphi - 1))
-                self._i1[cid] = tt
-                self._i2[cid] = pp
-                key = int(self._bin_level_offset[level] + tt * nphi + pp)
-                bin_lists[key].append(int(cid))
+        for cid in np.flatnonzero(valid):
+            level = int(self._cell_level[cid])
+            tt = int(self._i1[cid])
+            pp = int(self._i2[cid])
+            nphi = int(self._shape_table[level, 2])
+            key = int(self._bin_level_offset[level] + tt * nphi + pp)
+            bin_lists[key].append(int(cid))
 
         bin_counts = np.zeros(n_bins, dtype=np.int64)
         for key, ids in enumerate(bin_lists):
             if not ids:
                 continue
             arr = np.array(ids, dtype=np.int64)
-            if exact_regular:
-                order = np.argsort(self._i0[arr], kind="stable")
-            else:
-                order = np.argsort(cell_r_center[arr])
+            order = np.argsort(self._i0[arr], kind="stable")
             sorted_ids = arr[order]
             bin_lists[key] = sorted_ids.tolist()
             bin_counts[key] = int(sorted_ids.size)
-
-            if not exact_regular:
-                level = int(self._cell_level[int(sorted_ids[0])])
-                nr_level = int(self._shape_table[level, 0])
-                m = sorted_ids.size
-                if m == 1:
-                    mapped = np.array([nr_level // 2], dtype=np.int64)
-                else:
-                    mapped = np.floor(((np.arange(m, dtype=float) + 0.5) * nr_level) / float(m)).astype(np.int64)
-                self._i0[sorted_ids] = np.clip(mapped, 0, nr_level - 1)
 
         bin_offsets = np.zeros(n_bins + 1, dtype=np.int64)
         if n_bins > 0:
@@ -486,6 +481,7 @@ class _SphericalCellLookup:
             cell_centers=self._cell_centers,
             r_min=float(self._r_min),
             r_max=float(self._r_max),
+            radial_edges=self._radial_edges,
             max_radius=int(_DEFAULT_LOOKUP_MAX_RADIUS),
             leaf_shape=self._leaf_shape,
             tree_depth=int(self._tree_depth),
@@ -504,80 +500,191 @@ class _SphericalCellLookup:
         """Return the signed shortest wrapped azimuth difference `a - b`."""
         return float((a - b + math.pi) % _TWO_PI - math.pi)
 
-    def _init_exact_addresses(self) -> bool:
-        """Derive exact `(level, i0, i1, i2)` addresses when bounds snap to one spherical grid."""
+    def _init_exact_addresses(self) -> None:
+        """Derive exact `(level, i0, i1, i2)` addresses from spherical cell bounds."""
         valid_ids = np.flatnonzero(self._cell_level >= 0).astype(np.int64)
         if valid_ids.size == 0:
-            return False
-        r_span = float(max(self._r_max - self._r_min, np.finfo(float).tiny))
-        r_tol = 1e-7 * max(r_span, 1.0)
+            raise ValueError("Spherical lookup requires at least one valid cell address.")
+        r_tol = 1e-7 * max(float(self._r_max - self._r_min), 1.0)
         theta_tol = 1e-7 * math.pi
         phi_tol = 1e-7 * _TWO_PI
-        node_values: dict[tuple[int, int, int, int], int] = {}
-        for cid in valid_ids.tolist():
-            level = int(self._cell_level[cid])
-            n_r = int(self.tree.root_shape[0]) * (1 << level)
-            n_theta = int(self.tree.root_shape[1]) * (1 << level)
-            n_phi = int(self.tree.root_shape[2]) * (1 << level)
-            if n_r <= 0 or n_theta <= 0 or n_phi <= 0:
-                return False
-            d_r = r_span / float(n_r)
-            d_theta = math.pi / float(n_theta)
-            d_phi = _TWO_PI / float(n_phi)
-            width_phi = float(self._cell_phi_width[cid])
-            if width_phi >= (_TWO_PI - phi_tol):
-                return False
+        tree_depth = int(self._tree_depth)
+        depths = np.asarray(self._cell_level[valid_ids], dtype=np.int64)
+        shifts = np.asarray(tree_depth - depths, dtype=np.int64)
+        if np.any(shifts < 0):
+            bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
+            raise ValueError(f"Spherical cell {bad} depth exceeds tree_depth={tree_depth}.")
+        width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
 
-            i0 = int(round((float(self._cell_r_min[cid]) - float(self._r_min)) / d_r))
-            i1 = int(round(float(self._cell_theta_min[cid]) / d_theta))
-            i2 = int(round(float(self._cell_phi_start[cid]) / d_phi))
-            if i0 < 0 or i0 >= n_r or i1 < 0 or i1 >= n_theta or i2 < 0 or i2 >= n_phi:
-                return False
+        radial_edges = np.asarray(self._radial_edges, dtype=float)
+        radial_edge_tol = np.asarray(self._radial_edge_tol, dtype=float)
+        r0_search = np.searchsorted(radial_edges, self._cell_r_min[valid_ids], side="left").astype(np.int64)
+        r1_search = np.searchsorted(radial_edges, self._cell_r_max[valid_ids], side="left").astype(np.int64)
+        r0_next = np.clip(r0_search, 0, radial_edges.size - 1)
+        r1_next = np.clip(r1_search, 0, radial_edges.size - 1)
+        r0_prev = np.clip(r0_search - 1, 0, radial_edges.size - 1)
+        r1_prev = np.clip(r1_search - 1, 0, radial_edges.size - 1)
+        r0_use_prev = (r0_search > 0) & (
+            np.abs(radial_edges[r0_prev] - self._cell_r_min[valid_ids])
+            <= np.abs(radial_edges[r0_next] - self._cell_r_min[valid_ids])
+        )
+        r1_use_prev = (r1_search > 0) & (
+            np.abs(radial_edges[r1_prev] - self._cell_r_max[valid_ids])
+            <= np.abs(radial_edges[r1_next] - self._cell_r_max[valid_ids])
+        )
+        r0_f = np.where(r0_use_prev, r0_prev, r0_next).astype(np.int64)
+        r1_f = np.where(r1_use_prev, r1_prev, r1_next).astype(np.int64)
+        n_r_fine = int(self._leaf_shape[0])
+        if np.any(r0_f < 0) or np.any(r1_f > n_r_fine):
+            bad = int(valid_ids[np.flatnonzero((r0_f < 0) | (r1_f > n_r_fine))[0]])
+            raise ValueError(f"Spherical cell {bad} radial address is outside the inferred octree grid.")
+        r0_ok = np.abs(radial_edges[r0_f] - self._cell_r_min[valid_ids]) <= radial_edge_tol[r0_f]
+        r1_ok = np.abs(radial_edges[r1_f] - self._cell_r_max[valid_ids]) <= radial_edge_tol[r1_f]
+        if np.any(~r0_ok):
+            bad = int(valid_ids[np.flatnonzero(~r0_ok)[0]])
+            raise ValueError(f"Spherical cell {bad} r-min does not align with the inferred octree grid.")
+        if np.any(~r1_ok):
+            bad = int(valid_ids[np.flatnonzero(~r1_ok)[0]])
+            raise ValueError(f"Spherical cell {bad} r-max does not align with the inferred octree grid.")
 
-            r0 = float(self._r_min + i0 * d_r)
-            t0 = float(i1 * d_theta)
-            p0 = float(i2 * d_phi)
-            if not np.isclose(float(self._cell_r_min[cid]), r0, rtol=0.0, atol=r_tol):
-                return False
-            if not np.isclose(float(self._cell_r_max[cid]), r0 + d_r, rtol=0.0, atol=r_tol):
-                return False
-            if not np.isclose(float(self._cell_theta_min[cid]), t0, rtol=0.0, atol=theta_tol):
-                return False
-            if not np.isclose(float(self._cell_theta_max[cid]), t0 + d_theta, rtol=0.0, atol=theta_tol):
-                return False
-            if abs(self._wrapped_delta(float(self._cell_phi_start[cid]), p0)) > phi_tol:
-                return False
-            if not np.isclose(width_phi, d_phi, rtol=0.0, atol=phi_tol):
-                return False
+        d_theta_f = math.pi / float(int(self._leaf_shape[1]))
+        d_phi_f = _TWO_PI / float(int(self._leaf_shape[2]))
+        width_phi = np.asarray(self._cell_phi_width[valid_ids], dtype=float)
+        if np.any(width_phi >= (_TWO_PI - phi_tol)):
+            bad = int(valid_ids[np.flatnonzero(width_phi >= (_TWO_PI - phi_tol))[0]])
+            raise ValueError(f"Spherical cell {bad} spans the full azimuth and has no unique octree address.")
 
-            self._i0[cid] = i0
-            self._i1[cid] = i1
-            self._i2[cid] = i2
+        i1_f = np.rint(self._cell_theta_min[valid_ids] / d_theta_f).astype(np.int64)
+        i1_hi = np.rint(self._cell_theta_max[valid_ids] / d_theta_f).astype(np.int64)
+        i2_f = np.rint(self._cell_phi_start[valid_ids] / d_phi_f).astype(np.int64)
+        i2_hi = np.rint((self._cell_phi_start[valid_ids] + width_phi) / d_phi_f).astype(np.int64)
 
-            leaf_key = (level, i0, i1, i2)
-            if leaf_key in node_values:
-                raise ValueError(f"Spherical cells overlap at octree address {leaf_key}.")
-            node_values[leaf_key] = int(cid)
-            for parent_level in range(level - 1, -1, -1):
-                shift = level - parent_level
-                parent_key = (parent_level, i0 >> shift, i1 >> shift, i2 >> shift)
-                existing = node_values.get(parent_key)
-                if existing is None:
-                    node_values[parent_key] = _INTERNAL_NODE_VALUE
-                elif existing >= 0:
-                    raise ValueError(f"Spherical cells overlap across parent/child addresses at {parent_key}.")
+        n_theta_fine = int(self._leaf_shape[1])
+        n_phi_fine = int(self._leaf_shape[2])
+        in_bounds = (
+            (i1_f >= 0) & (i1_hi <= n_theta_fine)
+            & (i2_f >= 0) & (i2_hi <= n_phi_fine)
+        )
+        if not np.all(in_bounds):
+            bad = int(valid_ids[np.flatnonzero(~in_bounds)[0]])
+            raise ValueError(f"Spherical cell {bad} address is outside the inferred octree grid.")
 
-        node_keys = np.array(list(node_values.keys()), dtype=np.int64)
-        node_vals = np.array([node_values[tuple(key.tolist())] for key in node_keys], dtype=np.int64)
-        order = np.lexsort((node_keys[:, 3], node_keys[:, 2], node_keys[:, 1], node_keys[:, 0]))
-        node_keys = node_keys[order]
-        node_vals = node_vals[order]
-        self._node_depth = node_keys[:, 0].astype(np.int64, copy=False)
-        self._node_i0 = node_keys[:, 1].astype(np.int64, copy=False)
-        self._node_i1 = node_keys[:, 2].astype(np.int64, copy=False)
-        self._node_i2 = node_keys[:, 3].astype(np.int64, copy=False)
-        self._node_value = node_vals
-        return True
+        if np.any(~np.isclose(self._cell_theta_min[valid_ids], i1_f * d_theta_f, rtol=0.0, atol=theta_tol)):
+            bad = int(valid_ids[np.flatnonzero(~np.isclose(self._cell_theta_min[valid_ids], i1_f * d_theta_f, rtol=0.0, atol=theta_tol))[0]])
+            raise ValueError(f"Spherical cell {bad} theta-min does not align with the inferred octree grid.")
+        if np.any(~np.isclose(self._cell_theta_max[valid_ids], i1_hi * d_theta_f, rtol=0.0, atol=theta_tol)):
+            bad = int(valid_ids[np.flatnonzero(~np.isclose(self._cell_theta_max[valid_ids], i1_hi * d_theta_f, rtol=0.0, atol=theta_tol))[0]])
+            raise ValueError(f"Spherical cell {bad} theta-max does not align with the inferred octree grid.")
+        phi_delta = np.abs((self._cell_phi_start[valid_ids] - (i2_f * d_phi_f) + math.pi) % _TWO_PI - math.pi)
+        if np.any(phi_delta > phi_tol):
+            bad = int(valid_ids[np.flatnonzero(phi_delta > phi_tol)[0]])
+            raise ValueError(f"Spherical cell {bad} phi-start does not align with the inferred octree grid.")
+        if np.any(~np.isclose(width_phi, (i2_hi - i2_f) * d_phi_f, rtol=0.0, atol=phi_tol)):
+            bad = int(valid_ids[np.flatnonzero(~np.isclose(width_phi, (i2_hi - i2_f) * d_phi_f, rtol=0.0, atol=phi_tol))[0]])
+            raise ValueError(f"Spherical cell {bad} phi-width does not align with the inferred octree grid.")
+
+        spans_ok = (
+            ((r1_f - r0_f) == width_units)
+            & ((i1_hi - i1_f) == width_units)
+            & ((i2_hi - i2_f) == width_units)
+        )
+        if not np.all(spans_ok):
+            bad = int(valid_ids[np.flatnonzero(~spans_ok)[0]])
+            raise ValueError(f"Spherical cell {bad} width does not match inferred level {int(self._cell_level[bad])}.")
+
+        aligned = (
+            ((r0_f % width_units) == 0)
+            & ((i1_f % width_units) == 0)
+            & ((i2_f % width_units) == 0)
+        )
+        if not np.all(aligned):
+            bad = int(valid_ids[np.flatnonzero(~aligned)[0]])
+            raise ValueError(f"Spherical cell {bad} fine-grid origin is not aligned to its inferred level.")
+
+        i0 = np.right_shift(r0_f, shifts)
+        i1 = np.right_shift(i1_f, shifts)
+        i2 = np.right_shift(i2_f, shifts)
+        self._i0[valid_ids] = i0
+        self._i1[valid_ids] = i1
+        self._i2[valid_ids] = i2
+
+        leaf_depth = depths
+        leaf_i0 = i0
+        leaf_i1 = i1
+        leaf_i2 = i2
+        leaf_value = valid_ids
+        leaf_order = np.lexsort((leaf_i2, leaf_i1, leaf_i0, leaf_depth))
+        leaf_depth = leaf_depth[leaf_order]
+        leaf_i0 = leaf_i0[leaf_order]
+        leaf_i1 = leaf_i1[leaf_order]
+        leaf_i2 = leaf_i2[leaf_order]
+        leaf_value = leaf_value[leaf_order]
+        same_leaf = (
+            (leaf_depth[1:] == leaf_depth[:-1])
+            & (leaf_i0[1:] == leaf_i0[:-1])
+            & (leaf_i1[1:] == leaf_i1[:-1])
+            & (leaf_i2[1:] == leaf_i2[:-1])
+        )
+        if np.any(same_leaf):
+            dup = int(np.flatnonzero(same_leaf)[0])
+            raise ValueError(
+                f"Spherical cells overlap at octree address "
+                f"{(int(leaf_depth[dup]), int(leaf_i0[dup]), int(leaf_i1[dup]), int(leaf_i2[dup]))}."
+            )
+
+        node_depth_parts = [leaf_depth]
+        node_i0_parts = [leaf_i0]
+        node_i1_parts = [leaf_i1]
+        node_i2_parts = [leaf_i2]
+        node_value_parts = [leaf_value]
+        for parent_depth in range(tree_depth):
+            mask = depths > int(parent_depth)
+            if not np.any(mask):
+                continue
+            up = np.asarray(depths[mask] - int(parent_depth), dtype=np.int64)
+            parent_nodes = np.column_stack(
+                (
+                    np.full(int(np.count_nonzero(mask)), int(parent_depth), dtype=np.int64),
+                    np.right_shift(i0[mask], up),
+                    np.right_shift(i1[mask], up),
+                    np.right_shift(i2[mask], up),
+                )
+            )
+            parent_nodes = np.unique(parent_nodes, axis=0)
+            node_depth_parts.append(parent_nodes[:, 0].astype(np.int64, copy=False))
+            node_i0_parts.append(parent_nodes[:, 1].astype(np.int64, copy=False))
+            node_i1_parts.append(parent_nodes[:, 2].astype(np.int64, copy=False))
+            node_i2_parts.append(parent_nodes[:, 3].astype(np.int64, copy=False))
+            node_value_parts.append(np.full(parent_nodes.shape[0], _INTERNAL_NODE_VALUE, dtype=np.int64))
+
+        node_depth = np.concatenate(node_depth_parts)
+        node_i0 = np.concatenate(node_i0_parts)
+        node_i1 = np.concatenate(node_i1_parts)
+        node_i2 = np.concatenate(node_i2_parts)
+        node_value = np.concatenate(node_value_parts)
+        node_order = np.lexsort((node_i2, node_i1, node_i0, node_depth))
+        node_depth = node_depth[node_order]
+        node_i0 = node_i0[node_order]
+        node_i1 = node_i1[node_order]
+        node_i2 = node_i2[node_order]
+        node_value = node_value[node_order]
+        same_node = (
+            (node_depth[1:] == node_depth[:-1])
+            & (node_i0[1:] == node_i0[:-1])
+            & (node_i1[1:] == node_i1[:-1])
+            & (node_i2[1:] == node_i2[:-1])
+        )
+        if np.any(same_node):
+            dup = int(np.flatnonzero(same_node)[0])
+            raise ValueError(
+                "Spherical cells overlap across parent/child addresses at "
+                f"({int(node_depth[dup])}, {int(node_i0[dup])}, {int(node_i1[dup])}, {int(node_i2[dup])})."
+            )
+        self._node_depth = node_depth
+        self._node_i0 = node_i0
+        self._node_i1 = node_i1
+        self._node_i2 = node_i2
+        self._node_value = node_value
 
     @staticmethod
     def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:
@@ -757,6 +864,8 @@ class _SphericalCellLookup:
             return False
         if pp < (float(self._cell_theta_min[cid]) - t) or pp > (float(self._cell_theta_max[cid]) + t):
             return False
+        if abs(rr * math.sin(pp)) <= t:
+            return True
         start = float(self._cell_phi_start[cid])
         width = float(self._cell_phi_width[cid])
         dphi = float((aa - start) % (2.0 * math.pi))
