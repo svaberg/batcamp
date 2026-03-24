@@ -17,6 +17,32 @@ from resampling_compare import _ray_setup
 from resampling_compare import _save_four_panel_figure
 
 
+def test_xy_plane_resample_has_nonblank_signal() -> None:
+    """Small planar resample should produce finite varying signal on a real sample."""
+    sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "3d__var_2_n00006003.plt"
+    ds = Dataset.from_file(str(sample_path))
+    tree = Octree.from_dataset(ds)
+    interp = OctreeInterpolator(ds, ["Rho [g/cm^3]"], tree=tree)
+
+    dmin, dmax = interp.tree.domain_bounds(coord="xyz")
+    x = np.linspace(float(dmin[0]), float(dmax[0]), 16, dtype=float)
+    y = np.linspace(float(dmin[1]), float(dmax[1]), 16, dtype=float)
+    z = np.full((16, 16), 0.5 * float(dmin[2] + dmax[2]), dtype=float)
+    xg, yg = np.meshgrid(x, y, indexing="xy")
+    query = np.column_stack((xg.ravel(), yg.ravel(), z.ravel()))
+    img = np.asarray(
+        interp(query, query_coord="xyz", log_outside_domain=False),
+        dtype=float,
+    ).reshape(16, 16)
+
+    finite = np.isfinite(img)
+    positive = finite & (img > 0.0)
+
+    assert np.any(finite)
+    assert np.any(positive)
+    assert float(np.max(img[positive])) > float(np.min(img[positive]))
+
+
 def test_resampling_compare_outputs_nonblank_images(tmp_path: Path) -> None:
     """Compare-script smoke test: small local sample should produce visible signal."""
     sample_path = Path(__file__).resolve().parents[1] / "sample_data" / "3d__var_2_n00006003.plt"
