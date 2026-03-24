@@ -18,6 +18,8 @@ from .octree import Octree
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
 _DEFAULT_LOOKUP_MAX_RADIUS = 8
+_MISSING_NODE_VALUE = -1
+_INTERNAL_NODE_VALUE = -2
 
 
 @njit(cache=True)
@@ -58,6 +60,76 @@ class SphericalLookupKernelState(NamedTuple):
     r_min: float
     r_max: float
     max_radius: int
+    leaf_shape: np.ndarray
+    tree_depth: int
+    cell_i0: np.ndarray
+    cell_i1: np.ndarray
+    cell_i2: np.ndarray
+    node_depth: np.ndarray
+    node_i0: np.ndarray
+    node_i1: np.ndarray
+    node_i2: np.ndarray
+    node_value: np.ndarray
+
+
+@njit(cache=True)
+def _lookup_axis_index(q: float, q_min: float, q_span: float, n_fine: int) -> int:
+    """Map one scalar coordinate to a finest-grid index, clamped to bounds."""
+    idx = int(math.floor(((q - q_min) / q_span) * n_fine))
+    if idx < 0:
+        return 0
+    if idx >= n_fine:
+        return int(n_fine - 1)
+    return idx
+
+
+@njit(cache=True)
+def _find_node_value(
+    depth: int,
+    i0: int,
+    i1: int,
+    i2: int,
+    lookup_state: SphericalLookupKernelState,
+) -> int:
+    """Binary-search one occupied spherical node by `(depth, i0, i1, i2)`."""
+    lo = 0
+    hi = int(lookup_state.node_depth.shape[0]) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        m_depth = int(lookup_state.node_depth[mid])
+        if depth < m_depth:
+            hi = mid - 1
+            continue
+        if depth > m_depth:
+            lo = mid + 1
+            continue
+
+        m_i0 = int(lookup_state.node_i0[mid])
+        if i0 < m_i0:
+            hi = mid - 1
+            continue
+        if i0 > m_i0:
+            lo = mid + 1
+            continue
+
+        m_i1 = int(lookup_state.node_i1[mid])
+        if i1 < m_i1:
+            hi = mid - 1
+            continue
+        if i1 > m_i1:
+            lo = mid + 1
+            continue
+
+        m_i2 = int(lookup_state.node_i2[mid])
+        if i2 < m_i2:
+            hi = mid - 1
+            continue
+        if i2 > m_i2:
+            lo = mid + 1
+            continue
+
+        return int(lookup_state.node_value[mid])
+    return _MISSING_NODE_VALUE
 @njit(cache=True)
 def _contains_rpa_cell(
     cid: int,
@@ -105,6 +177,41 @@ def _lookup_rpa_cell_id_kernel(
         lookup_state,
     ):
         return int(prev_cid)
+
+    if lookup_state.node_value.shape[0] > 0 and int(lookup_state.tree_depth) >= 0:
+        fine_i0 = _lookup_axis_index(
+            r,
+            lookup_state.r_min,
+            max(lookup_state.r_max - lookup_state.r_min, np.finfo(np.float64).tiny),
+            int(lookup_state.leaf_shape[0]),
+        )
+        fine_i1 = _lookup_axis_index(
+            polar,
+            0.0,
+            math.pi,
+            int(lookup_state.leaf_shape[1]),
+        )
+        fine_i2 = _lookup_axis_index(
+            azimuth,
+            0.0,
+            _TWO_PI,
+            int(lookup_state.leaf_shape[2]),
+        )
+
+        tree_depth = int(lookup_state.tree_depth)
+        for depth in range(tree_depth + 1):
+            shift = tree_depth - depth
+            i0 = fine_i0 >> shift
+            i1 = fine_i1 >> shift
+            i2 = fine_i2 >> shift
+            node_value = _find_node_value(depth, i0, i1, i2, lookup_state)
+            if node_value == _MISSING_NODE_VALUE:
+                return -1
+            if node_value >= 0:
+                cid = int(node_value)
+                if _contains_rpa_cell(cid, r, polar, azimuth, lookup_state):
+                    return cid
+                return -1
 
     sin_polar = math.sin(polar)
     qx = r * sin_polar * math.cos(azimuth)
@@ -255,6 +362,8 @@ class _SphericalCellLookup:
         self._dtheta_table = dtheta_table
         self._dphi_table = dphi_table
         self._bin_level_offset = bin_level_offset
+        self._leaf_shape = np.asarray(self.tree.leaf_shape, dtype=np.int64)
+        self._tree_depth = int(self.tree.max_level)
         points_r = np.linalg.norm(self._points, axis=1)
         cell_r_center = np.linalg.norm(self._cell_centers, axis=1)
         cell_r_min = np.min(points_r[self._corners], axis=1)
@@ -267,61 +376,6 @@ class _SphericalCellLookup:
         rho_points = np.hypot(self._points[:, 0], self._points[:, 1])
         axis_mask = rho_points[self._corners] <= self._axis_rho_tol
         cphi = np.mod(np.arctan2(self._cell_centers[:, 1], self._cell_centers[:, 0]), 2.0 * math.pi)
-
-        itheta = np.full(n_cells, -1, dtype=np.int64)
-        iphi = np.full(n_cells, -1, dtype=np.int64)
-        ir_abs = np.full(n_cells, -1, dtype=np.int64)
-
-        n_bins = int(running_offset)
-        bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
-        for cid in np.flatnonzero(valid):
-            level = int(self._cell_level[cid])
-            ntheta = int(self._shape_table[level, 1])
-            nphi = int(self._shape_table[level, 2])
-            dtheta = float(self._dtheta_table[level])
-            dphi = float(self._dphi_table[level])
-            tt = int(np.clip(np.floor(ctheta[cid] / dtheta), 0, ntheta - 1))
-            pp = int(np.clip(np.floor(cphi[cid] / dphi), 0, nphi - 1))
-            itheta[cid] = tt
-            iphi[cid] = pp
-            key = int(self._bin_level_offset[level] + tt * nphi + pp)
-            bin_lists[key].append(int(cid))
-
-        bin_counts = np.zeros(n_bins, dtype=np.int64)
-        for key, ids in enumerate(bin_lists):
-            if not ids:
-                continue
-            arr = np.array(ids, dtype=np.int64)
-            order = np.argsort(cell_r_center[arr])
-            sorted_ids = arr[order]
-            bin_lists[key] = sorted_ids.tolist()
-            bin_counts[key] = int(sorted_ids.size)
-
-            level = int(self._cell_level[int(sorted_ids[0])])
-            nr_level = int(self._shape_table[level, 0])
-            m = sorted_ids.size
-            if m == 1:
-                mapped = np.array([nr_level // 2], dtype=np.int64)
-            else:
-                mapped = np.floor(((np.arange(m, dtype=float) + 0.5) * nr_level) / float(m)).astype(np.int64)
-            ir_abs[sorted_ids] = np.clip(mapped, 0, nr_level - 1)
-
-        bin_offsets = np.zeros(n_bins + 1, dtype=np.int64)
-        if n_bins > 0:
-            np.cumsum(bin_counts, out=bin_offsets[1:])
-        total_refs = int(bin_offsets[-1])
-        bin_cell_ids = np.empty(total_refs, dtype=np.int64)
-        for key in range(n_bins):
-            start = int(bin_offsets[key])
-            end = int(bin_offsets[key + 1])
-            if end <= start:
-                continue
-            ids = bin_lists[key]
-            bin_cell_ids[start:end] = np.array(ids, dtype=np.int64)
-
-        self._i0 = ir_abs
-        self._i1 = itheta
-        self._i2 = iphi
         self._cell_r_min = cell_r_min
         self._cell_r_max = cell_r_max
         self._r_min = float(np.min(cell_r_min))
@@ -341,6 +395,76 @@ class _SphericalCellLookup:
             phi_width[cid] = width
         self._cell_phi_start = phi_start
         self._cell_phi_width = phi_width
+
+        self._i0 = np.full(n_cells, -1, dtype=np.int64)
+        self._i1 = np.full(n_cells, -1, dtype=np.int64)
+        self._i2 = np.full(n_cells, -1, dtype=np.int64)
+        exact_regular = self._init_exact_addresses()
+        n_bins = int(running_offset)
+        bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
+        if exact_regular:
+            for cid in np.flatnonzero(valid):
+                level = int(self._cell_level[cid])
+                tt = int(self._i1[cid])
+                pp = int(self._i2[cid])
+                nphi = int(self._shape_table[level, 2])
+                key = int(self._bin_level_offset[level] + tt * nphi + pp)
+                bin_lists[key].append(int(cid))
+        else:
+            self._node_depth = np.empty((0,), dtype=np.int64)
+            self._node_i0 = np.empty((0,), dtype=np.int64)
+            self._node_i1 = np.empty((0,), dtype=np.int64)
+            self._node_i2 = np.empty((0,), dtype=np.int64)
+            self._node_value = np.empty((0,), dtype=np.int64)
+            for cid in np.flatnonzero(valid):
+                level = int(self._cell_level[cid])
+                ntheta = int(self._shape_table[level, 1])
+                nphi = int(self._shape_table[level, 2])
+                dtheta = float(self._dtheta_table[level])
+                dphi = float(self._dphi_table[level])
+                tt = int(np.clip(np.floor(ctheta[cid] / dtheta), 0, ntheta - 1))
+                pp = int(np.clip(np.floor(cphi[cid] / dphi), 0, nphi - 1))
+                self._i1[cid] = tt
+                self._i2[cid] = pp
+                key = int(self._bin_level_offset[level] + tt * nphi + pp)
+                bin_lists[key].append(int(cid))
+
+        bin_counts = np.zeros(n_bins, dtype=np.int64)
+        for key, ids in enumerate(bin_lists):
+            if not ids:
+                continue
+            arr = np.array(ids, dtype=np.int64)
+            if exact_regular:
+                order = np.argsort(self._i0[arr], kind="stable")
+            else:
+                order = np.argsort(cell_r_center[arr])
+            sorted_ids = arr[order]
+            bin_lists[key] = sorted_ids.tolist()
+            bin_counts[key] = int(sorted_ids.size)
+
+            if not exact_regular:
+                level = int(self._cell_level[int(sorted_ids[0])])
+                nr_level = int(self._shape_table[level, 0])
+                m = sorted_ids.size
+                if m == 1:
+                    mapped = np.array([nr_level // 2], dtype=np.int64)
+                else:
+                    mapped = np.floor(((np.arange(m, dtype=float) + 0.5) * nr_level) / float(m)).astype(np.int64)
+                self._i0[sorted_ids] = np.clip(mapped, 0, nr_level - 1)
+
+        bin_offsets = np.zeros(n_bins + 1, dtype=np.int64)
+        if n_bins > 0:
+            np.cumsum(bin_counts, out=bin_offsets[1:])
+        total_refs = int(bin_offsets[-1])
+        bin_cell_ids = np.empty(total_refs, dtype=np.int64)
+        for key in range(n_bins):
+            start = int(bin_offsets[key])
+            end = int(bin_offsets[key + 1])
+            if end <= start:
+                continue
+            ids = bin_lists[key]
+            bin_cell_ids[start:end] = np.array(ids, dtype=np.int64)
+
         self._bin_counts = bin_counts
         self._bin_offsets = bin_offsets
         self._bin_cell_ids = bin_cell_ids
@@ -363,7 +487,97 @@ class _SphericalCellLookup:
             r_min=float(self._r_min),
             r_max=float(self._r_max),
             max_radius=int(_DEFAULT_LOOKUP_MAX_RADIUS),
+            leaf_shape=self._leaf_shape,
+            tree_depth=int(self._tree_depth),
+            cell_i0=self._i0,
+            cell_i1=self._i1,
+            cell_i2=self._i2,
+            node_depth=self._node_depth,
+            node_i0=self._node_i0,
+            node_i1=self._node_i1,
+            node_i2=self._node_i2,
+            node_value=self._node_value,
         )
+
+    @staticmethod
+    def _wrapped_delta(a: float, b: float) -> float:
+        """Return the signed shortest wrapped azimuth difference `a - b`."""
+        return float((a - b + math.pi) % _TWO_PI - math.pi)
+
+    def _init_exact_addresses(self) -> bool:
+        """Derive exact `(level, i0, i1, i2)` addresses when bounds snap to one spherical grid."""
+        valid_ids = np.flatnonzero(self._cell_level >= 0).astype(np.int64)
+        if valid_ids.size == 0:
+            return False
+        r_span = float(max(self._r_max - self._r_min, np.finfo(float).tiny))
+        r_tol = 1e-7 * max(r_span, 1.0)
+        theta_tol = 1e-7 * math.pi
+        phi_tol = 1e-7 * _TWO_PI
+        node_values: dict[tuple[int, int, int, int], int] = {}
+        for cid in valid_ids.tolist():
+            level = int(self._cell_level[cid])
+            n_r = int(self.tree.root_shape[0]) * (1 << level)
+            n_theta = int(self.tree.root_shape[1]) * (1 << level)
+            n_phi = int(self.tree.root_shape[2]) * (1 << level)
+            if n_r <= 0 or n_theta <= 0 or n_phi <= 0:
+                return False
+            d_r = r_span / float(n_r)
+            d_theta = math.pi / float(n_theta)
+            d_phi = _TWO_PI / float(n_phi)
+            width_phi = float(self._cell_phi_width[cid])
+            if width_phi >= (_TWO_PI - phi_tol):
+                return False
+
+            i0 = int(round((float(self._cell_r_min[cid]) - float(self._r_min)) / d_r))
+            i1 = int(round(float(self._cell_theta_min[cid]) / d_theta))
+            i2 = int(round(float(self._cell_phi_start[cid]) / d_phi))
+            if i0 < 0 or i0 >= n_r or i1 < 0 or i1 >= n_theta or i2 < 0 or i2 >= n_phi:
+                return False
+
+            r0 = float(self._r_min + i0 * d_r)
+            t0 = float(i1 * d_theta)
+            p0 = float(i2 * d_phi)
+            if not np.isclose(float(self._cell_r_min[cid]), r0, rtol=0.0, atol=r_tol):
+                return False
+            if not np.isclose(float(self._cell_r_max[cid]), r0 + d_r, rtol=0.0, atol=r_tol):
+                return False
+            if not np.isclose(float(self._cell_theta_min[cid]), t0, rtol=0.0, atol=theta_tol):
+                return False
+            if not np.isclose(float(self._cell_theta_max[cid]), t0 + d_theta, rtol=0.0, atol=theta_tol):
+                return False
+            if abs(self._wrapped_delta(float(self._cell_phi_start[cid]), p0)) > phi_tol:
+                return False
+            if not np.isclose(width_phi, d_phi, rtol=0.0, atol=phi_tol):
+                return False
+
+            self._i0[cid] = i0
+            self._i1[cid] = i1
+            self._i2[cid] = i2
+
+            leaf_key = (level, i0, i1, i2)
+            if leaf_key in node_values:
+                raise ValueError(f"Spherical cells overlap at octree address {leaf_key}.")
+            node_values[leaf_key] = int(cid)
+            for parent_level in range(level - 1, -1, -1):
+                shift = level - parent_level
+                parent_key = (parent_level, i0 >> shift, i1 >> shift, i2 >> shift)
+                existing = node_values.get(parent_key)
+                if existing is None:
+                    node_values[parent_key] = _INTERNAL_NODE_VALUE
+                elif existing >= 0:
+                    raise ValueError(f"Spherical cells overlap across parent/child addresses at {parent_key}.")
+
+        node_keys = np.array(list(node_values.keys()), dtype=np.int64)
+        node_vals = np.array([node_values[tuple(key.tolist())] for key in node_keys], dtype=np.int64)
+        order = np.lexsort((node_keys[:, 3], node_keys[:, 2], node_keys[:, 1], node_keys[:, 0]))
+        node_keys = node_keys[order]
+        node_vals = node_vals[order]
+        self._node_depth = node_keys[:, 0].astype(np.int64, copy=False)
+        self._node_i0 = node_keys[:, 1].astype(np.int64, copy=False)
+        self._node_i1 = node_keys[:, 2].astype(np.int64, copy=False)
+        self._node_i2 = node_keys[:, 3].astype(np.int64, copy=False)
+        self._node_value = node_vals
+        return True
 
     @staticmethod
     def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:

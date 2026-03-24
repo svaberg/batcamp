@@ -442,6 +442,17 @@ def test_regular_spherical_tree_uses_absolute_levels() -> None:
     assert np.all(tree.cell_levels == tree.max_level)
 
 
+def test_regular_spherical_lookup_materializes_exact_indices() -> None:
+    """Regular spherical grids should expose exact root-relative cell indices."""
+    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
+    first = tree.hit_from_cell_id(0)
+    last = tree.hit_from_cell_id(int(tree.cell_count) - 1)
+    assert (first.level, first.i0, first.i1, first.i2) == (1, 0, 0, 0)
+    assert first.path == ((0, 0, 0), (0, 0, 0))
+    assert (last.level, last.i0, last.i1, last.i2) == (1, 1, 3, 7)
+    assert last.path == ((0, 1, 3), (1, 3, 7))
+
+
 def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
     ds, cell_levels = _build_adaptive_xyz_dataset()
