@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from time import perf_counter
 
 import matplotlib
 
@@ -171,19 +172,50 @@ def main() -> None:
         help="Directory where PNGs are written.",
     )
     parser.add_argument(
-        "--resolutions",
-        default="32,64,128",
-        help="Comma-separated output plane resolutions.",
+        "--min-resolution",
+        type=int,
+        default=2,
+        help="Smallest square output resolution.",
+    )
+    parser.add_argument(
+        "--max-resolution",
+        type=int,
+        default=1024,
+        help="Largest square output resolution.",
+    )
+    parser.add_argument(
+        "--max-seconds-per-image",
+        type=float,
+        default=0.5,
+        help="Stop increasing resolution for one pattern once one image exceeds this wall time.",
+    )
+    parser.add_argument(
+        "--limit-cases",
+        type=int,
+        default=0,
+        help="Optional positive cap on how many pattern cases to generate.",
     )
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir).resolve()
-    resolutions = [int(part.strip()) for part in args.resolutions.split(",") if part.strip()]
     cases = _ring_cases() + _checker_cases()
+    if int(args.limit_cases) > 0:
+        cases = cases[: int(args.limit_cases)]
+
+    min_resolution = int(args.min_resolution)
+    max_resolution = int(args.max_resolution)
+    if min_resolution <= 0:
+        raise ValueError("min_resolution must be positive.")
+    if max_resolution < min_resolution:
+        raise ValueError("max_resolution must be >= min_resolution.")
+    if float(args.max_seconds_per_image) <= 0.0:
+        raise ValueError("max_seconds_per_image must be positive.")
 
     for label, ds in cases:
         interp = OctreeInterpolator(ds, ["Pattern"], tree_coord="xyz")
-        for resolution in resolutions:
+        resolution = int(min_resolution)
+        while resolution <= max_resolution:
+            t0 = perf_counter()
             xg, yg, img = _resample_xy_plane(interp, resolution=resolution)
             out_path = out_dir / f"{label}_{resolution:03d}.png"
             _save_image(
@@ -193,12 +225,27 @@ def main() -> None:
                 img=img,
                 title=f"{label} @ {resolution}x{resolution}",
             )
+            elapsed_s = float(perf_counter() - t0)
             finite = np.isfinite(img)
             vals = img[finite]
             print(
-                f"{out_path} finite={int(finite.sum())} min={float(np.min(vals)):.6f} max={float(np.max(vals)):.6f}",
+                (
+                    f"{out_path} finite={int(finite.sum())} "
+                    f"min={float(np.min(vals)):.6f} max={float(np.max(vals)):.6f} "
+                    f"seconds={elapsed_s:.3f}"
+                ),
                 flush=True,
             )
+            if elapsed_s > float(args.max_seconds_per_image):
+                print(
+                    (
+                        f"stop {label} at {resolution}x{resolution}: "
+                        f"{elapsed_s:.3f}s > {float(args.max_seconds_per_image):.3f}s"
+                    ),
+                    flush=True,
+                )
+                break
+            resolution *= 2
 
 
 if __name__ == "__main__":
