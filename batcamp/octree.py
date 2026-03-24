@@ -259,6 +259,9 @@ class Octree:
     @property
     def lookup_state(self) -> object:
         """Return compiled lookup state used by numba kernels."""
+        # TODO: This still leaks packed lookup internals to interpolator/ray code.
+        # The intended boundary is exact tree state on Octree, not foreign modules
+        # reaching through extra private cache slots on the tree.
         self._require_lookup()
         state = getattr(self, "_lookup_state", None)
         if state is None:
