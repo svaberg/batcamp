@@ -17,7 +17,6 @@ from .octree import Octree
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
-_DEFAULT_LOOKUP_MAX_RADIUS = 8
 _MISSING_NODE_VALUE = -1
 
 
@@ -41,13 +40,6 @@ def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, 
 class SphericalLookupKernelState(NamedTuple):
     """Arrays used by compiled spherical lookup code."""
 
-    levels_desc: np.ndarray
-    shape_table: np.ndarray
-    dtheta_table: np.ndarray
-    dphi_table: np.ndarray
-    bin_level_offset: np.ndarray
-    bin_offsets: np.ndarray
-    bin_cell_ids: np.ndarray
     cell_r_min: np.ndarray
     cell_r_max: np.ndarray
     cell_theta_min: np.ndarray
@@ -58,17 +50,6 @@ class SphericalLookupKernelState(NamedTuple):
     cell_centers: np.ndarray
     r_min: float
     r_max: float
-    radial_edges: np.ndarray
-    max_radius: int
-    leaf_shape: np.ndarray
-    tree_depth: int
-    cell_i0: np.ndarray
-    cell_i1: np.ndarray
-    cell_i2: np.ndarray
-    node_depth: np.ndarray
-    node_i0: np.ndarray
-    node_i1: np.ndarray
-    node_i2: np.ndarray
     node_value: np.ndarray
     node_child: np.ndarray
     root_node_ids: np.ndarray
@@ -78,99 +59,6 @@ class SphericalLookupKernelState(NamedTuple):
     node_theta_max: np.ndarray
     node_phi_start: np.ndarray
     node_phi_width: np.ndarray
-
-
-@njit(cache=True)
-def _lookup_axis_index(q: float, q_min: float, q_span: float, n_fine: int) -> int:
-    """Map one scalar coordinate to a finest-grid index, clamped to bounds."""
-    pos = ((q - q_min) / q_span) * n_fine
-    if pos <= 0.0:
-        return 0
-    if pos >= n_fine:
-        return int(n_fine - 1)
-    # On an exact shared boundary, give ownership to the lower-index cell.
-    idx = int(math.ceil(pos)) - 1
-    if idx < 0:
-        return 0
-    if idx >= n_fine:
-        return int(n_fine - 1)
-    return idx
-
-
-@njit(cache=True)
-def _lookup_interval_index(q: float, edges: np.ndarray) -> int:
-    """Map one scalar coordinate to the interval index of a sorted edge array."""
-    n_bins = int(edges.shape[0]) - 1
-    if n_bins <= 0:
-        return -1
-    if q <= edges[0]:
-        return 0
-    if q >= edges[n_bins]:
-        return int(n_bins - 1)
-    lo = 0
-    hi = int(edges.shape[0])
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if q <= edges[mid]:
-            hi = mid
-        else:
-            lo = mid + 1
-    idx = lo - 1
-    if idx < 0:
-        return 0
-    if idx >= n_bins:
-        return int(n_bins - 1)
-    return idx
-
-
-@njit(cache=True)
-def _find_node_value(
-    depth: int,
-    i0: int,
-    i1: int,
-    i2: int,
-    lookup_state: SphericalLookupKernelState,
-) -> int:
-    """Binary-search one occupied spherical node by `(depth, i0, i1, i2)`."""
-    lo = 0
-    hi = int(lookup_state.node_depth.shape[0]) - 1
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        m_depth = int(lookup_state.node_depth[mid])
-        if depth < m_depth:
-            hi = mid - 1
-            continue
-        if depth > m_depth:
-            lo = mid + 1
-            continue
-
-        m_i0 = int(lookup_state.node_i0[mid])
-        if i0 < m_i0:
-            hi = mid - 1
-            continue
-        if i0 > m_i0:
-            lo = mid + 1
-            continue
-
-        m_i1 = int(lookup_state.node_i1[mid])
-        if i1 < m_i1:
-            hi = mid - 1
-            continue
-        if i1 > m_i1:
-            lo = mid + 1
-            continue
-
-        m_i2 = int(lookup_state.node_i2[mid])
-        if i2 < m_i2:
-            hi = mid - 1
-            continue
-        if i2 > m_i2:
-            lo = mid + 1
-            continue
-
-        return int(lookup_state.node_value[mid])
-    return _MISSING_NODE_VALUE
-
 
 @njit(cache=True)
 def _contains_rpa_cell(
@@ -336,11 +224,8 @@ class _SphericalCellLookup:
         self._dphi_by_level = dphi_by_level
 
         levels_asc = np.array(sorted(self._shape_by_level.keys()), dtype=np.int64)
-        self._levels_desc = levels_asc[::-1]
         level_cap = int(np.max(levels_asc)) + 1
         shape_table = np.full((level_cap, 3), -1, dtype=np.int64)
-        dtheta_table = np.full(level_cap, np.nan, dtype=float)
-        dphi_table = np.full(level_cap, np.nan, dtype=float)
         bin_level_offset = np.full(level_cap, -1, dtype=np.int64)
         running_offset = 0
         for level in levels_asc:
@@ -349,16 +234,10 @@ class _SphericalCellLookup:
             shape_table[lvl, 0] = int(shape[0])
             shape_table[lvl, 1] = int(shape[1])
             shape_table[lvl, 2] = int(shape[2])
-            dtheta_table[lvl] = float(self._dtheta_by_level[lvl])
-            dphi_table[lvl] = float(self._dphi_by_level[lvl])
             bin_level_offset[lvl] = running_offset
             running_offset += int(shape[1]) * int(shape[2])
         self._shape_table = shape_table
-        self._dtheta_table = dtheta_table
-        self._dphi_table = dphi_table
         self._bin_level_offset = bin_level_offset
-        self._leaf_shape = np.asarray(self.tree.leaf_shape, dtype=np.int64)
-        self._tree_depth = int(self.tree.max_level)
         points_r = np.linalg.norm(self._points, axis=1)
         cell_r_min = np.min(points_r[self._corners], axis=1)
         cell_r_max = np.max(points_r[self._corners], axis=1)
@@ -449,13 +328,6 @@ class _SphericalCellLookup:
         self._bin_offsets = bin_offsets
         self._bin_cell_ids = bin_cell_ids
         self._lookup_state = SphericalLookupKernelState(
-            levels_desc=self._levels_desc,
-            shape_table=self._shape_table,
-            dtheta_table=self._dtheta_table,
-            dphi_table=self._dphi_table,
-            bin_level_offset=self._bin_level_offset,
-            bin_offsets=self._bin_offsets,
-            bin_cell_ids=self._bin_cell_ids,
             cell_r_min=self._cell_r_min,
             cell_r_max=self._cell_r_max,
             cell_theta_min=self._cell_theta_min,
@@ -466,17 +338,6 @@ class _SphericalCellLookup:
             cell_centers=self._cell_centers,
             r_min=float(self._r_min),
             r_max=float(self._r_max),
-            radial_edges=self._radial_edges,
-            max_radius=int(_DEFAULT_LOOKUP_MAX_RADIUS),
-            leaf_shape=self._leaf_shape,
-            tree_depth=int(self._tree_depth),
-            cell_i0=self._i0,
-            cell_i1=self._i1,
-            cell_i2=self._i2,
-            node_depth=self._node_depth,
-            node_i0=self._node_i0,
-            node_i1=self._node_i1,
-            node_i2=self._node_i2,
             node_value=self._node_value,
             node_child=self._node_child,
             root_node_ids=self._root_node_ids,
