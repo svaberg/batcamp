@@ -8,6 +8,7 @@ from dataclasses import field
 import logging
 from pathlib import Path
 from typing import ClassVar
+from typing import TYPE_CHECKING
 from typing import cast
 from typing import Literal
 from typing import TypeAlias
@@ -40,6 +41,9 @@ LevelCountTable: TypeAlias = tuple[LevelCountRow, ...]
 """Sorted collection of per-level count rows."""
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from .face_neighbors import OctreeFaceNeighbors
 
 
 def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
@@ -260,6 +264,36 @@ class Octree:
         if state is None:
             raise ValueError("Lookup state is unavailable for this tree.")
         return state
+
+    def face_neighbors(self, *, max_level: int | None = None) -> "OctreeFaceNeighbors":
+        """Return the lazily built face-neighbor graph for one level cutoff."""
+        if self.cell_levels is None:
+            raise ValueError("Octree has no cell_levels; cannot build face neighbors.")
+        valid_levels = np.asarray(self.cell_levels, dtype=np.int64)
+        valid_levels = valid_levels[valid_levels >= 0]
+        if valid_levels.size == 0:
+            raise ValueError("Octree contains no valid cell levels (all < 0).")
+
+        target_max_level = int(np.max(valid_levels) if max_level is None else max_level)
+        cache = getattr(self, "_face_neighbors_by_max_level", None)
+        if cache is None:
+            cache = {}
+            self._face_neighbors_by_max_level = cache
+        face_neighbors = cache.get(target_max_level)
+        if face_neighbors is None:
+            from .face_neighbors import build_face_neighbors
+
+            face_neighbors = build_face_neighbors(self, max_level=target_max_level)
+            self._cache_face_neighbors(face_neighbors)
+        return face_neighbors
+
+    def _cache_face_neighbors(self, face_neighbors: "OctreeFaceNeighbors") -> None:
+        """Store one prebuilt face-neighbor graph in the lazy octree cache."""
+        cache = getattr(self, "_face_neighbors_by_max_level", None)
+        if cache is None:
+            cache = {}
+            self._face_neighbors_by_max_level = cache
+        cache[int(face_neighbors.max_level)] = face_neighbors
 
     @property
     def points(self) -> np.ndarray:

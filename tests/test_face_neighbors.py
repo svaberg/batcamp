@@ -506,6 +506,17 @@ def test_uniform_topology_basic_invariants(tree_builder, record_property) -> Non
     assert np.all(topo.face_counts <= 1)
 
 
+def test_octree_face_neighbors_method_reuses_cached_graph() -> None:
+    tree = _build_two_level_topology_tree()
+    full = tree.face_neighbors()
+    repeat = tree.face_neighbors()
+    coarse = tree.face_neighbors(max_level=0)
+
+    assert full is repeat
+    assert int(full.max_level) == int(tree.max_level)
+    assert int(coarse.max_level) == 0
+
+
 def test_cartesian_uniform_topology_neighbors_are_bidirectional(record_property) -> None:
     tree = _build_cartesian_uniform_tree()
     topo, elapsed_s = _build_face_neighbors_timed(tree, label="cartesian_bidirectional")
