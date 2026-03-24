@@ -997,6 +997,16 @@ def _build_sparse_spherical_seed_lookup_state(
         r_min=float(np.min(geometry.cell_r0)),
         r_max=float(np.max(geometry.cell_r0 + geometry.cell_rden)),
         max_radius=int(seed_lookup.max_radius),
+        leaf_shape=np.zeros(3, dtype=np.int64),
+        tree_depth=-1,
+        cell_i0=np.full(n_leaf_cells, -1, dtype=np.int64),
+        cell_i1=np.full(n_leaf_cells, -1, dtype=np.int64),
+        cell_i2=np.full(n_leaf_cells, -1, dtype=np.int64),
+        node_depth=np.empty((0,), dtype=np.int64),
+        node_i0=np.empty((0,), dtype=np.int64),
+        node_i1=np.empty((0,), dtype=np.int64),
+        node_i2=np.empty((0,), dtype=np.int64),
+        node_value=np.empty((0,), dtype=np.int64),
     )
 
 
