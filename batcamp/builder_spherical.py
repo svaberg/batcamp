@@ -75,6 +75,8 @@ class SphericalOctreeBuilder:
     @staticmethod
     def _cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray, np.ndarray]:
         """Cluster sorted boundary values within one absolute tolerance."""
+        # TODO: Drive boundary clustering from the most probable spherical edge
+        # lattice implied by the whole dataset, not this one absolute cutoff.
         ordered = np.sort(np.asarray(values, dtype=float).reshape(-1))
         if ordered.size == 0:
             return ordered, ordered
@@ -154,6 +156,8 @@ class SphericalOctreeBuilder:
         atol: float = 1e-9,
     ) -> tuple[np.ndarray, np.ndarray, float]:
         """Infer dyadic levels and expected spans from observed `delta_phi`."""
+        # TODO: Replace these local span tolerances with one inference step that
+        # fits the most probable dyadic angular spacing from noisy observed cells.
         levels = np.full(delta_phi.shape, -1, dtype=np.int64)
         expected = np.full(delta_phi.shape, np.nan, dtype=float)
         positive = delta_phi > max(float(atol), 1e-12)
@@ -247,6 +251,8 @@ class SphericalOctreeBuilder:
 
             ref_dphi = (2.0 * math.pi) / n_phi
             ref_dtheta = math.pi / n_theta
+            # TODO: Infer the likeliest angular grid globally instead of relying
+            # on these fixed validation thresholds for per-level medians.
             if not np.isclose(med_dphi, ref_dphi, rtol=2e-2, atol=1e-9):
                 raise ValueError(
                     f"Level {level} has inconsistent dphi={med_dphi:.6e} vs inferred {ref_dphi:.6e}."
@@ -380,6 +386,8 @@ class SphericalOctreeBuilder:
 
         r_min = float(np.min(cell_r_min))
         r_max = float(np.max(cell_r_max))
+        # TODO: Infer the radial edge lattice from clustered observed boundaries
+        # instead of depending on this hard-coded clustering tolerance.
         radial_tol = 1e-7 * max(float(r_max - r_min), 1.0)
         radial_edges, radial_edge_tol = SphericalOctreeBuilder._cluster_close_values(
             np.concatenate((cell_r_min[valid], cell_r_max[valid])),
@@ -402,8 +410,8 @@ class SphericalOctreeBuilder:
 
         d_theta_f = math.pi / float(int(tree.leaf_shape[1]))
         d_phi_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
-        # Real spherical sample files carry small angular roundoff relative to the
-        # inferred regular grid, so snap with a tolerance scaled to one fine step.
+        # TODO: Replace these angular snap tolerances with explicit inferred
+        # theta/phi edge sets so noisy data maps to the most probable octree.
         theta_tol = max(1e-7 * math.pi, 2e-5 * d_theta_f)
         phi_tol = max(1e-7 * 2.0 * math.pi, 2e-5 * d_phi_f)
         r0_search = np.searchsorted(radial_edges, cell_r_min[valid_ids], side="left").astype(np.int64)
