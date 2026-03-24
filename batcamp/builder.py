@@ -249,10 +249,11 @@ def _build_child_table(
     node_i1: np.ndarray,
     node_i2: np.ndarray,
     node_value: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build sparse 8-child references for occupied nodes."""
     n_nodes = int(np.asarray(node_depth, dtype=np.int64).shape[0])
     node_child = np.full((n_nodes, 8), -1, dtype=np.int64)
+    node_parent = np.full(n_nodes, -1, dtype=np.int64)
     key_to_node = {
         (int(node_depth[idx]), int(node_i0[idx]), int(node_i1[idx]), int(node_i2[idx])): int(idx)
         for idx in range(n_nodes)
@@ -272,8 +273,9 @@ def _build_child_table(
             child_idx = key_to_node.get(child_key)
             if child_idx is not None:
                 node_child[idx, child_ord] = int(child_idx)
+                node_parent[int(child_idx)] = int(idx)
     root_node_ids = np.flatnonzero(np.asarray(node_depth, dtype=np.int64) == 0).astype(np.int64)
-    return node_child, root_node_ids
+    return node_child, root_node_ids, node_parent
 
 
 class OctreeBuilder:

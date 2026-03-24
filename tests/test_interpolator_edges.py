@@ -8,6 +8,8 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.cartesian import _lookup_xyz_cell_id_kernel
+from batcamp.spherical import _lookup_rpa_cell_id_kernel
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -139,6 +141,69 @@ def test_reuses_prebuilt_spherical_lookup_state() -> None:
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
     assert tree.lookup_state is lookup_state_before
     assert interp._lookup_state_rpa is lookup_state_before
+
+def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
+    """Cartesian lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0, 2.0, 3.0, 4.0], dtype=float),
+        y_edges=np.array([-1.0, 0.0, 1.0], dtype=float),
+        z_edges=np.array([-1.0, 0.0, 1.0], dtype=float),
+    )
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    ds = _FakeDataset(
+        points=points,
+        corners=corners,
+        variables={
+            Octree.X_VAR: x,
+            Octree.Y_VAR: y,
+            Octree.Z_VAR: z,
+            "Scalar": x + y + z,
+        },
+    )
+    tree = Octree.from_dataset(ds, tree_coord="xyz")
+    lookup_state = tree.lookup_state
+
+    q0 = np.array([0.5, -0.5, -0.5], dtype=float)
+    q1 = np.array([1.5, -0.5, -0.5], dtype=float)
+    hit0 = tree.lookup_point(q0, coord="xyz")
+    hit1 = tree.lookup_point(q1, coord="xyz")
+    assert hit0 is not None
+    assert hit1 is not None
+    assert int(hit0.cell_id) != int(hit1.cell_id)
+
+    state_no_roots = lookup_state._replace(root_node_ids=np.empty((0,), dtype=np.int64))
+    cid = _lookup_xyz_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
+    assert int(cid) == int(hit1.cell_id)
+
+def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
+    """Spherical lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
+    ds = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
+    tree = Octree.from_dataset(ds, tree_coord="rpa")
+    lookup_state = tree.lookup_state
+
+    lo0, hi0 = tree.cell_bounds(0, coord="rpa")
+    lo1, hi1 = tree.cell_bounds(1, coord="rpa")
+    q0 = np.array([
+        0.5 * (float(lo0[0]) + float(hi0[0])),
+        0.5 * (float(lo0[1]) + float(hi0[1])),
+        (float(lo0[2]) + 0.4 * float((hi0[2] - lo0[2]) % (2.0 * math.pi) or 2.0 * math.pi)) % (2.0 * math.pi),
+    ], dtype=float)
+    q1 = np.array([
+        0.5 * (float(lo1[0]) + float(hi1[0])),
+        0.5 * (float(lo1[1]) + float(hi1[1])),
+        (float(lo1[2]) + 0.4 * float((hi1[2] - lo1[2]) % (2.0 * math.pi) or 2.0 * math.pi)) % (2.0 * math.pi),
+    ], dtype=float)
+    hit0 = tree.lookup_point(q0, coord="rpa")
+    hit1 = tree.lookup_point(q1, coord="rpa")
+    assert hit0 is not None
+    assert hit1 is not None
+    assert int(hit0.cell_id) != int(hit1.cell_id)
+
+    state_no_roots = lookup_state._replace(root_node_ids=np.empty((0,), dtype=np.int64))
+    cid = _lookup_rpa_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
+    assert int(cid) == int(hit1.cell_id)
 
 def test_call_rejects_invalid_query_coord() -> None:
     """Runtime call should reject invalid query_coord override."""

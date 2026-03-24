@@ -28,7 +28,7 @@ from batcamp.topological import TopologicalNeighborhood
 
 _G2211_URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
 _G2211_SHA256 = "c31a32aab08cc20d5b643bba734fd7220e6b369e691f55f88a3a08cc5b2a2136"
-_OCTREE_CACHE_VERSION = "v2"
+_OCTREE_CACHE_VERSION = "v3"
 _TOPOLOGY_CACHE_VERSION = "v2"
 
 

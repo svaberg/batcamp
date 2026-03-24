@@ -40,6 +40,8 @@ class CartesianLookupKernelState(NamedTuple):
     node_value: np.ndarray
     node_child: np.ndarray
     root_node_ids: np.ndarray
+    node_parent: np.ndarray
+    cell_node_id: np.ndarray
     node_x_min: np.ndarray
     node_x_max: np.ndarray
     node_y_min: np.ndarray
@@ -100,6 +102,14 @@ def _lookup_xyz_cell_id_kernel(
     if prev_cid >= 0 and _contains_xyz_cell(int(prev_cid), x, y, z, lookup_state):
         return int(prev_cid)
 
+    current = -1
+    if prev_cid >= 0:
+        current = int(lookup_state.cell_node_id[int(prev_cid)])
+        while current >= 0:
+            if _contains_xyz_node(current, x, y, z, lookup_state):
+                break
+            current = int(lookup_state.node_parent[current])
+
     inside_bbox = bool(
         (x >= lookup_state.xyz_min[0])
         and (x <= lookup_state.xyz_max[0])
@@ -111,12 +121,12 @@ def _lookup_xyz_cell_id_kernel(
     if not inside_bbox:
         return -1
 
-    current = -1
-    for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
-        node_id = int(lookup_state.root_node_ids[root_pos])
-        if _contains_xyz_node(node_id, x, y, z, lookup_state):
-            current = node_id
-            break
+    if current < 0:
+        for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
+            node_id = int(lookup_state.root_node_ids[root_pos])
+            if _contains_xyz_node(node_id, x, y, z, lookup_state):
+                current = node_id
+                break
     if current < 0:
         return -1
 
@@ -204,7 +214,18 @@ class _CartesianCellLookup:
         self._cell_valid = self._cell_level >= 0
 
         required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
-        required += ("_node_child", "_root_node_ids", "_node_x_min", "_node_x_max", "_node_y_min", "_node_y_max", "_node_z_min", "_node_z_max")
+        required += (
+            "_node_child",
+            "_root_node_ids",
+            "_node_parent",
+            "_cell_node_id",
+            "_node_x_min",
+            "_node_x_max",
+            "_node_y_min",
+            "_node_y_max",
+            "_node_z_min",
+            "_node_z_max",
+        )
         missing = [name for name in required if not hasattr(tree, name)]
         if missing:
             raise ValueError(f"Cartesian lookup requires builder-provided octree state: missing {missing}.")
@@ -218,6 +239,8 @@ class _CartesianCellLookup:
         self._node_value = np.asarray(tree._node_value, dtype=np.int64)
         self._node_child = np.asarray(tree._node_child, dtype=np.int64)
         self._root_node_ids = np.asarray(tree._root_node_ids, dtype=np.int64)
+        self._node_parent = np.asarray(tree._node_parent, dtype=np.int64)
+        self._cell_node_id = np.asarray(tree._cell_node_id, dtype=np.int64)
         self._node_x_min = np.asarray(tree._node_x_min, dtype=np.float64)
         self._node_x_max = np.asarray(tree._node_x_max, dtype=np.float64)
         self._node_y_min = np.asarray(tree._node_y_min, dtype=np.float64)
@@ -237,6 +260,8 @@ class _CartesianCellLookup:
             node_value=self._node_value,
             node_child=self._node_child,
             root_node_ids=self._root_node_ids,
+            node_parent=self._node_parent,
+            cell_node_id=self._cell_node_id,
             node_x_min=self._node_x_min,
             node_x_max=self._node_x_max,
             node_y_min=self._node_y_min,
