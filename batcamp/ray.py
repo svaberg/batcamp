@@ -24,7 +24,6 @@ from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 from .topological import TopologicalKernelState
 from .topological import TopologicalNeighborhood
-from .topological import _cell_local_indices_from_bounds
 from .topological import build_topological_neighborhood_kernel
 from .topological import build_topological_neighborhood
 
@@ -273,7 +272,6 @@ def _topology_for_ray_max_level(tree: Octree, max_level: int) -> TopologicalNeig
     if key in cache:
         return cache[key]
 
-    tree._require_lookup()
     if tree.cell_levels is None:
         raise ValueError("Octree has no cell_levels; cannot build ray topology.")
 
@@ -286,14 +284,11 @@ def _topology_for_ray_max_level(tree: Octree, max_level: int) -> TopologicalNeig
     cell_levels = levels_all[valid]
     active_levels = np.minimum(cell_levels, key)
 
-    if str(tree.tree_coord) == "xyz":
-        i0_valid, i1_valid, i2_valid = _cell_local_indices_from_bounds(tree, cell_ids, cell_levels)
-    else:
-        if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
-            raise ValueError("Lookup indices (_i0/_i1/_i2) are unavailable; build lookup before ray topology.")
-        i0_valid = np.asarray(getattr(tree, "_i0"), dtype=np.int64)[valid]
-        i1_valid = np.asarray(getattr(tree, "_i1"), dtype=np.int64)[valid]
-        i2_valid = np.asarray(getattr(tree, "_i2"), dtype=np.int64)[valid]
+    if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
+        raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; ray topology requires built tree state.")
+    i0_valid = np.asarray(getattr(tree, "_i0"), dtype=np.int64)[valid]
+    i1_valid = np.asarray(getattr(tree, "_i1"), dtype=np.int64)[valid]
+    i2_valid = np.asarray(getattr(tree, "_i2"), dtype=np.int64)[valid]
 
     shift = cell_levels - active_levels
     active_i0 = np.right_shift(i0_valid, shift)

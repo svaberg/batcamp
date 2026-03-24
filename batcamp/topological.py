@@ -381,50 +381,8 @@ def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np
     return out
 
 
-def _cell_local_indices_from_bounds(tree: Octree, cell_ids: np.ndarray, levels: np.ndarray) -> tuple[np.ndarray, ...]:
-    """Derive exact per-level `(i0, i1, i2)` starts from cell bounds."""
-    tree._require_lookup()
-    lookup_state = tree.lookup_state
-    n = int(cell_ids.shape[0])
-    i0 = np.full(n, -1, dtype=np.int64)
-    i1 = np.full(n, -1, dtype=np.int64)
-    i2 = np.full(n, -1, dtype=np.int64)
-
-    if str(tree.tree_coord) == "xyz":
-        xyz_min = np.asarray(lookup_state.xyz_min, dtype=float)
-        xyz_max = np.asarray(lookup_state.xyz_max, dtype=float)
-        domain_span = np.maximum(xyz_max - xyz_min, np.finfo(float).tiny)
-        cell_min0 = np.asarray(lookup_state.cell_x_min, dtype=float)[cell_ids]
-        cell_min1 = np.asarray(lookup_state.cell_y_min, dtype=float)[cell_ids]
-        cell_min2 = np.asarray(lookup_state.cell_z_min, dtype=float)[cell_ids]
-        offset0 = cell_min0 - float(xyz_min[0])
-        offset1 = cell_min1 - float(xyz_min[1])
-        offset2 = cell_min2 - float(xyz_min[2])
-    else:
-        raise ValueError("Exact bound-derived topology indices are only available for Cartesian trees.")
-
-    for level in sorted(set(int(v) for v in levels.tolist())):
-        mask = levels == int(level)
-        if not np.any(mask):
-            continue
-        if int(level) < 0:
-            raise ValueError(f"Derived negative level={level}; max_level={tree.max_level}.")
-        scale = 1 << int(level)
-        n0 = int(tree.root_shape[0]) * scale
-        n1 = int(tree.root_shape[1]) * scale
-        n2 = int(tree.root_shape[2]) * scale
-        d0 = float(domain_span[0] / max(n0, 1))
-        d1 = float(domain_span[1] / max(n1, 1))
-        d2 = float(domain_span[2] / max(n2, 1))
-        i0[mask] = np.rint(offset0[mask] / d0).astype(np.int64)
-        i1[mask] = np.rint(offset1[mask] / d1).astype(np.int64)
-        i2[mask] = np.rint(offset2[mask] / d2).astype(np.int64)
-    return i0, i1, i2
-
-
 def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarray, ...]:
     """Build unique frontier nodes by truncating leaf levels to `max_level`."""
-    tree._require_lookup()
     cell_levels = tree.cell_levels
     if cell_levels is None:
         raise ValueError("Octree has no cell_levels; cannot build topological neighborhood.")
@@ -435,19 +393,16 @@ def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarra
     if not np.any(valid):
         raise ValueError("Octree contains no valid cells (all levels are < 0).")
     cell_ids = np.flatnonzero(valid).astype(np.int64)
-    if str(tree.tree_coord) == "xyz" and getattr(tree, "_lookup_state", None) is not None:
-        i0_valid, i1_valid, i2_valid = _cell_local_indices_from_bounds(tree, cell_ids, levels_all[valid])
-    else:
-        if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
-            raise ValueError("Lookup indices (_i0/_i1/_i2) are unavailable; build lookup before topology.")
-        i0_all = np.asarray(getattr(tree, "_i0"), dtype=np.int64)
-        i1_all = np.asarray(getattr(tree, "_i1"), dtype=np.int64)
-        i2_all = np.asarray(getattr(tree, "_i2"), dtype=np.int64)
-        if not (levels_all.shape == i0_all.shape == i1_all.shape == i2_all.shape):
-            raise ValueError("Cell level/index arrays must have matching shapes.")
-        i0_valid = i0_all[valid]
-        i1_valid = i1_all[valid]
-        i2_valid = i2_all[valid]
+    if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
+        raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; topology requires built tree state.")
+    i0_all = np.asarray(getattr(tree, "_i0"), dtype=np.int64)
+    i1_all = np.asarray(getattr(tree, "_i1"), dtype=np.int64)
+    i2_all = np.asarray(getattr(tree, "_i2"), dtype=np.int64)
+    if not (levels_all.shape == i0_all.shape == i1_all.shape == i2_all.shape):
+        raise ValueError("Cell level/index arrays must have matching shapes.")
+    i0_valid = i0_all[valid]
+    i1_valid = i1_all[valid]
+    i2_valid = i2_all[valid]
 
     levels_valid = levels_all[valid]
     active_levels = np.minimum(levels_valid, int(max_level))
