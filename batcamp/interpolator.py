@@ -403,7 +403,6 @@ class OctreeInterpolator:
             )
         resolved_tree.bind(ds, axis_rho_tol=axis_rho_tol)
         self.tree = resolved_tree
-        self.lookup = self.tree.lookup
         self.value_names: tuple[str, ...] = ()
         self._point_values = self._coerce_point_values(values)
         self._tree_coord = str(self.tree.tree_coord)
@@ -487,8 +486,8 @@ class OctreeInterpolator:
         self._cell_r1 = np.max(vr, axis=1)
         self._cell_t0 = np.min(vt, axis=1)
         self._cell_t1 = np.max(vt, axis=1)
-        self._cell_p_start = self.lookup.cell_phi_start
-        self._cell_p_width = self.lookup.cell_phi_width
+        self._cell_p_start = self.tree.cell_phi_start
+        self._cell_p_width = self.tree.cell_phi_width
 
         tiny = np.finfo(float).tiny
         self._cell_rden = np.maximum(self._cell_r1 - self._cell_r0, tiny)
@@ -539,7 +538,7 @@ class OctreeInterpolator:
         axis-aligned min/max bounds (slab normalization).
         """
         corners = self._corners
-        pts = np.array(self.lookup.points, dtype=float)
+        pts = np.array(self.tree.points, dtype=float)
         vx = pts[corners, 0]
         vy = pts[corners, 1]
         vz = pts[corners, 2]
@@ -613,7 +612,7 @@ class OctreeInterpolator:
             cell_phi_full=self._cell_phi_full,
             cell_phi_tiny=self._cell_phi_tiny,
         )
-        self._lookup_state_rpa = self.lookup.lookup_state
+        self._lookup_state_rpa = self.tree.lookup_state
 
     def _prepare_kernel_cache_xyz(self) -> None:
         """Build packed arrays for the Cartesian backend."""
@@ -628,7 +627,7 @@ class OctreeInterpolator:
             cell_z0=self._cell_z0,
             cell_zden=self._cell_zden,
         )
-        self._lookup_state_xyz = self.lookup.lookup_state
+        self._lookup_state_xyz = self.tree.lookup_state
 
     def _fill_value_vector(self) -> np.ndarray:
         """Convert `fill_value` to one vector of length `n_components`."""
@@ -647,7 +646,7 @@ class OctreeInterpolator:
 
     def warmup_kernels(self) -> None:
         """Trigger JIT compilation ahead of first real query."""
-        q_xyz = np.array(self.lookup.points[:1], dtype=np.float64, order="C")
+        q_xyz = np.array(self.tree.points[:1], dtype=np.float64, order="C")
         if q_xyz.shape[0] == 0:
             q_xyz = np.zeros((1, 3), dtype=np.float64)
         fill = self._fill_value_vector()

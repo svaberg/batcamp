@@ -120,25 +120,25 @@ def test_auto_tree_coord_selects_cartesian() -> None:
     interp = OctreeInterpolator(ds, ["Scalar"], tree=None)
     assert interp.tree.tree_coord == "xyz"
 
-def test_reuses_prebuilt_cartesian_lookup() -> None:
-    """Interpolator should reuse the same prebuilt tree/lookup object."""
+def test_reuses_prebuilt_cartesian_lookup_state() -> None:
+    """Interpolator should reuse the same prebuilt Cartesian lookup state."""
     ds = _build_fake_cartesian_dataset()
     tree = Octree.from_dataset(ds, tree_coord="xyz")
-    lookup_before = tree.lookup
+    lookup_state_before = tree.lookup_state
 
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
-    assert tree.lookup is lookup_before
-    assert interp.lookup is lookup_before
+    assert tree.lookup_state is lookup_state_before
+    assert interp._lookup_state_xyz is lookup_state_before
 
-def test_reuses_prebuilt_spherical_lookup() -> None:
-    """Interpolator should reuse the same prebuilt tree/lookup object."""
+def test_reuses_prebuilt_spherical_lookup_state() -> None:
+    """Interpolator should reuse the same prebuilt spherical lookup state."""
     ds = _build_fake_dataset()
     tree = Octree.from_dataset(ds, tree_coord="rpa")
-    lookup_before = tree.lookup
+    lookup_state_before = tree.lookup_state
 
     interp = OctreeInterpolator(ds, ["Scalar"], tree=tree)
-    assert tree.lookup is lookup_before
-    assert interp.lookup is lookup_before
+    assert tree.lookup_state is lookup_state_before
+    assert interp._lookup_state_rpa is lookup_state_before
 
 def test_call_rejects_invalid_query_coord() -> None:
     """Runtime call should reject invalid query_coord override."""
@@ -238,4 +238,3 @@ def test_invalid_level_cells_treated_as_misses() -> None:
     assert int(cids[0]) == -1
     assert int(cids[1]) >= 0
     assert np.isclose(float(vals[0]), -123.0, atol=0.0, rtol=0.0)
-
