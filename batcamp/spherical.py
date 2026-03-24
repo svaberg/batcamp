@@ -615,69 +615,6 @@ class SphericalOctree(_SphericalCellLookup, Octree):
 
     TREE_COORD: ClassVar[str | None] = "rpa"
 
-    def lookup_local(self, xyz: np.ndarray, near_cid: int | None = None) -> "LookupHit | None":
-        """Lookup in `xyz`, first trying cells near `near_cid` when provided."""
-        q = np.array(xyz, dtype=float)
-        x = float(q[0])
-        y = float(q[1])
-        z = float(q[2])
-        self._require_lookup()
-        lookup = self
-        if near_cid is not None and int(near_cid) >= 0:
-            near = int(near_cid)
-            if self.contains_cell(near, q, coord="xyz"):
-                return self.hit_from_cell_id(near)
-
-            near_level = int(lookup._cell_level[near])
-            near_i1 = int(lookup._i1[near])
-            near_i2 = int(lookup._i2[near])
-            shape_table = lookup._shape_table
-            near_shape: np.ndarray | None = None
-            if 0 <= near_level < shape_table.shape[0] and int(shape_table[near_level, 0]) > 0:
-                near_shape = shape_table[near_level]
-            candidate_arrays: list[np.ndarray] = []
-            for level in (near_level, near_level - 1, near_level + 1):
-                if level < 0 or level >= shape_table.shape[0]:
-                    continue
-                shape = shape_table[level]
-                if int(shape[0]) <= 0:
-                    continue
-                ntheta = int(shape[1])
-                nphi = int(shape[2])
-                if near_shape is None:
-                    mapped_i1 = near_i1
-                    mapped_i2 = near_i2
-                else:
-                    mapped_i1 = int(
-                        np.clip(
-                            round(((near_i1 + 0.5) * shape[1] / near_shape[1]) - 0.5),
-                            0,
-                            ntheta - 1,
-                        )
-                    )
-                    mapped_i2 = int(
-                        np.clip(
-                            round(((near_i2 + 0.5) * shape[2] / near_shape[2]) - 0.5),
-                            0,
-                            nphi - 1,
-                        )
-                    )
-                for radius in (0, 1):
-                    cands = lookup._candidate_ids(int(level), mapped_i1, mapped_i2, radius)
-                    if cands.size > 0:
-                        candidate_arrays.append(cands)
-
-            if candidate_arrays:
-                candidates = np.unique(np.concatenate(candidate_arrays))
-                r, polar, azimuth = _xyz_to_rpa_components(float(q[0]), float(q[1]), float(q[2]))
-                inside = lookup._contains_rpa(candidates, r, polar, azimuth)
-                if np.any(inside):
-                    valid = candidates[inside]
-                    d = np.linalg.norm(lookup._cell_centers[valid] - q, axis=1)
-                    return self.hit_from_cell_id(int(valid[int(np.argmin(d))]))
-
-        return self.lookup_point(np.array([x, y, z], dtype=float), coord="xyz")
-
     def build_lookup(
         self,
     ) -> None:
