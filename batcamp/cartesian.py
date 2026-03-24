@@ -23,7 +23,6 @@ from .octree import Octree
 
 _LOOKUP_CONTAIN_TOL = 1e-10
 _MISSING_NODE_VALUE = -1
-_INTERNAL_NODE_VALUE = -2
 
 
 class CartesianLookupKernelState(NamedTuple):
@@ -241,19 +240,25 @@ class _CartesianCellLookup:
         self._xyz_span = np.maximum(self._xyz_max - self._xyz_min, tiny)
 
         n_cells = int(self._corners.shape[0])
-        if tree.cell_levels is not None and tree.cell_levels.shape[0] == n_cells:
-            self._cell_level = np.array(tree.cell_levels, dtype=np.int64)
-        else:
-            self._cell_level = np.full(n_cells, int(tree.max_level), dtype=np.int64)
+        if tree.cell_levels is None or tree.cell_levels.shape[0] != n_cells:
+            raise ValueError("Cartesian lookup requires exact builder-provided cell_levels.")
+        self._cell_level = np.array(tree.cell_levels, dtype=np.int64)
         self._cell_valid = self._cell_level >= 0
 
         self._leaf_shape = np.asarray(tree.leaf_shape, dtype=np.int64)
         self._tree_depth = int(tree.depth)
-        self._cell_depth = np.full(n_cells, -1, dtype=np.int64)
-        self._i0 = np.full(n_cells, -1, dtype=np.int64)
-        self._i1 = np.full(n_cells, -1, dtype=np.int64)
-        self._i2 = np.full(n_cells, -1, dtype=np.int64)
-        self._init_exact_addresses()
+        required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
+        missing = [name for name in required if not hasattr(tree, name)]
+        if missing:
+            raise ValueError(f"Cartesian lookup requires builder-provided octree state: missing {missing}.")
+        self._i0 = np.asarray(tree._i0, dtype=np.int64)
+        self._i1 = np.asarray(tree._i1, dtype=np.int64)
+        self._i2 = np.asarray(tree._i2, dtype=np.int64)
+        self._node_depth = np.asarray(tree._node_depth, dtype=np.int64)
+        self._node_i0 = np.asarray(tree._node_i0, dtype=np.int64)
+        self._node_i1 = np.asarray(tree._node_i1, dtype=np.int64)
+        self._node_i2 = np.asarray(tree._node_i2, dtype=np.int64)
+        self._node_value = np.asarray(tree._node_value, dtype=np.int64)
         self._bin_shape = np.array([1, 1, 1], dtype=np.int64)
         self._bin_offsets = np.zeros(2, dtype=np.int64)
         self._bin_cell_ids = np.empty((0,), dtype=np.int64)
@@ -285,177 +290,6 @@ class _CartesianCellLookup:
             node_i2=self._node_i2,
             node_value=self._node_value,
         )
-
-    def _init_exact_addresses(self) -> None:
-        """Derive exact Cartesian `(depth, i0, i1, i2)` addresses from cell bounds."""
-        valid_ids = np.flatnonzero(self._cell_valid).astype(np.int64)
-        if valid_ids.size == 0:
-            raise ValueError("Cartesian lookup requires at least one valid cell address.")
-
-        fine_step = self._xyz_span / np.asarray(self._leaf_shape, dtype=float)
-        float32_eps = float(np.finfo(np.float32).eps)
-        axis_tol = np.empty(3, dtype=float)
-        for k in range(3):
-            coord_scale = max(abs(float(self._xyz_min[k])), abs(float(self._xyz_max[k])), 1.0)
-            # Real BATSRUS coordinates are often float32-rounded, so snap bounds in finest-grid units
-            # with a tolerance tied to coordinate precision but still far below one finest cell.
-            axis_tol[k] = min(
-                0.25 * float(fine_step[k]),
-                max(8.0 * float32_eps * coord_scale, 1e-9 * max(float(self._xyz_span[k]), 1.0)),
-            )
-        fine_n0 = int(self._leaf_shape[0])
-        fine_n1 = int(self._leaf_shape[1])
-        fine_n2 = int(self._leaf_shape[2])
-        tree_depth = int(self._tree_depth)
-
-        depths = np.asarray(self._cell_level[valid_ids], dtype=np.int64)
-        if np.any(depths < 0):
-            bad = int(valid_ids[np.flatnonzero(depths < 0)[0]])
-            raise ValueError(f"Derived negative level for Cartesian cell {bad}.")
-        self._cell_depth[valid_ids] = depths
-
-        shifts = np.asarray(tree_depth - depths, dtype=np.int64)
-        if np.any(shifts < 0):
-            bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
-            raise ValueError(f"Cartesian cell {bad} depth exceeds tree_depth={tree_depth}.")
-        width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
-
-        x0_f = np.rint((self._cell_x_min[valid_ids] - float(self._xyz_min[0])) / float(fine_step[0])).astype(np.int64)
-        x1_f = np.rint((self._cell_x_max[valid_ids] - float(self._xyz_min[0])) / float(fine_step[0])).astype(np.int64)
-        y0_f = np.rint((self._cell_y_min[valid_ids] - float(self._xyz_min[1])) / float(fine_step[1])).astype(np.int64)
-        y1_f = np.rint((self._cell_y_max[valid_ids] - float(self._xyz_min[1])) / float(fine_step[1])).astype(np.int64)
-        z0_f = np.rint((self._cell_z_min[valid_ids] - float(self._xyz_min[2])) / float(fine_step[2])).astype(np.int64)
-        z1_f = np.rint((self._cell_z_max[valid_ids] - float(self._xyz_min[2])) / float(fine_step[2])).astype(np.int64)
-
-        in_bounds = (
-            (x0_f >= 0) & (x1_f <= fine_n0)
-            & (y0_f >= 0) & (y1_f <= fine_n1)
-            & (z0_f >= 0) & (z1_f <= fine_n2)
-        )
-        if not np.all(in_bounds):
-            bad = int(valid_ids[np.flatnonzero(~in_bounds)[0]])
-            raise ValueError(f"Cartesian cell {bad} address is outside inferred grid bounds.")
-
-        spans_ok = (
-            ((x1_f - x0_f) == width_units)
-            & ((y1_f - y0_f) == width_units)
-            & ((z1_f - z0_f) == width_units)
-        )
-        if not np.all(spans_ok):
-            bad = int(valid_ids[np.flatnonzero(~spans_ok)[0]])
-            raise ValueError(f"Cartesian cell {bad} width does not match inferred level {int(self._cell_level[bad])}.")
-
-        aligned = (
-            ((x0_f % width_units) == 0)
-            & ((y0_f % width_units) == 0)
-            & ((z0_f % width_units) == 0)
-        )
-        if not np.all(aligned):
-            bad = int(valid_ids[np.flatnonzero(~aligned)[0]])
-            raise ValueError(f"Cartesian cell {bad} fine-grid origin is not aligned to its inferred level.")
-
-        x0_snap = float(self._xyz_min[0]) + x0_f * float(fine_step[0])
-        x1_snap = float(self._xyz_min[0]) + x1_f * float(fine_step[0])
-        y0_snap = float(self._xyz_min[1]) + y0_f * float(fine_step[1])
-        y1_snap = float(self._xyz_min[1]) + y1_f * float(fine_step[1])
-        z0_snap = float(self._xyz_min[2]) + z0_f * float(fine_step[2])
-        z1_snap = float(self._xyz_min[2]) + z1_f * float(fine_step[2])
-        snap_ok = (
-            np.isclose(self._cell_x_min[valid_ids], x0_snap, rtol=0.0, atol=float(axis_tol[0]))
-            & np.isclose(self._cell_x_max[valid_ids], x1_snap, rtol=0.0, atol=float(axis_tol[0]))
-            & np.isclose(self._cell_y_min[valid_ids], y0_snap, rtol=0.0, atol=float(axis_tol[1]))
-            & np.isclose(self._cell_y_max[valid_ids], y1_snap, rtol=0.0, atol=float(axis_tol[1]))
-            & np.isclose(self._cell_z_min[valid_ids], z0_snap, rtol=0.0, atol=float(axis_tol[2]))
-            & np.isclose(self._cell_z_max[valid_ids], z1_snap, rtol=0.0, atol=float(axis_tol[2]))
-        )
-        if not np.all(snap_ok):
-            bad = int(valid_ids[np.flatnonzero(~snap_ok)[0]])
-            raise ValueError(f"Cartesian cell {bad} bounds do not align with inferred octree grid.")
-
-        i0 = np.right_shift(x0_f, shifts)
-        i1 = np.right_shift(y0_f, shifts)
-        i2 = np.right_shift(z0_f, shifts)
-        self._i0[valid_ids] = i0
-        self._i1[valid_ids] = i1
-        self._i2[valid_ids] = i2
-
-        leaf_depth = depths
-        leaf_i0 = i0
-        leaf_i1 = i1
-        leaf_i2 = i2
-        leaf_value = valid_ids
-        leaf_order = np.lexsort((leaf_i2, leaf_i1, leaf_i0, leaf_depth))
-        leaf_depth = leaf_depth[leaf_order]
-        leaf_i0 = leaf_i0[leaf_order]
-        leaf_i1 = leaf_i1[leaf_order]
-        leaf_i2 = leaf_i2[leaf_order]
-        leaf_value = leaf_value[leaf_order]
-        same_leaf = (
-            (leaf_depth[1:] == leaf_depth[:-1])
-            & (leaf_i0[1:] == leaf_i0[:-1])
-            & (leaf_i1[1:] == leaf_i1[:-1])
-            & (leaf_i2[1:] == leaf_i2[:-1])
-        )
-        if np.any(same_leaf):
-            dup = int(np.flatnonzero(same_leaf)[0])
-            raise ValueError(f"Cartesian cells overlap at octree address {(int(leaf_depth[dup]), int(leaf_i0[dup]), int(leaf_i1[dup]), int(leaf_i2[dup]))}.")
-
-        node_depth_parts = [leaf_depth]
-        node_i0_parts = [leaf_i0]
-        node_i1_parts = [leaf_i1]
-        node_i2_parts = [leaf_i2]
-        node_value_parts = [leaf_value]
-
-        for parent_depth in range(tree_depth):
-            mask = depths > int(parent_depth)
-            if not np.any(mask):
-                continue
-            up = np.asarray(depths[mask] - int(parent_depth), dtype=np.int64)
-            parent_nodes = np.column_stack(
-                (
-                    np.full(int(np.count_nonzero(mask)), int(parent_depth), dtype=np.int64),
-                    np.right_shift(i0[mask], up),
-                    np.right_shift(i1[mask], up),
-                    np.right_shift(i2[mask], up),
-                )
-            )
-            parent_nodes = np.unique(parent_nodes, axis=0)
-            node_depth_parts.append(parent_nodes[:, 0].astype(np.int64, copy=False))
-            node_i0_parts.append(parent_nodes[:, 1].astype(np.int64, copy=False))
-            node_i1_parts.append(parent_nodes[:, 2].astype(np.int64, copy=False))
-            node_i2_parts.append(parent_nodes[:, 3].astype(np.int64, copy=False))
-            node_value_parts.append(np.full(parent_nodes.shape[0], _INTERNAL_NODE_VALUE, dtype=np.int64))
-
-        node_depth = np.concatenate(node_depth_parts)
-        node_i0 = np.concatenate(node_i0_parts)
-        node_i1 = np.concatenate(node_i1_parts)
-        node_i2 = np.concatenate(node_i2_parts)
-        node_value = np.concatenate(node_value_parts)
-        node_order = np.lexsort((node_i2, node_i1, node_i0, node_depth))
-        node_depth = node_depth[node_order]
-        node_i0 = node_i0[node_order]
-        node_i1 = node_i1[node_order]
-        node_i2 = node_i2[node_order]
-        node_value = node_value[node_order]
-
-        same_node = (
-            (node_depth[1:] == node_depth[:-1])
-            & (node_i0[1:] == node_i0[:-1])
-            & (node_i1[1:] == node_i1[:-1])
-            & (node_i2[1:] == node_i2[:-1])
-        )
-        if np.any(same_node):
-            dup = int(np.flatnonzero(same_node)[0])
-            raise ValueError(
-                "Cartesian cells overlap across parent/child addresses at "
-                f"({int(node_depth[dup])}, {int(node_i0[dup])}, {int(node_i1[dup])}, {int(node_i2[dup])})."
-            )
-
-        self._node_depth = node_depth
-        self._node_i0 = node_i0
-        self._node_i1 = node_i1
-        self._node_i2 = node_i2
-        self._node_value = node_value
 
     @staticmethod
     def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:
