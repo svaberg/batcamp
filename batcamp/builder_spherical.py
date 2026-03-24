@@ -400,8 +400,12 @@ class SphericalOctreeBuilder:
             raise ValueError(f"Spherical cell {bad} depth exceeds tree_depth={tree_depth}.")
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
 
-        theta_tol = 1e-7 * math.pi
-        phi_tol = 1e-7 * 2.0 * math.pi
+        d_theta_f = math.pi / float(int(tree.leaf_shape[1]))
+        d_phi_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
+        # Real spherical sample files carry small angular roundoff relative to the
+        # inferred regular grid, so snap with a tolerance scaled to one fine step.
+        theta_tol = max(1e-7 * math.pi, 2e-5 * d_theta_f)
+        phi_tol = max(1e-7 * 2.0 * math.pi, 2e-5 * d_phi_f)
         r0_search = np.searchsorted(radial_edges, cell_r_min[valid_ids], side="left").astype(np.int64)
         r1_search = np.searchsorted(radial_edges, cell_r_max[valid_ids], side="left").astype(np.int64)
         r0_next = np.clip(r0_search, 0, radial_edges.size - 1)
@@ -431,8 +435,6 @@ class SphericalOctreeBuilder:
             bad = int(valid_ids[np.flatnonzero(~r1_ok)[0]])
             raise ValueError(f"Spherical cell {bad} r-max does not align with the inferred octree grid.")
 
-        d_theta_f = math.pi / float(int(tree.leaf_shape[1]))
-        d_phi_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
         width_phi = np.asarray(phi_width[valid_ids], dtype=float)
         if np.any(width_phi >= (2.0 * math.pi - phi_tol)):
             bad = int(valid_ids[np.flatnonzero(width_phi >= (2.0 * math.pi - phi_tol))[0]])
