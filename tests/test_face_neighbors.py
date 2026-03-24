@@ -8,9 +8,9 @@ from batread.dataset import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.ray import _candidate_nodes_after_exit
-from batcamp.topological import build_topological_neighborhood
-from batcamp.topological import TopologicalNeighborhood
+from batcamp.ray import _candidate_face_neighbor_nodes_after_exit
+from batcamp.face_neighbors import build_face_neighbors
+from batcamp.face_neighbors import OctreeFaceNeighbors
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -104,8 +104,8 @@ def _build_two_level_topology_tree() -> Octree:
     return tree
 
 
-def _assert_basic_topology_invariants(topo: TopologicalNeighborhood) -> None:
-    """Private test helper: validate basic neighborhood graph invariants."""
+def _assert_basic_face_neighbor_invariants(topo: OctreeFaceNeighbors) -> None:
+    """Private test helper: validate basic face-neighbor graph invariants."""
     assert topo.node_count > 0
     assert topo.face_counts.shape == (topo.node_count, 6)
     assert topo.face_offsets.shape == (topo.node_count * 6 + 1,)
@@ -127,29 +127,29 @@ def _assert_basic_topology_invariants(topo: TopologicalNeighborhood) -> None:
             assert np.unique(neighbors).size == neighbors.size
 
 
-def _build_topology_timed(
+def _build_face_neighbors_timed(
     tree: Octree,
     *,
     label: str,
     max_level: int | None = None,
-) -> tuple[TopologicalNeighborhood, float]:
-    """Private test helper: build topology and emit a small timing line."""
+) -> tuple[OctreeFaceNeighbors, float]:
+    """Private test helper: build face neighbors and emit a small timing line."""
     t0 = time.perf_counter()
-    topo = build_topological_neighborhood(tree, max_level=max_level)
+    topo = build_face_neighbors(tree, max_level=max_level)
     elapsed_s = time.perf_counter() - t0
     print(
-        f"topology {label}: {elapsed_s * 1.0e3:.2f} ms, "
+        f"face-neighbors {label}: {elapsed_s * 1.0e3:.2f} ms, "
         f"nodes={topo.node_count}, face_refs={int(topo.face_neighbors.size)}"
     )
     return topo, elapsed_s
 
 
-def _candidate_nodes_for_face_mask(topo: TopologicalNeighborhood, node_id: int, face_mask: int) -> np.ndarray:
-    """Private test helper: return topology candidates for one face-mask exit."""
+def _candidate_nodes_for_face_mask(topo: OctreeFaceNeighbors, node_id: int, face_mask: int) -> np.ndarray:
+    """Private test helper: return face-neighbors candidates for one face-mask exit."""
     kernel_state = topo.kernel_state
     work0 = np.full(max(64, topo.node_count + 1), -1, dtype=np.int64)
     work1 = np.full(max(64, topo.node_count + 1), -1, dtype=np.int64)
-    n_candidates, active = _candidate_nodes_after_exit(
+    n_candidates, active = _candidate_face_neighbor_nodes_after_exit(
         int(node_id),
         int(face_mask),
         kernel_state,
@@ -294,8 +294,8 @@ def _assert_no_internal_gaps(cell_ids: np.ndarray) -> None:
     assert np.all(ids[first : last + 1] >= 0)
 
 
-def _node_extents(topo: TopologicalNeighborhood, node_id: int) -> tuple[np.ndarray, np.ndarray]:
-    """Private test helper: node extent in the topology finest-grid index space."""
+def _node_extents(topo: OctreeFaceNeighbors, node_id: int) -> tuple[np.ndarray, np.ndarray]:
+    """Private test helper: node extent in the face-neighbors finest-grid index space."""
     level = int(topo.levels[node_id])
     scale = 1 << int(topo.max_level - level)
     lo = np.array(
@@ -320,7 +320,7 @@ def _touch_or_overlap(lo0: int, hi0: int, lo1: int, hi1: int) -> bool:
     return max(int(lo0), int(lo1)) <= min(int(hi0), int(hi1))
 
 
-def _face_masks_between_nodes(tree: Octree, topo: TopologicalNeighborhood, node_a: int, node_b: int) -> np.ndarray:
+def _face_masks_between_nodes(tree: Octree, topo: OctreeFaceNeighbors, node_a: int, node_b: int) -> np.ndarray:
     """Private test helper: admissible face masks on `node_a` that can lead to `node_b`."""
     lo_a, hi_a = _node_extents(topo, node_a)
     lo_b, hi_b = _node_extents(topo, node_b)
@@ -359,7 +359,7 @@ def _face_masks_between_nodes(tree: Octree, topo: TopologicalNeighborhood, node_
     return unique
 
 
-def _assert_oracle_sequence_is_adjacent(topo: TopologicalNeighborhood, cell_ids: np.ndarray) -> None:
+def _assert_oracle_sequence_is_adjacent(topo: OctreeFaceNeighbors, cell_ids: np.ndarray) -> None:
     """Private test helper: each oracle cell transition must follow one graph edge set."""
     seq = _valid_cell_sequence(cell_ids)
     assert seq.size > 0
@@ -378,10 +378,10 @@ def _assert_oracle_sequence_is_adjacent(topo: TopologicalNeighborhood, cell_ids:
 
 def _assert_oracle_sequence_is_admissible_by_transition_rule(
     tree: Octree,
-    topo: TopologicalNeighborhood,
+    topo: OctreeFaceNeighbors,
     cell_ids: np.ndarray,
 ) -> None:
-    """Private test helper: each oracle next cell must be in the topology candidate set."""
+    """Private test helper: each oracle next cell must be in the face-neighbors candidate set."""
     seq = _valid_cell_sequence(cell_ids)
     assert seq.size > 0
     for cell_a, cell_b in zip(seq[:-1], seq[1:], strict=True):
@@ -488,9 +488,9 @@ def _sample_tree_and_ray(file_name: str, tree_coord: str, *, axis: str = "x") ->
 
 @pytest.fixture(scope="session", autouse=True)
 def _warm_topology_numba() -> None:
-    """Private test helper: compile topology kernels before timing assertions/prints."""
-    build_topological_neighborhood(_build_cartesian_uniform_tree())
-    build_topological_neighborhood(_build_spherical_uniform_tree())
+    """Private test helper: compile face-neighbors kernels before timing assertions/prints."""
+    build_face_neighbors(_build_cartesian_uniform_tree())
+    build_face_neighbors(_build_spherical_uniform_tree())
 
 
 @pytest.mark.parametrize(
@@ -500,15 +500,15 @@ def _warm_topology_numba() -> None:
 )
 def test_uniform_topology_basic_invariants(tree_builder, record_property) -> None:
     tree = tree_builder()
-    topo, elapsed_s = _build_topology_timed(tree, label=tree.tree_coord)
+    topo, elapsed_s = _build_face_neighbors_timed(tree, label=tree.tree_coord)
     record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
-    _assert_basic_topology_invariants(topo)
+    _assert_basic_face_neighbor_invariants(topo)
     assert np.all(topo.face_counts <= 1)
 
 
 def test_cartesian_uniform_topology_neighbors_are_bidirectional(record_property) -> None:
     tree = _build_cartesian_uniform_tree()
-    topo, elapsed_s = _build_topology_timed(tree, label="cartesian_bidirectional")
+    topo, elapsed_s = _build_face_neighbors_timed(tree, label="cartesian_bidirectional")
     record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
 
     assert topo.node_count == int(tree.cell_count)
@@ -528,7 +528,7 @@ def test_cartesian_uniform_topology_neighbors_are_bidirectional(record_property)
 
 def test_spherical_uniform_topology_wraps_azimuth_faces(record_property) -> None:
     tree = _build_spherical_uniform_tree()
-    topo, elapsed_s = _build_topology_timed(tree, label="spherical_wrap")
+    topo, elapsed_s = _build_face_neighbors_timed(tree, label="spherical_wrap")
     record_property("build_topology_ms", round(elapsed_s * 1.0e3, 3))
 
     assert topo.periodic_i2
@@ -548,7 +548,7 @@ def test_spherical_uniform_topology_wraps_azimuth_faces(record_property) -> None
 
 def test_cartesian_corner_exit_candidates_cover_faces_edges_and_corner() -> None:
     tree = _build_cartesian_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
 
     node_id = 0
     face_mask = (1 << 1) | (1 << 3) | (1 << 5)
@@ -560,7 +560,7 @@ def test_cartesian_corner_exit_candidates_cover_faces_edges_and_corner() -> None
 
 def test_spherical_periodic_multiface_candidates_cover_edge_and_corner() -> None:
     tree = _build_spherical_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
 
     node_id = 0
     face_mask = (1 << 3) | (1 << 4)
@@ -573,8 +573,8 @@ def test_spherical_periodic_multiface_candidates_cover_edge_and_corner() -> None
 def test_max_level_cutoff_reduces_frontier_size(record_property) -> None:
     tree = _build_two_level_topology_tree()
 
-    topo_full, elapsed_full_s = _build_topology_timed(tree, label="cutoff_full", max_level=1)
-    topo_coarse, elapsed_coarse_s = _build_topology_timed(tree, label="cutoff_coarse", max_level=0)
+    topo_full, elapsed_full_s = _build_face_neighbors_timed(tree, label="cutoff_full", max_level=1)
+    topo_coarse, elapsed_coarse_s = _build_face_neighbors_timed(tree, label="cutoff_coarse", max_level=0)
     record_property("build_topology_full_ms", round(elapsed_full_s * 1.0e3, 3))
     record_property("build_topology_coarse_ms", round(elapsed_coarse_s * 1.0e3, 3))
 
@@ -585,8 +585,8 @@ def test_max_level_cutoff_reduces_frontier_size(record_property) -> None:
     assert topo_full.node_count == 15
     assert topo_coarse.node_count == 8
 
-    _assert_basic_topology_invariants(topo_full)
-    _assert_basic_topology_invariants(topo_coarse)
+    _assert_basic_face_neighbor_invariants(topo_full)
+    _assert_basic_face_neighbor_invariants(topo_coarse)
     assert np.all(topo_full.face_counts <= 4)
     assert np.all(topo_coarse.face_counts <= 1)
     assert np.all(topo_full.face_counts.sum(axis=1) <= 24)
@@ -612,7 +612,7 @@ def test_lookup_oracle_spherical_face_ray_has_no_internal_gaps() -> None:
 
 def test_cartesian_lookup_oracle_transitions_are_adjacent_in_topology() -> None:
     tree = _build_cartesian_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     origin, direction, t_end = _cartesian_face_ray()
     cell_ids = _oracle_cell_sequence(interp, origin, direction, 0.0, t_end, n_samples=129, refine_depth=8)
@@ -621,7 +621,7 @@ def test_cartesian_lookup_oracle_transitions_are_adjacent_in_topology() -> None:
 
 def test_spherical_lookup_oracle_transitions_are_adjacent_in_topology() -> None:
     tree = _build_spherical_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     origin, direction, t_end = _spherical_shell_face_ray()
     cell_ids = _oracle_cell_sequence(interp, origin, direction, 0.0, t_end, n_samples=257, refine_depth=8)
@@ -630,7 +630,7 @@ def test_spherical_lookup_oracle_transitions_are_adjacent_in_topology() -> None:
 
 def test_cartesian_lookup_oracle_transitions_are_admissible_by_face_mask() -> None:
     tree = _build_cartesian_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     origin, direction, t_end = _cartesian_face_ray()
     cell_ids = _oracle_cell_sequence(interp, origin, direction, 0.0, t_end, n_samples=129, refine_depth=8)
@@ -639,7 +639,7 @@ def test_cartesian_lookup_oracle_transitions_are_admissible_by_face_mask() -> No
 
 def test_spherical_lookup_oracle_transitions_are_admissible_by_face_mask() -> None:
     tree = _build_spherical_uniform_tree()
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     origin, direction, t_end = _spherical_shell_face_ray()
     cell_ids = _oracle_cell_sequence(interp, origin, direction, 0.0, t_end, n_samples=257, refine_depth=8)
@@ -685,7 +685,7 @@ def test_example_lookup_oracle_ray_has_no_internal_gaps_on_axis_rays(axis: str) 
 @pytest.mark.parametrize("axis", ["x", "y", "z"])
 def test_example_lookup_oracle_transitions_are_adjacent_in_topology_on_axis_rays(axis: str) -> None:
     tree, origin, direction, t_end = _sample_tree_and_ray("3d__var_1_n00000000.plt", "rpa", axis=axis)
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     cell_ids = _oracle_cell_sequence(
         interp,
@@ -702,7 +702,7 @@ def test_example_lookup_oracle_transitions_are_adjacent_in_topology_on_axis_rays
 @pytest.mark.parametrize("axis", ["x", "y", "z"])
 def test_example_lookup_oracle_transitions_are_admissible_by_face_mask_on_axis_rays(axis: str) -> None:
     tree, origin, direction, t_end = _sample_tree_and_ray("3d__var_1_n00000000.plt", "rpa", axis=axis)
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     cell_ids = _oracle_cell_sequence(
         interp,
@@ -734,7 +734,7 @@ def test_sample_lookup_oracle_ray_has_no_internal_gaps(file_name: str, tree_coor
 @pytest.mark.parametrize("file_name,tree_coord", _TOPOLOGY_SAMPLE_CASES)
 def test_sample_lookup_oracle_transitions_are_adjacent_in_topology(file_name: str, tree_coord: str) -> None:
     tree, origin, direction, t_end = _sample_tree_and_ray(file_name, tree_coord)
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     cell_ids = _oracle_cell_sequence(
         interp,
@@ -751,7 +751,7 @@ def test_sample_lookup_oracle_transitions_are_adjacent_in_topology(file_name: st
 @pytest.mark.parametrize("file_name,tree_coord", _TOPOLOGY_SAMPLE_CASES)
 def test_sample_lookup_oracle_transitions_are_admissible_by_face_mask(file_name: str, tree_coord: str) -> None:
     tree, origin, direction, t_end = _sample_tree_and_ray(file_name, tree_coord)
-    topo = build_topological_neighborhood(tree)
+    topo = build_face_neighbors(tree)
     interp = _oracle_interpolator(tree)
     cell_ids = _oracle_cell_sequence(
         interp,
@@ -770,8 +770,8 @@ def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: st
     path, resolve_path_s = _time_call(data_file, file_name)
     ds, read_dataset_s = _time_call(Dataset.from_file, str(path))
     tree, build_tree_s = _time_call(Octree.from_dataset, ds, tree_coord=tree_coord)
-    topo, build_topology_s = _build_topology_timed(tree, label=file_name)
-    _unused, validate_invariants_s = _time_call(_assert_basic_topology_invariants, topo)
+    topo, build_topology_s = _build_face_neighbors_timed(tree, label=file_name)
+    _unused, validate_invariants_s = _time_call(_assert_basic_face_neighbor_invariants, topo)
 
     print(
         f"sample {file_name}: "

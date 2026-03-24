@@ -22,8 +22,8 @@ from batcamp import Octree
 from batcamp import FlatCamera
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
-from batcamp.topological import build_topological_neighborhood
-from batcamp.topological import TopologicalNeighborhood
+from batcamp.face_neighbors import build_face_neighbors
+from batcamp.face_neighbors import OctreeFaceNeighbors
 
 
 _G2211_URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
@@ -114,20 +114,20 @@ def _load_or_build_octree(ds: Dataset, data_path: Path, cache_root: Path) -> tup
     return tree, "build"
 
 
-def _topology_cache_path(cache_root: Path, data_path: Path) -> Path:
-    """Return one persistent topology cache path keyed by file contents."""
+def _face_neighbors_cache_path(cache_root: Path, data_path: Path) -> Path:
+    """Return one persistent face-neighbor cache path keyed by file contents."""
     stat = data_path.stat()
     cache_name = (
         f"{data_path.name}.{int(stat.st_size)}.{int(stat.st_mtime_ns)}."
-        f"{_TOPOLOGY_CACHE_VERSION}.topology.npz"
+        f"{_TOPOLOGY_CACHE_VERSION}.face-neighbors.npz"
     )
     return cache_root / cache_name
 
 
-def _load_topology_cache(path: Path) -> TopologicalNeighborhood:
-    """Load one cached full-depth topology graph."""
+def _load_face_neighbors_cache(path: Path) -> OctreeFaceNeighbors:
+    """Load one cached full-depth face-neighbor graph."""
     with np.load(path, allow_pickle=False) as data:
-        return TopologicalNeighborhood(
+        return OctreeFaceNeighbors(
             levels=np.asarray(data["levels"], dtype=np.int64),
             i0=np.asarray(data["i0"], dtype=np.int64),
             i1=np.asarray(data["i1"], dtype=np.int64),
@@ -143,8 +143,8 @@ def _load_topology_cache(path: Path) -> TopologicalNeighborhood:
         )
 
 
-def _save_topology_cache(path: Path, topo: TopologicalNeighborhood) -> None:
-    """Persist one full-depth topology graph."""
+def _save_face_neighbors_cache(path: Path, topo: OctreeFaceNeighbors) -> None:
+    """Persist one full-depth face-neighbor graph."""
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         path,
@@ -163,17 +163,17 @@ def _save_topology_cache(path: Path, topo: TopologicalNeighborhood) -> None:
     )
 
 
-def _load_or_build_full_topology(tree: Octree, data_path: Path, cache_root: Path) -> tuple[TopologicalNeighborhood, str]:
-    """Load one cached full-depth topology graph or build and persist it once."""
-    cache_path = _topology_cache_path(cache_root, data_path)
+def _load_or_build_full_face_neighbors(tree: Octree, data_path: Path, cache_root: Path) -> tuple[OctreeFaceNeighbors, str]:
+    """Load one cached full-depth face-neighbor graph or build and persist it once."""
+    cache_path = _face_neighbors_cache_path(cache_root, data_path)
     if cache_path.exists():
-        topo = _load_topology_cache(cache_path)
+        topo = _load_face_neighbors_cache(cache_path)
         source = "cache"
     else:
-        topo = build_topological_neighborhood(tree, max_level=int(tree.max_level))
-        _save_topology_cache(cache_path, topo)
+        topo = build_face_neighbors(tree, max_level=int(tree.max_level))
+        _save_face_neighbors_cache(cache_path, topo)
         source = "build"
-    tree._ray_topology_full = topo
+    tree._ray_face_neighbors_full = topo
     return topo, source
 
 
@@ -780,7 +780,7 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parent
     out_root = (repo_root / args.output_dir).resolve()
     cache_root = (repo_root / "build" / "resampling_compare_octree_cache").resolve()
-    topology_cache_root = (repo_root / "build" / "resampling_compare_topology_cache").resolve()
+    face_neighbors_cache_root = (repo_root / "build" / "resampling_compare_face_neighbors_cache").resolve()
     progress_log_path = out_root / "progress.log"
     progress_log_path.parent.mkdir(parents=True, exist_ok=True)
     progress_log_path.write_text("", encoding="utf-8")
@@ -808,8 +808,8 @@ def main() -> None:
         _progress(f"[{case.label}] read dataset ({read_s:.2f}s)", log_path=progress_log_path)
         (tree, tree_source), tree_s = _time_call(_load_or_build_octree, ds, data_path, cache_root)
         _progress(f"[{case.label}] octree {tree_source} ({tree_s:.2f}s)", log_path=progress_log_path)
-        ((_topology, topo_source), topo_s) = _time_call(_load_or_build_full_topology, tree, data_path, topology_cache_root)
-        _progress(f"[{case.label}] topology {topo_source} ({topo_s:.2f}s)", log_path=progress_log_path)
+        ((_face_neighbors, face_neighbors_source), face_neighbors_s) = _time_call(_load_or_build_full_face_neighbors, tree, data_path, face_neighbors_cache_root)
+        _progress(f"[{case.label}] face-neighbors {face_neighbors_source} ({face_neighbors_s:.2f}s)", log_path=progress_log_path)
         interp, interp_s = _time_call(OctreeInterpolator, ds, ["Rho [g/cm^3]"], tree=tree)
         _progress(f"[{case.label}] interpolator ready ({interp_s:.2f}s)", log_path=progress_log_path)
         ray, ray_s0 = _time_call(OctreeRayInterpolator, interp)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Topological face-neighbor construction for octree leaf/frontier cells."""
+"""Face-neighbor construction for octree leaf/frontier cells."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ FACE_COUNT = 6
 _NEG_POS = np.array([-1, 1], dtype=np.int64)
 
 
-class TopologicalKernelState(NamedTuple):
+class FaceNeighborKernelState(NamedTuple):
     """Arrays consumed directly by numba traversal kernels."""
 
     face_offsets: np.ndarray
@@ -25,7 +25,7 @@ class TopologicalKernelState(NamedTuple):
 
 
 @dataclass(frozen=True)
-class TopologicalNeighborhood:
+class OctreeFaceNeighbors:
     """Face-neighbor graph for one octree at one level cutoff."""
 
     levels: np.ndarray
@@ -60,9 +60,9 @@ class TopologicalNeighborhood:
         return self.face_neighbors[start:end]
 
     @property
-    def kernel_state(self) -> TopologicalKernelState:
-        """Return compact topology arrays for numba kernels."""
-        return TopologicalKernelState(
+    def kernel_state(self) -> FaceNeighborKernelState:
+        """Return compact face-neighbor arrays for numba kernels."""
+        return FaceNeighborKernelState(
             face_offsets=np.asarray(self.face_offsets, dtype=np.int64),
             face_neighbors=np.asarray(self.face_neighbors, dtype=np.int64),
             node_cell_ids=np.asarray(self.node_cell_ids, dtype=np.int64),
@@ -298,7 +298,7 @@ def _emit_face_neighbors(
 
 
 @njit(cache=True)
-def build_topological_neighborhood_kernel(
+def build_face_neighbors_kernel(
     levels: np.ndarray,
     i0: np.ndarray,
     i1: np.ndarray,
@@ -385,7 +385,7 @@ def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarra
     """Build unique frontier nodes by truncating leaf levels to `max_level`."""
     cell_levels = tree.cell_levels
     if cell_levels is None:
-        raise ValueError("Octree has no cell_levels; cannot build topological neighborhood.")
+        raise ValueError("Octree has no cell_levels; cannot build face neighbors.")
 
     levels_all = np.asarray(cell_levels, dtype=np.int64)
 
@@ -394,7 +394,7 @@ def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarra
         raise ValueError("Octree contains no valid cells (all levels are < 0).")
     cell_ids = np.flatnonzero(valid).astype(np.int64)
     if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
-        raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; topology requires built tree state.")
+        raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; face neighbors require built tree state.")
     i0_all = np.asarray(getattr(tree, "_i0"), dtype=np.int64)
     i1_all = np.asarray(getattr(tree, "_i1"), dtype=np.int64)
     i2_all = np.asarray(getattr(tree, "_i2"), dtype=np.int64)
@@ -429,10 +429,10 @@ def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarra
     return levels, i0, i1, i2, node_cell_ids, cell_to_node_id
 
 
-def build_topological_neighborhood(tree: Octree, *, max_level: int | None = None) -> TopologicalNeighborhood:
-    """Build topological face-neighbor graph from one octree."""
+def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> OctreeFaceNeighbors:
+    """Build one face-neighbor graph from one octree."""
     if tree.cell_levels is None:
-        raise ValueError("Octree has no cell_levels; cannot build topological neighborhood.")
+        raise ValueError("Octree has no cell_levels; cannot build face neighbors.")
     valid_levels = np.asarray(tree.cell_levels, dtype=np.int64)
     valid_levels = valid_levels[valid_levels >= 0]
     if valid_levels.size == 0:
@@ -451,7 +451,7 @@ def build_topological_neighborhood(tree: Octree, *, max_level: int | None = None
     level_shapes = _level_shapes_for_cutoff(tree, min_level, target_max_level)
     periodic_i2 = str(tree.tree_coord) == "rpa"
 
-    face_counts, face_offsets, face_neighbors = build_topological_neighborhood_kernel(
+    face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
         levels,
         i0,
         i1,
@@ -461,7 +461,7 @@ def build_topological_neighborhood(tree: Octree, *, max_level: int | None = None
         level_shapes,
         periodic_i2,
     )
-    return TopologicalNeighborhood(
+    return OctreeFaceNeighbors(
         levels=levels,
         i0=i0,
         i1=i1,
