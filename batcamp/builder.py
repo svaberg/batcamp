@@ -243,6 +243,39 @@ def _build_node_arrays(
     return node_depth, node_i0, node_i1, node_i2, node_value
 
 
+def _build_child_table(
+    node_depth: np.ndarray,
+    node_i0: np.ndarray,
+    node_i1: np.ndarray,
+    node_i2: np.ndarray,
+    node_value: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build sparse 8-child references for occupied nodes."""
+    n_nodes = int(np.asarray(node_depth, dtype=np.int64).shape[0])
+    node_child = np.full((n_nodes, 8), -1, dtype=np.int64)
+    key_to_node = {
+        (int(node_depth[idx]), int(node_i0[idx]), int(node_i1[idx]), int(node_i2[idx])): int(idx)
+        for idx in range(n_nodes)
+    }
+    for idx in range(n_nodes):
+        if int(node_value[idx]) >= 0:
+            continue
+        depth = int(node_depth[idx])
+        i0 = int(node_i0[idx])
+        i1 = int(node_i1[idx])
+        i2 = int(node_i2[idx])
+        for child_ord in range(8):
+            b0 = (child_ord >> 2) & 1
+            b1 = (child_ord >> 1) & 1
+            b2 = child_ord & 1
+            child_key = (depth + 1, 2 * i0 + b0, 2 * i1 + b1, 2 * i2 + b2)
+            child_idx = key_to_node.get(child_key)
+            if child_idx is not None:
+                node_child[idx, child_ord] = int(child_idx)
+    root_node_ids = np.flatnonzero(np.asarray(node_depth, dtype=np.int64) == 0).astype(np.int64)
+    return node_child, root_node_ids
+
+
 class OctreeBuilder:
     """Build octrees from dataset cell connectivity."""
 

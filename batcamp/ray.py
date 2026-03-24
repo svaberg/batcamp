@@ -770,6 +770,14 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, topology) -> CartesianRayCe
         node_i1=np.asarray(topology.i1, dtype=np.int64),
         node_i2=np.asarray(topology.i2, dtype=np.int64),
         node_value=np.arange(n_cells, dtype=np.int64),
+        node_child=np.full((n_cells, 8), -1, dtype=np.int64),
+        root_node_ids=np.arange(n_cells, dtype=np.int64),
+        node_x_min=cell_x0,
+        node_x_max=cell_x1,
+        node_y_min=cell_y0,
+        node_y_max=cell_y1,
+        node_z_min=cell_z0,
+        node_z_max=cell_z1,
     )
     return CartesianRayCellGeometry(
         topology_state=_topology_state_for_node_cells(topology),
@@ -902,6 +910,7 @@ def _build_sparse_spherical_seed_lookup_state(
     """Build one sparse coarse spherical lookup state keyed by representative leaf ids."""
     n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
     rep_cell_ids = np.asarray(topology.node_cell_ids, dtype=np.int64)
+    n_nodes = int(rep_cell_ids.shape[0])
     depths = np.asarray(topology.levels, dtype=np.int64)
     depth_levels = np.array(sorted(set(int(v) for v in depths.tolist())), dtype=np.int64)
     levels_desc = depth_levels[::-1].copy()
@@ -1004,11 +1013,19 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_i0=np.full(n_leaf_cells, -1, dtype=np.int64),
         cell_i1=np.full(n_leaf_cells, -1, dtype=np.int64),
         cell_i2=np.full(n_leaf_cells, -1, dtype=np.int64),
-        node_depth=np.empty((0,), dtype=np.int64),
-        node_i0=np.empty((0,), dtype=np.int64),
-        node_i1=np.empty((0,), dtype=np.int64),
-        node_i2=np.empty((0,), dtype=np.int64),
-        node_value=np.empty((0,), dtype=np.int64),
+        node_depth=np.asarray(topology.levels, dtype=np.int64),
+        node_i0=np.asarray(topology.i0, dtype=np.int64),
+        node_i1=np.asarray(topology.i1, dtype=np.int64),
+        node_i2=np.asarray(topology.i2, dtype=np.int64),
+        node_value=np.asarray(rep_cell_ids, dtype=np.int64),
+        node_child=np.full((n_nodes, 8), -1, dtype=np.int64),
+        root_node_ids=np.arange(n_nodes, dtype=np.int64),
+        node_r_min=np.asarray(geometry.cell_r0, dtype=np.float64),
+        node_r_max=np.asarray(geometry.cell_r0 + geometry.cell_rden, dtype=np.float64),
+        node_theta_min=np.asarray(geometry.cell_t0, dtype=np.float64),
+        node_theta_max=np.asarray(geometry.cell_t0 + geometry.cell_tden, dtype=np.float64),
+        node_phi_start=np.asarray(geometry.cell_p_start, dtype=np.float64),
+        node_phi_width=np.asarray(geometry.cell_p_width, dtype=np.float64),
     )
 
 

@@ -70,6 +70,14 @@ class SphericalLookupKernelState(NamedTuple):
     node_i1: np.ndarray
     node_i2: np.ndarray
     node_value: np.ndarray
+    node_child: np.ndarray
+    root_node_ids: np.ndarray
+    node_r_min: np.ndarray
+    node_r_max: np.ndarray
+    node_theta_min: np.ndarray
+    node_theta_max: np.ndarray
+    node_phi_start: np.ndarray
+    node_phi_width: np.ndarray
 
 
 @njit(cache=True)
@@ -162,6 +170,8 @@ def _find_node_value(
 
         return int(lookup_state.node_value[mid])
     return _MISSING_NODE_VALUE
+
+
 @njit(cache=True)
 def _contains_rpa_cell(
     cid: int,
@@ -182,6 +192,30 @@ def _contains_rpa_cell(
         return True
     width = lookup_state.cell_phi_width[cid]
     dphi = (azimuth - lookup_state.cell_phi_start[cid]) % _TWO_PI
+    if width >= (_TWO_PI - tol):
+        return True
+    return dphi <= (width + tol)
+
+
+@njit(cache=True)
+def _contains_rpa_node(
+    node_id: int,
+    r: float,
+    polar: float,
+    azimuth: float,
+    lookup_state: SphericalLookupKernelState,
+) -> bool:
+    """Return whether one spherical point lies inside one occupied node."""
+    nid = int(node_id)
+    tol = _LOOKUP_CONTAIN_TOL
+    if r < (lookup_state.node_r_min[nid] - tol) or r > (lookup_state.node_r_max[nid] + tol):
+        return False
+    if polar < (lookup_state.node_theta_min[nid] - tol) or polar > (lookup_state.node_theta_max[nid] + tol):
+        return False
+    if abs(r * math.sin(polar)) <= tol:
+        return True
+    width = lookup_state.node_phi_width[nid]
+    dphi = (azimuth - lookup_state.node_phi_start[nid]) % _TWO_PI
     if width >= (_TWO_PI - tol):
         return True
     return dphi <= (width + tol)
@@ -212,62 +246,34 @@ def _lookup_rpa_cell_id_kernel(
     ):
         return int(prev_cid)
 
-    fine_i0 = _lookup_axis_index(
-        r,
-        lookup_state.r_min,
-        max(lookup_state.r_max - lookup_state.r_min, np.finfo(np.float64).tiny),
-        int(lookup_state.leaf_shape[0]),
-    )
-    if lookup_state.radial_edges.shape[0] > 1:
-        fine_i0 = _lookup_interval_index(r, lookup_state.radial_edges)
-    fine_i1 = _lookup_axis_index(
-        polar,
-        0.0,
-        math.pi,
-        int(lookup_state.leaf_shape[1]),
-    )
-    fine_i2 = _lookup_axis_index(
-        azimuth,
-        0.0,
-        _TWO_PI,
-        int(lookup_state.leaf_shape[2]),
-    )
-
-    tree_depth = int(lookup_state.tree_depth)
-    if abs(r * math.sin(polar)) <= _LOOKUP_CONTAIN_TOL:
-        for depth in range(tree_depth + 1):
-            shift = tree_depth - depth
-            i0 = fine_i0 >> shift
-            i1 = fine_i1 >> shift
-            nphi = int(lookup_state.leaf_shape[2]) >> shift
-            node_value = _MISSING_NODE_VALUE
-            for i2 in range(nphi):
-                node_value = _find_node_value(depth, i0, i1, i2, lookup_state)
-                if node_value != _MISSING_NODE_VALUE:
-                    break
-            if node_value == _MISSING_NODE_VALUE:
-                return -1
-            if node_value >= 0:
-                cid = int(node_value)
-                if _contains_rpa_cell(cid, r, polar, azimuth, lookup_state):
-                    return cid
-                return -1
+    current = -1
+    for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
+        node_id = int(lookup_state.root_node_ids[root_pos])
+        if _contains_rpa_node(node_id, r, polar, azimuth, lookup_state):
+            current = node_id
+            break
+    if current < 0:
         return -1
 
-    for depth in range(tree_depth + 1):
-        shift = tree_depth - depth
-        i0 = fine_i0 >> shift
-        i1 = fine_i1 >> shift
-        i2 = fine_i2 >> shift
-        node_value = _find_node_value(depth, i0, i1, i2, lookup_state)
-        if node_value == _MISSING_NODE_VALUE:
-            return -1
+    while True:
+        node_value = int(lookup_state.node_value[current])
         if node_value >= 0:
             cid = int(node_value)
             if _contains_rpa_cell(cid, r, polar, azimuth, lookup_state):
                 return cid
             return -1
-    return -1
+
+        found_child = False
+        for child_ord in range(8):
+            child_id = int(lookup_state.node_child[current, child_ord])
+            if child_id < 0:
+                continue
+            if _contains_rpa_node(child_id, r, polar, azimuth, lookup_state):
+                current = child_id
+                found_child = True
+                break
+        if not found_child:
+            return -1
 
 class _SphericalCellLookup:
     """Cell lookup helper for spherical trees."""
@@ -382,7 +388,10 @@ class _SphericalCellLookup:
         self._cell_phi_start = phi_start
         self._cell_phi_width = phi_width
 
-        required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value", "_radial_edges")
+        required = (
+            "_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value", "_radial_edges",
+            "_node_child", "_root_node_ids", "_node_r_min", "_node_r_max", "_node_theta_min", "_node_theta_max", "_node_phi_start", "_node_phi_width",
+        )
         missing = [name for name in required if not hasattr(self.tree, name)]
         if missing:
             raise ValueError(f"Spherical lookup requires builder-provided octree state: missing {missing}.")
@@ -394,6 +403,14 @@ class _SphericalCellLookup:
         self._node_i1 = np.asarray(self.tree._node_i1, dtype=np.int64)
         self._node_i2 = np.asarray(self.tree._node_i2, dtype=np.int64)
         self._node_value = np.asarray(self.tree._node_value, dtype=np.int64)
+        self._node_child = np.asarray(self.tree._node_child, dtype=np.int64)
+        self._root_node_ids = np.asarray(self.tree._root_node_ids, dtype=np.int64)
+        self._node_r_min = np.asarray(self.tree._node_r_min, dtype=np.float64)
+        self._node_r_max = np.asarray(self.tree._node_r_max, dtype=np.float64)
+        self._node_theta_min = np.asarray(self.tree._node_theta_min, dtype=np.float64)
+        self._node_theta_max = np.asarray(self.tree._node_theta_max, dtype=np.float64)
+        self._node_phi_start = np.asarray(self.tree._node_phi_start, dtype=np.float64)
+        self._node_phi_width = np.asarray(self.tree._node_phi_width, dtype=np.float64)
         self._radial_edges = np.asarray(self.tree._radial_edges, dtype=np.float64)
         n_bins = int(running_offset)
         bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
@@ -461,6 +478,14 @@ class _SphericalCellLookup:
             node_i1=self._node_i1,
             node_i2=self._node_i2,
             node_value=self._node_value,
+            node_child=self._node_child,
+            root_node_ids=self._root_node_ids,
+            node_r_min=self._node_r_min,
+            node_r_max=self._node_r_max,
+            node_theta_min=self._node_theta_min,
+            node_theta_max=self._node_theta_max,
+            node_phi_start=self._node_phi_start,
+            node_phi_width=self._node_phi_width,
         )
 
     @staticmethod
