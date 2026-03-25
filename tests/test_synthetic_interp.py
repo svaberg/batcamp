@@ -11,6 +11,7 @@ from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from octree_test_support import cell_bounds
 
 
 def _build_uniform_spherical_hex_dataset(
@@ -67,7 +68,7 @@ def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generato
     xyz_list: list[np.ndarray] = []
     rpa_list: list[np.ndarray] = []
     for cid in cids.tolist():
-        lo, hi = tree.cell_bounds(int(cid), coord="rpa")
+        lo, hi = cell_bounds(tree, int(cid), coord="rpa")
         r0 = float(lo[0])
         r1 = float(hi[0])
         t0 = float(lo[1])
@@ -94,7 +95,7 @@ def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generato
 def _midpoints_xyz(tree: Octree, cids: np.ndarray) -> np.ndarray:
     xyz_list: list[np.ndarray] = []
     for cid in cids.tolist():
-        lo, hi = tree.cell_bounds(int(cid), coord="rpa")
+        lo, hi = cell_bounds(tree, int(cid), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
         theta = 0.5 * (float(lo[1]) + float(hi[1]))
         phi0 = float(lo[2])
@@ -117,7 +118,7 @@ def _interpolation_valid_cells(
     lo = np.empty((n_cells, 3), dtype=float)
     hi = np.empty((n_cells, 3), dtype=float)
     for cid in range(n_cells):
-        lo[cid], hi[cid] = tree.cell_bounds(cid, coord="rpa")
+        lo[cid], hi[cid] = cell_bounds(tree, cid, coord="rpa")
     phi_end = hi[:, 2]
     ids = np.flatnonzero(
         (lo[:, 1] > 1e-6)

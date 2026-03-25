@@ -19,6 +19,7 @@ from batcamp.octree import _build_node_arrays
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from octree_test_support import cell_bounds
 
 
 def _build_regular_dataset(
@@ -316,7 +317,7 @@ def test_xyz_lookup_hits_cell_midpoints(cartesian_octree_context) -> None:
     """Cartesian lookup should resolve each cell midpoint to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
     for cid in range(tree.cell_count):
-        lo, hi = tree.cell_bounds(cid, coord="xyz")
+        lo, hi = cell_bounds(tree, cid, coord="xyz")
         q = 0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float))
         hit = tree.lookup_point(q, coord="xyz")
         assert hit is not None
@@ -333,7 +334,7 @@ def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
     q = np.empty((choose.size, 3), dtype=float)
     expected = np.empty(choose.size, dtype=float)
     for i, cid in enumerate(choose.tolist()):
-        lo, hi = tree.cell_bounds(int(cid), coord="xyz")
+        lo, hi = cell_bounds(tree, int(cid), coord="xyz")
         u, v, w = rng.uniform(0.1, 0.9, size=3)
         x = float(lo[0] + u * (hi[0] - lo[0]))
         y = float(lo[1] + v * (hi[1] - lo[1]))

@@ -14,6 +14,7 @@ from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from octree_test_support import cell_bounds
 
 
 # ==============================================================================
@@ -124,7 +125,7 @@ def _exit_point_from_cell_algorithm(
     if not tree.contains_cell(int(cell_id), p_in, coord="xyz", tol=tol):
         return None
 
-    bmin, bmax = tree.cell_bounds(int(cell_id), coord="xyz")
+    bmin, bmax = cell_bounds(tree, int(cell_id), coord="xyz")
     span = float(np.linalg.norm(np.asarray(bmax, dtype=float) - np.asarray(bmin, dtype=float)))
     dt = span if span > 0.0 else 1.0e-6
 

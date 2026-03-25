@@ -193,32 +193,6 @@ class _SphericalCoordSupport:
             node_axis2_width=self._node_phi_width,
         )
 
-    def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-        cid = int(cell_id)
-        corners = self.ds.corners[cid]
-        pts = np.column_stack(
-            (
-                self.ds[XYZ_VARS[0]][corners],
-                self.ds[XYZ_VARS[1]][corners],
-                self.ds[XYZ_VARS[2]][corners],
-            )
-        )
-        return np.min(pts, axis=0), np.max(pts, axis=0)
-
-    def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-        cid = int(cell_id)
-        return (
-            np.array([self._cell_r_min[cid], self._cell_theta_min[cid], self._cell_phi_start[cid]], dtype=float),
-            np.array(
-                [
-                    self._cell_r_max[cid],
-                    self._cell_theta_max[cid],
-                    (self._cell_phi_start[cid] + self._cell_phi_width[cid]) % (2.0 * np.pi),
-                ],
-                dtype=float,
-            ),
-        )
-
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
         pts = np.column_stack(
             (
