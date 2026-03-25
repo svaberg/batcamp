@@ -2694,8 +2694,29 @@ class OctreeRayTracer:
 class OctreeRayInterpolator:
     """Thin convenience wrapper around compiled ray integration kernels."""
 
-    def __init__(self, interpolator: "OctreeInterpolator", *, max_level: int | None = None) -> None:
-        """Bind one interpolator and its tree."""
+    def __init__(
+        self,
+        tree_or_interpolator: "Octree | OctreeInterpolator",
+        values: list[str] | np.ndarray | None = None,
+        *,
+        max_level: int | None = None,
+    ) -> None:
+        """Bind one interpolator, or build one directly from `(tree, values)`."""
+        from .interpolator import OctreeInterpolator
+
+        if isinstance(tree_or_interpolator, OctreeInterpolator):
+            if values is not None:
+                raise ValueError("OctreeRayInterpolator does not accept values when given an OctreeInterpolator.")
+            interpolator = tree_or_interpolator
+        elif isinstance(tree_or_interpolator, Octree):
+            if values is None:
+                raise ValueError("OctreeRayInterpolator requires values when constructed from an Octree.")
+            interpolator = OctreeInterpolator(tree_or_interpolator, values)
+        else:
+            raise TypeError(
+                "OctreeRayInterpolator requires an OctreeInterpolator or an (Octree, values) pair."
+            )
+
         self.interpolator = interpolator
         self.tree = interpolator.tree
         self.max_level = _resolve_ray_max_level(self.tree, max_level)
