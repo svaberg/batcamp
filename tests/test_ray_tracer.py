@@ -164,6 +164,20 @@ def test_cartesian_tracer_init_does_not_build_unused_plane_state() -> None:
     assert not hasattr(tree, "_ray_cell_plane_state")
 
 
+def test_spherical_tracer_init_does_not_cache_foreign_ray_state() -> None:
+    """Spherical tracer init should not stash ray-only caches on the tree."""
+    ds = _build_regular_fake_dataset()
+    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    assert not hasattr(tree, "_ray_cell_plane_state")
+    assert not hasattr(tree, "_ray_cell_geometry_by_max_level")
+
+    OctreeRayTracer(tree)
+    OctreeRayTracer(tree, max_level=0)
+
+    assert not hasattr(tree, "_ray_cell_plane_state")
+    assert not hasattr(tree, "_ray_cell_geometry_by_max_level")
+
+
 def test_example_specific_failing_ray_trace_midpoints_match_lookup() -> None:
     """Provided example: traced segments should stay on oracle cells for the bad 16x16 ray."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))

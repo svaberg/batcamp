@@ -356,6 +356,19 @@ def test_spherical_max_level_full_matches_default() -> None:
     assert np.allclose(default_vals, full_vals, atol=1e-12, rtol=1e-12)
 
 
+def test_truncated_ray_interpolator_does_not_cache_foreign_state() -> None:
+    """Truncated ray interpolation should not stash caches on tree or interpolator."""
+    interp = OctreeInterpolator(OctreeBuilder().build(_build_fake_dataset(nr=2, ntheta=4, nphi=8), tree_coord="rpa"), ["Scalar"])
+    tree = interp.tree
+    assert not hasattr(tree, "_ray_cell_geometry_by_max_level")
+    assert not hasattr(interp, "_ray_interp_state_by_max_level")
+
+    OctreeRayInterpolator(interp, max_level=0)
+
+    assert not hasattr(tree, "_ray_cell_geometry_by_max_level")
+    assert not hasattr(interp, "_ray_interp_state_by_max_level")
+
+
 def test_spherical_max_level_one_matches_level_one_mesh() -> None:
     """Spherical `max_level=1` should match a true level-1 mesh on the same rays."""
     fine = _build_fake_dataset(nr=4, ntheta=8, nphi=16)

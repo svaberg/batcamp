@@ -889,55 +889,31 @@ def _spherical_interp_state_from_geometry(
 
 
 def _ray_cell_geometry_for_max_level(tree: Octree, max_level: int) -> CartesianRayCellGeometry | SphericalRayCellGeometry:
-    """Return cached truncated ray-cell geometry for one level cutoff."""
-    # TODO: this cache currently lives in tree._ray_cell_geometry_by_max_level.
-    # If truncated ray geometry is a supported octree capability, expose it
-    # through Octree rather than writing foreign private cache slots here.
-    cache = getattr(tree, "_ray_cell_geometry_by_max_level", None)
-    if cache is None:
-        cache = {}
-        tree._ray_cell_geometry_by_max_level = cache
-    key = int(max_level)
-    if key in cache:
-        return cache[key]
-
-    face_neighbors = tree.face_neighbors(max_level=key)
+    """Build truncated ray-cell geometry for one level cutoff."""
+    face_neighbors = tree.face_neighbors(max_level=int(max_level))
     if str(tree.tree_coord) == "xyz":
-        geometry = _build_cartesian_ray_cell_geometry(tree, face_neighbors)
-    elif str(tree.tree_coord) == "rpa":
-        geometry = _build_spherical_ray_cell_geometry(tree, face_neighbors)
-    else:
-        raise ValueError(f"Unsupported tree_coord '{tree.tree_coord}'.")
-    cache[key] = geometry
-    return geometry
+        return _build_cartesian_ray_cell_geometry(tree, face_neighbors)
+    if str(tree.tree_coord) == "rpa":
+        return _build_spherical_ray_cell_geometry(tree, face_neighbors)
+    raise ValueError(f"Unsupported tree_coord '{tree.tree_coord}'.")
 
 
-def _ray_interp_state_for_max_level(
-    interpolator: "OctreeInterpolator",
-    max_level: int,
+def _point_values_2d(interpolator: "OctreeInterpolator") -> np.ndarray:
+    """Pack interpolated node values into the 2-D kernel layout."""
+    point_values = np.asarray(interpolator.point_values, dtype=np.float64)
+    return np.array(point_values.reshape(int(point_values.shape[0]), -1), dtype=np.float64, order="C")
+
+
+def _interp_state_from_ray_geometry(
+    point_values_2d: np.ndarray,
+    geometry: CartesianRayCellGeometry | SphericalRayCellGeometry,
 ) -> CartesianInterpKernelState | SphericalInterpKernelState:
-    """Return cached truncated interpolation state for one ray level cutoff."""
-    # TODO: ray.py still writes interpolator._ray_interp_state_by_max_level and
-    # reads interpolator._point_values_2d. Promote one non-private packed
-    # interpolation state if truncated ray integration remains public.
-    cache = getattr(interpolator, "_ray_interp_state_by_max_level", None)
-    if cache is None:
-        cache = {}
-        interpolator._ray_interp_state_by_max_level = cache
-    key = int(max_level)
-    if key in cache:
-        return cache[key]
-
-    geometry = _ray_cell_geometry_for_max_level(interpolator.tree, key)
-    point_values_2d = np.asarray(interpolator._point_values_2d, dtype=np.float64)
+    """Build one interpolation kernel state from one ray-geometry bundle."""
     if isinstance(geometry, CartesianRayCellGeometry):
-        state = _cartesian_interp_state_from_geometry(point_values_2d, geometry)
-    elif isinstance(geometry, SphericalRayCellGeometry):
-        state = _spherical_interp_state_from_geometry(point_values_2d, geometry)
-    else:
-        raise TypeError(f"Unsupported truncated ray geometry {type(geometry).__name__}.")
-    cache[key] = state
-    return state
+        return _cartesian_interp_state_from_geometry(point_values_2d, geometry)
+    if isinstance(geometry, SphericalRayCellGeometry):
+        return _spherical_interp_state_from_geometry(point_values_2d, geometry)
+    raise TypeError(f"Unsupported truncated ray geometry {type(geometry).__name__}.")
 
 
 @njit(cache=True)
@@ -2256,22 +2232,14 @@ class OctreeRayTracer:
                 self._cell_lookup_state = self._seed_lookup_state
                 self._cell_plane_state = None
             elif self._tree_coord == "rpa":
-                # TODO: this still caches spherical plane state in
-                # tree._ray_cell_plane_state from outside Octree.
-                plane_state = getattr(tree, "_ray_cell_plane_state", None)
-                if plane_state is None:
-                    plane_state = _build_cell_plane_kernel_state(tree)
-                    tree._ray_cell_plane_state = plane_state
-                self._seed_cell_plane_state = plane_state
+                self._seed_cell_plane_state = _build_cell_plane_kernel_state(tree)
                 self._cell_lookup_state = None
                 self._cell_plane_state = self._seed_cell_plane_state
             else:
                 raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
-            self._ray_cell_geometry = None
             return
 
         geometry = _ray_cell_geometry_for_max_level(tree, int(self.max_level))
-        self._ray_cell_geometry = geometry
         self._face_neighbor_state = geometry.face_neighbor_state
         if self._tree_coord == "xyz":
             if not isinstance(geometry, CartesianRayCellGeometry):
@@ -2558,22 +2526,17 @@ class OctreeRayInterpolator:
         self.tree = interpolator.tree
         self.max_level = _resolve_ray_max_level(self.tree, max_level)
         self.ray_tracer = OctreeRayTracer(self.tree, max_level=max_level)
-        # TODO: this still reads interpolator._interp_state_xyz/_interp_state_rpa.
-        # Either expose one non-private ray-ready interpolation state or collapse
-        # the split between tracer/interpolator wrappers.
+        tree_coord = str(self.tree.tree_coord)
         if int(self.max_level) >= int(self.tree.max_level):
-            self._interp_state_xyz = getattr(interpolator, "_interp_state_xyz", None)
-            self._interp_state_rpa = getattr(interpolator, "_interp_state_rpa", None)
-        else:
-            interp_state = _ray_interp_state_for_max_level(interpolator, int(self.max_level))
-            if isinstance(interp_state, CartesianInterpKernelState):
-                self._interp_state_xyz = interp_state
-                self._interp_state_rpa = None
-            elif isinstance(interp_state, SphericalInterpKernelState):
-                self._interp_state_xyz = None
-                self._interp_state_rpa = interp_state
+            if tree_coord == "xyz":
+                self._interp_state = interpolator.xyz_interp_state
+            elif tree_coord == "rpa":
+                self._interp_state = getattr(interpolator, "_interp_state_rpa", None)
             else:
-                raise TypeError(f"Unsupported truncated interpolation state {type(interp_state).__name__}.")
+                raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
+        else:
+            geometry = _ray_cell_geometry_for_max_level(self.tree, int(self.max_level))
+            self._interp_state = _interp_state_from_ray_geometry(_point_values_2d(interpolator), geometry)
 
     def integrate_field_along_rays(
         self,
@@ -2618,7 +2581,7 @@ class OctreeRayInterpolator:
                         "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
                         f"got {type(cell_lookup_state).__name__}."
                     )
-                interp_state = self._interp_state_xyz
+                interp_state = self._interp_state
                 if not isinstance(interp_state, CartesianInterpKernelState):
                     raise TypeError(
                         "Cartesian ray interpolation requires CartesianInterpKernelState; "
@@ -2656,7 +2619,7 @@ class OctreeRayInterpolator:
                         "Spherical ray tracing requires CellPlaneKernelState for active cells; "
                         f"got {type(plane_state).__name__}."
                     )
-                interp_state = self._interp_state_rpa
+                interp_state = self._interp_state
                 if not isinstance(interp_state, SphericalInterpKernelState):
                     raise TypeError(
                         "Spherical ray interpolation requires SphericalInterpKernelState; "
