@@ -62,8 +62,8 @@ def _lookup_xyz_cell_id_kernel(
 class _CartesianCoordSupport:
     """Cartesian geometry support for octree lookup on axis-aligned slab cells."""
 
-    def _init_lookup_state(self) -> None:
-        """Rebuild Cartesian lookup geometry from exact leaf addresses."""
+    def _bind_geometry(self) -> None:
+        """Attach Cartesian bound geometry derived from exact leaf addresses."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
@@ -147,7 +147,7 @@ class _CartesianCoordSupport:
             ],
             dtype=np.float64,
         )
-        self._lookup_state = LookupKernelState(
+        self._coord_state = LookupKernelState(
             cell_axis0_start=self._cell_x_min,
             cell_axis0_width=self._cell_x_max - self._cell_x_min,
             cell_axis1_start=self._cell_y_min,
@@ -243,7 +243,7 @@ class _CartesianCoordSupport:
                 float(x),
                 float(y),
                 float(z),
-                self._lookup_state,
+                self._coord_state,
                 float(tol),
             )
         )
@@ -255,6 +255,6 @@ class _CartesianCoordSupport:
                 float(x),
                 float(y),
                 float(z),
-                self._lookup_state,
+                self._coord_state,
             )
         )
