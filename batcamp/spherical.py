@@ -195,6 +195,8 @@ class _SphericalCellLookup:
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Spherical lookup requires exact tree state: missing {missing}.")
+        # Cast once at the dataset->kernel boundary: corner ids must index cleanly
+        # and spherical lookup kernels run on float64 coordinates.
         corners = np.asarray(self.ds.corners, dtype=np.int64)
         x = np.asarray(self.ds[self.X_VAR], dtype=np.float64)
         y = np.asarray(self.ds[self.Y_VAR], dtype=np.float64)
@@ -212,21 +214,9 @@ class _SphericalCellLookup:
         n_cells = int(self._cell_centers.shape[0])
         if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
             raise ValueError("Spherical lookup requires exact cell_levels.")
-        self._cell_level = np.array(self.cell_levels, dtype=np.int64)
-        self._i0 = np.asarray(self._i0, dtype=np.int64)
-        self._i1 = np.asarray(self._i1, dtype=np.int64)
-        self._i2 = np.asarray(self._i2, dtype=np.int64)
-        self._node_depth = np.asarray(self._node_depth, dtype=np.int64)
-        self._node_i0 = np.asarray(self._node_i0, dtype=np.int64)
-        self._node_i1 = np.asarray(self._node_i1, dtype=np.int64)
-        self._node_i2 = np.asarray(self._node_i2, dtype=np.int64)
-        self._node_value = np.asarray(self._node_value, dtype=np.int64)
-        self._node_child = np.asarray(self._node_child, dtype=np.int64)
-        self._root_node_ids = np.asarray(self._root_node_ids, dtype=np.int64)
-        self._node_parent = np.asarray(self._node_parent, dtype=np.int64)
-        self._cell_node_id = np.asarray(self._cell_node_id, dtype=np.int64)
-        valid_ids = np.flatnonzero(self._cell_level >= 0).astype(np.int64)
-        shifts = np.asarray(int(self.max_level) - self._cell_level[valid_ids], dtype=np.int64)
+        self._cell_level = self.cell_levels
+        valid_ids = np.flatnonzero(self._cell_level >= 0)
+        shifts = int(self.max_level) - self._cell_level[valid_ids]
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
         r0_f = np.left_shift(self._i0[valid_ids], shifts)
         r1_f = r0_f + width_units
@@ -266,23 +256,23 @@ class _SphericalCellLookup:
         fine_i2 = np.left_shift(self._i2[valid_ids], shifts)
         self._cell_r_min[valid_ids] = self._radial_edges[r0_f]
         self._cell_r_max[valid_ids] = self._radial_edges[r1_f]
-        self._cell_theta_min[valid_ids] = fine_i1.astype(np.float64) * d_theta_f
-        self._cell_theta_max[valid_ids] = (fine_i1 + width_units).astype(np.float64) * d_theta_f
-        self._cell_phi_start[valid_ids] = np.mod(fine_i2.astype(np.float64) * d_phi_f, 2.0 * math.pi)
-        self._cell_phi_width[valid_ids] = width_units.astype(np.float64) * d_phi_f
-        node_shift = np.asarray(int(self.max_level) - self._node_depth, dtype=np.int64)
+        self._cell_theta_min[valid_ids] = fine_i1 * d_theta_f
+        self._cell_theta_max[valid_ids] = (fine_i1 + width_units) * d_theta_f
+        self._cell_phi_start[valid_ids] = np.mod(fine_i2 * d_phi_f, 2.0 * math.pi)
+        self._cell_phi_width[valid_ids] = width_units * d_phi_f
+        node_shift = int(self.max_level) - self._node_depth
         node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
         node_r0_f = np.left_shift(self._node_i0, node_shift)
         node_r1_f = node_r0_f + node_width
         node_t0_f = np.left_shift(self._node_i1, node_shift)
         node_t1_f = node_t0_f + node_width
         node_p0_f = np.left_shift(self._node_i2, node_shift)
-        self._node_r_min = np.asarray(self._radial_edges[node_r0_f], dtype=np.float64)
-        self._node_r_max = np.asarray(self._radial_edges[node_r1_f], dtype=np.float64)
-        self._node_theta_min = np.asarray(node_t0_f.astype(np.float64) * d_theta_f, dtype=np.float64)
-        self._node_theta_max = np.asarray(node_t1_f.astype(np.float64) * d_theta_f, dtype=np.float64)
-        self._node_phi_start = np.asarray(np.mod(node_p0_f.astype(np.float64) * d_phi_f, 2.0 * math.pi), dtype=np.float64)
-        self._node_phi_width = np.asarray(node_width.astype(np.float64) * d_phi_f, dtype=np.float64)
+        self._node_r_min = self._radial_edges[node_r0_f]
+        self._node_r_max = self._radial_edges[node_r1_f]
+        self._node_theta_min = node_t0_f * d_theta_f
+        self._node_theta_max = node_t1_f * d_theta_f
+        self._node_phi_start = np.mod(node_p0_f * d_phi_f, 2.0 * math.pi)
+        self._node_phi_width = node_width * d_phi_f
         self._lookup_state = SphericalLookupKernelState(
             cell_r_min=self._cell_r_min,
             cell_r_max=self._cell_r_max,

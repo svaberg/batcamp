@@ -255,10 +255,10 @@ class Octree:
         return cls(
             root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
-            cell_levels=np.asarray(state.cell_levels, dtype=np.int64),
-            cell_i0=np.asarray(state.cell_i0, dtype=np.int64),
-            cell_i1=np.asarray(state.cell_i1, dtype=np.int64),
-            cell_i2=np.asarray(state.cell_i2, dtype=np.int64),
+            cell_levels=state.cell_levels,
+            cell_i0=state.cell_i0,
+            cell_i1=state.cell_i1,
+            cell_i2=state.cell_i2,
             ds=ds if bind else None,
             axis_rho_tol=resolved_axis_rho_tol,
         )
@@ -333,7 +333,7 @@ class Octree:
     def cell_centers(self) -> np.ndarray:
         """Return leaf-cell centers in Cartesian coordinates."""
         self._require_lookup()
-        return np.asarray(self._cell_centers, dtype=float)
+        return self._cell_centers
 
     def lookup_geometry(self) -> LookupGeometryState:
         """Return bound point/cell arrays plus packed lookup state."""
@@ -353,7 +353,7 @@ class Octree:
                 )
             ),
             corners=np.asarray(self.ds.corners, dtype=np.int64),
-            cell_centers=np.asarray(self._cell_centers, dtype=np.float64),
+            cell_centers=self._cell_centers,
             lookup_state=self._lookup_state,
         )
 
@@ -366,15 +366,15 @@ class Octree:
         if missing:
             raise ValueError(f"Octree frontier nodes require exact leaf addresses: missing {missing}.")
 
-        levels_all = np.asarray(self.cell_levels, dtype=np.int64)
+        levels_all = self.cell_levels
         valid = levels_all >= 0
         if not np.any(valid):
             raise ValueError("Octree contains no valid cells (all levels are < 0).")
 
-        cell_ids = np.flatnonzero(valid).astype(np.int64)
-        i0_all = np.asarray(self._i0, dtype=np.int64)
-        i1_all = np.asarray(self._i1, dtype=np.int64)
-        i2_all = np.asarray(self._i2, dtype=np.int64)
+        cell_ids = np.flatnonzero(valid)
+        i0_all = self._i0
+        i1_all = self._i1
+        i2_all = self._i2
         if not (levels_all.shape == i0_all.shape == i1_all.shape == i2_all.shape):
             raise ValueError("Cell level/index arrays must have matching shapes.")
 
@@ -385,7 +385,7 @@ class Octree:
         active_i1 = np.right_shift(i1_all[valid], shift)
         active_i2 = np.right_shift(i2_all[valid], shift)
 
-        keys = np.column_stack((active_levels, active_i0, active_i1, active_i2)).astype(np.int64)
+        keys = np.column_stack((active_levels, active_i0, active_i1, active_i2))
         unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
 
         node_cell_ids = np.full(unique_keys.shape[0], -1, dtype=np.int64)
@@ -396,18 +396,17 @@ class Octree:
                 node_cell_ids[nid] = int(cell_ids[row])
             cell_to_node_id[int(cell_ids[row])] = nid
 
-        levels = np.asarray(unique_keys[:, 0], dtype=np.int64)
-        i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
-        i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
-        i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
+        levels = unique_keys[:, 0]
+        i0 = unique_keys[:, 1]
+        i1 = unique_keys[:, 2]
+        i2 = unique_keys[:, 3]
         return levels, i0, i1, i2, node_cell_ids, cell_to_node_id
 
     def face_neighbors(self, *, max_level: int | None = None) -> "OctreeFaceNeighbors":
         """Return the lazily built face-neighbor graph for one level cutoff."""
         if self.cell_levels is None:
             raise ValueError("Octree has no cell_levels; cannot build face neighbors.")
-        valid_levels = np.asarray(self.cell_levels, dtype=np.int64)
-        valid_levels = valid_levels[valid_levels >= 0]
+        valid_levels = self.cell_levels[self.cell_levels >= 0]
         if valid_levels.size == 0:
             raise ValueError("Octree contains no valid cell levels (all < 0).")
 
