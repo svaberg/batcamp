@@ -14,7 +14,7 @@ from typing import Literal
 from typing import TypeAlias
 
 import numpy as np
-from batread.dataset import Dataset
+from batread import Dataset
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 DEFAULT_AXIS_RHO_TOL = 1e-12

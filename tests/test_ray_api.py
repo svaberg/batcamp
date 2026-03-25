@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import numpy as np
 import pytest
-from batread.dataset import Dataset
+from batread import Dataset
 
 from batcamp import OctreeInterpolator
 from batcamp import OctreeBuilder

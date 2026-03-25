@@ -23,7 +23,7 @@ The following code plots a two dimensional density slice.
 import numpy as np
 import matplotlib.pyplot as plt
 
-from batread.dataset import Dataset
+from batread import Dataset
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 
