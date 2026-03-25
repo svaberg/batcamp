@@ -16,9 +16,9 @@ import numpy as np
 from batread import Dataset
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
-DEFAULT_AXIS_RHO_TOL = 1e-12
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
+_DEFAULT_BOUND_AXIS_RHO_TOL = 1e-12
 
 TreeCoord: TypeAlias = Literal["rpa", "xyz"]
 """Coordinate-system tag used by octree builder/lookup dispatch."""
@@ -150,7 +150,7 @@ class Octree:
         cell_i1: np.ndarray,
         cell_i2: np.ndarray,
         ds: Dataset | None = None,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+        axis_rho_tol: float = _DEFAULT_BOUND_AXIS_RHO_TOL,
     ) -> None:
         """Build one octree directly from exact leaf addresses."""
         resolved_tree_coord = str(tree_coord)
@@ -251,7 +251,7 @@ class Octree:
             raise ValueError(
                 f"Unsupported tree_coord '{state.tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
-        resolved_axis_rho_tol = float(DEFAULT_AXIS_RHO_TOL) if axis_rho_tol is None else float(axis_rho_tol)
+        resolved_axis_rho_tol = float(_DEFAULT_BOUND_AXIS_RHO_TOL) if axis_rho_tol is None else float(axis_rho_tol)
         return cls(
             root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
