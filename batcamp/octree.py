@@ -248,6 +248,10 @@ class Octree:
         """Instantiate one tree from exact saved state."""
         if bind and ds is None:
             raise ValueError("Octree.from_state requires ds when bind=True.")
+        if str(state.tree_coord) not in SUPPORTED_TREE_COORDS:
+            raise ValueError(
+                f"Unsupported tree_coord '{state.tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+            )
         resolved_axis_rho_tol = float(DEFAULT_AXIS_RHO_TOL) if axis_rho_tol is None else float(axis_rho_tol)
         root_shape = tuple(int(v) for v in state.root_shape)
         cell_levels = np.asarray(state.cell_levels, dtype=np.int64)
