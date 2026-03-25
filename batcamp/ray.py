@@ -2575,52 +2575,6 @@ class OctreeRayInterpolator:
             else:
                 raise TypeError(f"Unsupported truncated interpolation state {type(interp_state).__name__}.")
 
-    def sample(
-        self,
-        origin_xyz: np.ndarray,
-        direction_xyz: np.ndarray,
-        t_start: float,
-        t_end: float,
-        n_samples: int,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        """Sample interpolated values at uniform `t` points on one ray."""
-        if int(n_samples) <= 0:
-            raise ValueError("n_samples must be positive.")
-        o = _as_xyz(origin_xyz)
-        d = _normalize_direction(direction_xyz)
-        t_values = np.linspace(float(t_start), float(t_end), int(n_samples))
-        query_xyz = o[None, :] + t_values[:, None] * d[None, :]
-        values, cell_ids = self.interpolator(
-            query_xyz,
-            query_coord="xyz",
-            return_cell_ids=True,
-            log_outside_domain=False,
-        )
-        segments = self.ray_tracer.trace_prepared(o, d, float(t_start), float(t_end))
-        return t_values, values, np.asarray(cell_ids, dtype=np.int64), segments
-
-    def segment_counts(
-        self,
-        origins_xyz: np.ndarray,
-        direction_xyz: np.ndarray,
-        t_start: float,
-        t_end: float,
-        *,
-        chunk_size: int = 2048,
-        max_steps: int = _DEFAULT_TRACE_MAX_STEPS,
-        boundary_tol: float = _DEFAULT_TRACE_BOUNDARY_TOL,
-    ) -> np.ndarray:
-        """Return per-ray segment counts."""
-        return self.ray_tracer.segment_counts(
-            origins_xyz,
-            direction_xyz,
-            t_start,
-            t_end,
-            chunk_size=chunk_size,
-            max_steps=max_steps,
-            boundary_tol=boundary_tol,
-        )
-
     def integrate_field_along_rays(
         self,
         origins_xyz: np.ndarray,

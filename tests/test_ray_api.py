@@ -60,8 +60,8 @@ def _build_single_cell_trilinear_dataset() -> _FakeDataset:
 
 
 @pytest.mark.pooch
-def test_trace_and_sample_sc(_sc_interp: OctreeInterpolator) -> None:
-    """Ray contract: traced arrays and sampled values are valid."""
+def test_trace_sc(_sc_interp: OctreeInterpolator) -> None:
+    """Ray contract: traced arrays are valid."""
     interp = _sc_interp
     origin, direction, t0, t1 = _diagnostic_ray_setup()
 
@@ -71,22 +71,6 @@ def test_trace_and_sample_sc(_sc_interp: OctreeInterpolator) -> None:
     assert np.all(cell_ids >= 0)
     assert float(t_enter[0]) >= 0.0
     assert float(t_exit[-1]) <= t1 + 1e-12
-
-    n_samples = 1200
-    t_values, ray_values, cell_ids_sample, _ = OctreeRayInterpolator(interp).sample(
-        origin,
-        direction,
-        t0,
-        t1,
-        n_samples,
-    )
-    vals = np.asarray(ray_values, dtype=float).reshape(-1)
-    cids = np.asarray(cell_ids_sample, dtype=np.int64).reshape(-1)
-    assert np.asarray(t_values, dtype=float).shape == (n_samples,)
-    assert vals.shape == (n_samples,)
-    assert cids.shape == (n_samples,)
-    assert np.all(cids >= 0)
-    assert np.all(np.isfinite(vals))
 
 
 def test_flat_camera_from_domain_x_matches_current_compare_setup() -> None:
@@ -164,7 +148,7 @@ def test_ray_interpolator_accepts_one_direction_per_ray() -> None:
     origins, directions, t_end, image_shape = camera.rays(ny=1, nz=1)
     per_ray = np.asarray(ray.integrate_field_along_rays(origins, directions, 0.0, t_end), dtype=float)
     shared = np.asarray(ray.integrate_field_along_rays(origins, directions[0], 0.0, t_end), dtype=float)
-    counts = np.asarray(ray.segment_counts(origins, directions, 0.0, t_end), dtype=np.int64)
+    counts = np.asarray(ray.ray_tracer.segment_counts(origins, directions, 0.0, t_end), dtype=np.int64)
 
     assert image_shape == (1, 1)
     assert counts.tolist() == [1]

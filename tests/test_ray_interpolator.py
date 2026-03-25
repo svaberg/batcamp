@@ -162,17 +162,6 @@ def _dense_ray_oracle(
     return float(np.trapezoid(np.where(finite, vals, 0.0), x=t))
 
 
-def test_sample_rejects_bad_args() -> None:
-    """Ray sampling should reject non-positive sample count and zero direction."""
-    ds = _build_fake_dataset()
-    interp = OctreeInterpolator(OctreeBuilder().build(ds), ["Scalar"])
-    ray = OctreeRayInterpolator(interp)
-    with pytest.raises(ValueError, match="n_samples must be positive"):
-        ray.sample(np.array([1.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0]), 0.0, 1.0, 0)
-    with pytest.raises(ValueError, match="direction_xyz must be finite and non-zero"):
-        ray.sample(np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0]), 0.0, 1.0, 10)
-
-
 def test_integrate_rejects_bad_args() -> None:
     """Bulk ray integration should validate origin shape, chunk size and interval."""
     ds = _build_fake_dataset()
@@ -241,11 +230,8 @@ def test_spherical_outside_inward_traces_and_integrates() -> None:
     assert np.all(cell_ids >= 0)
     assert np.all(t_exit >= t_enter)
 
-    _t_vals, vals, cell_ids_sample, _segments = ray.sample(origin, direction, t0, t1, 96)
-    cids = np.asarray(cell_ids_sample, dtype=np.int64).reshape(-1)
-    v = np.asarray(vals, dtype=float).reshape(-1)
-    assert np.any(cids >= 0)
-    assert np.any(np.isfinite(v[cids >= 0]))
+    vals = np.asarray(ray.integrate_field_along_rays(origin[None, :], direction, t0, t1), dtype=float)
+    assert np.all(np.isfinite(vals))
 
 
 def test_direct_ray_integral_matches_exact_for_trilinear_field() -> None:
@@ -300,8 +286,8 @@ def test_cartesian_max_level_full_matches_default() -> None:
     )
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
 
-    default_counts = np.asarray(default.segment_counts(origins, direction, 0.0, 2.0), dtype=np.int64)
-    full_counts = np.asarray(full.segment_counts(origins, direction, 0.0, 2.0), dtype=np.int64)
+    default_counts = np.asarray(default.ray_tracer.segment_counts(origins, direction, 0.0, 2.0), dtype=np.int64)
+    full_counts = np.asarray(full.ray_tracer.segment_counts(origins, direction, 0.0, 2.0), dtype=np.int64)
     default_vals = np.asarray(default.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
     full_vals = np.asarray(full.integrate_field_along_rays(origins, direction, 0.0, 2.0), dtype=float)
 
@@ -325,8 +311,8 @@ def test_spherical_max_level_zero_matches_root_cell_interpolation() -> None:
     )
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
 
-    cut_counts = np.asarray(cut.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
-    root_counts = np.asarray(root.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    cut_counts = np.asarray(cut.ray_tracer.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    root_counts = np.asarray(root.ray_tracer.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
     cut_vals = np.asarray(cut.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
     root_vals = np.asarray(root.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
 
@@ -361,8 +347,8 @@ def test_spherical_max_level_full_matches_default() -> None:
     )
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
 
-    default_counts = np.asarray(default.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
-    full_counts = np.asarray(full.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    default_counts = np.asarray(default.ray_tracer.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    full_counts = np.asarray(full.ray_tracer.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
     default_vals = np.asarray(default.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
     full_vals = np.asarray(full.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
 
@@ -386,8 +372,8 @@ def test_spherical_max_level_one_matches_level_one_mesh() -> None:
     )
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
 
-    cut_counts = np.asarray(cut.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
-    ref_counts = np.asarray(ref.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    cut_counts = np.asarray(cut.ray_tracer.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
+    ref_counts = np.asarray(ref.ray_tracer.segment_counts(origins, direction, 0.0, 4.2), dtype=np.int64)
     cut_vals = np.asarray(cut.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
     ref_vals = np.asarray(ref.integrate_field_along_rays(origins, direction, 0.0, 4.2), dtype=float)
 
