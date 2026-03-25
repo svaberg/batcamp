@@ -405,22 +405,34 @@ class OctreeBuilder:
             and int(sum(item[2] for item in level_counts)) == int(np.prod(leaf_shape))
             and int(weighted_cells) == int(np.prod(leaf_shape))
         )
-        tree = Octree(
-            leaf_shape=leaf_shape,
-            root_shape=root_shape,
+        if tree_coord == "rpa":
+            state_payload = self._rpa_builder.populate_tree_state(
+                leaf_shape=leaf_shape,
+                max_level=int(max_level + level_offset),
+                cell_levels=levels_abs,
+                axis_rho_tol=float(axis_rho_tol),
+                ds=ds,
+                corners=corners_arr,
+            )
+        else:
+            state_payload = self._xyz_builder.populate_tree_state(
+                leaf_shape=leaf_shape,
+                max_level=int(max_level + level_offset),
+                cell_levels=levels_abs,
+                ds=ds,
+                corners=corners_arr,
+            )
+        state = OctreeState(
+            leaf_shape=tuple(int(v) for v in leaf_shape),
+            root_shape=tuple(int(v) for v in root_shape),
             is_full=bool(is_full),
-            level_counts=level_counts,
+            level_counts=tuple(tuple(int(v) for v in row) for row in level_counts),
             min_level=int(min_level + level_offset),
             max_level=int(max_level + level_offset),
             tree_coord=tree_coord,
-            cell_levels=levels_abs,
             axis_rho_tol=float(axis_rho_tol),
+            **state_payload,
         )
-        if tree_coord == "rpa":
-            self._rpa_builder.populate_tree_state(tree, ds, corners_arr)
-        else:
-            self._xyz_builder.populate_tree_state(tree, ds, corners_arr)
-        state = OctreeState.from_tree(tree)
         return Octree.from_state(
             state,
             ds=ds if bind else None,

@@ -337,12 +337,16 @@ class SphericalOctreeBuilder:
 
     @staticmethod
     def populate_tree_state(
-        tree: Octree,
+        *,
+        leaf_shape: tuple[int, int, int],
+        max_level: int,
+        cell_levels: np.ndarray | None,
+        axis_rho_tol: float,
         ds: Dataset,
         corners: np.ndarray,
-    ) -> None:
-        """Attach exact spherical octree addresses to one built tree."""
-        if tree.cell_levels is None:
+    ) -> dict[str, object]:
+        """Return exact spherical octree state for one built tree."""
+        if cell_levels is None:
             raise ValueError("Spherical tree state requires cell_levels.")
 
         points = np.column_stack(
@@ -354,7 +358,7 @@ class SphericalOctreeBuilder:
         )
         corners_arr = np.asarray(corners, dtype=np.int64)
         cell_centers = np.mean(points[corners_arr], axis=1)
-        levels = np.asarray(tree.cell_levels, dtype=np.int64)
+        levels = np.asarray(cell_levels, dtype=np.int64)
         valid = levels >= 0
         valid_ids = np.flatnonzero(valid).astype(np.int64)
         if valid_ids.size == 0:
@@ -372,7 +376,7 @@ class SphericalOctreeBuilder:
         axis_mask = SphericalOctreeBuilder._axis_corner_mask(
             ds,
             corners_arr,
-            axis_rho_tol=float(tree.axis_rho_tol),
+            axis_rho_tol=float(axis_rho_tol),
         )
         phi_start = np.empty(levels.shape[0], dtype=float)
         phi_width = np.empty(levels.shape[0], dtype=float)
@@ -394,14 +398,14 @@ class SphericalOctreeBuilder:
             np.concatenate((cell_r_min[valid], cell_r_max[valid])),
             atol=radial_tol,
         )
-        expected_edges = int(tree.leaf_shape[0]) + 1
+        expected_edges = int(leaf_shape[0]) + 1
         if radial_edges.size != expected_edges:
             raise ValueError(
                 "Spherical radial edge count does not match leaf_shape: "
                 f"edges={int(radial_edges.size)}, expected={expected_edges}."
             )
 
-        tree_depth = int(tree.max_level)
+        tree_depth = int(max_level)
         depths = np.asarray(levels[valid_ids], dtype=np.int64)
         shifts = np.asarray(tree_depth - depths, dtype=np.int64)
         if np.any(shifts < 0):
@@ -409,8 +413,8 @@ class SphericalOctreeBuilder:
             raise ValueError(f"Spherical cell {bad} depth exceeds tree_depth={tree_depth}.")
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
 
-        d_theta_f = math.pi / float(int(tree.leaf_shape[1]))
-        d_phi_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
+        d_theta_f = math.pi / float(int(leaf_shape[1]))
+        d_phi_f = (2.0 * math.pi) / float(int(leaf_shape[2]))
         # TODO: Replace these angular snap tolerances with explicit inferred
         # theta/phi edge sets so noisy data maps to the most probable octree.
         theta_tol = max(1e-7 * math.pi, 2e-5 * d_theta_f)
@@ -431,7 +435,7 @@ class SphericalOctreeBuilder:
         )
         r0_f = np.where(r0_use_prev, r0_prev, r0_next).astype(np.int64)
         r1_f = np.where(r1_use_prev, r1_prev, r1_next).astype(np.int64)
-        n_r_fine = int(tree.leaf_shape[0])
+        n_r_fine = int(leaf_shape[0])
         if np.any(r0_f < 0) or np.any(r1_f > n_r_fine):
             bad = int(valid_ids[np.flatnonzero((r0_f < 0) | (r1_f > n_r_fine))[0]])
             raise ValueError(f"Spherical cell {bad} radial address is outside the inferred octree grid.")
@@ -453,8 +457,8 @@ class SphericalOctreeBuilder:
         i1_hi = np.rint(cell_theta_max[valid_ids] / d_theta_f).astype(np.int64)
         i2_f = np.rint(phi_start[valid_ids] / d_phi_f).astype(np.int64)
         i2_hi = np.rint((phi_start[valid_ids] + width_phi) / d_phi_f).astype(np.int64)
-        n_theta_fine = int(tree.leaf_shape[1])
-        n_phi_fine = int(tree.leaf_shape[2])
+        n_theta_fine = int(leaf_shape[1])
+        n_phi_fine = int(leaf_shape[2])
         in_bounds = (
             (i1_f >= 0) & (i1_hi <= n_theta_fine)
             & (i2_f >= 0) & (i2_hi <= n_phi_fine)
@@ -531,41 +535,56 @@ class SphericalOctreeBuilder:
         node_t1_f = node_t0_f + node_width
         node_p0_f = np.left_shift(node_i2, node_shift)
         node_p1_f = node_p0_f + node_width
-        d_theta_f = math.pi / float(int(tree.leaf_shape[1]))
-        d_phi_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
+        d_theta_f = math.pi / float(int(leaf_shape[1]))
+        d_phi_f = (2.0 * math.pi) / float(int(leaf_shape[2]))
         node_r_min = radial_edges[node_r0_f]
         node_r_max = radial_edges[node_r1_f]
         node_theta_min = node_t0_f.astype(float) * d_theta_f
         node_theta_max = node_t1_f.astype(float) * d_theta_f
         node_phi_start = np.mod(node_p0_f.astype(float) * d_phi_f, 2.0 * math.pi)
         node_phi_width = node_width.astype(float) * d_phi_f
-        tree._corners = np.asarray(corners_arr, dtype=np.int64)
-        tree._points = np.asarray(points, dtype=np.float64)
-        tree._cell_centers = np.asarray(cell_centers, dtype=np.float64)
-        tree._cell_r_min = np.asarray(cell_r_min, dtype=np.float64)
-        tree._cell_r_max = np.asarray(cell_r_max, dtype=np.float64)
-        tree._r_min = float(r_min)
-        tree._r_max = float(r_max)
-        tree._cell_theta_min = np.asarray(cell_theta_min, dtype=np.float64)
-        tree._cell_theta_max = np.asarray(cell_theta_max, dtype=np.float64)
-        tree._cell_phi_start = np.asarray(phi_start, dtype=np.float64)
-        tree._cell_phi_width = np.asarray(phi_width, dtype=np.float64)
-        tree._i0 = cell_i0
-        tree._i1 = cell_i1
-        tree._i2 = cell_i2
-        tree._node_depth = node_depth
-        tree._node_i0 = node_i0
-        tree._node_i1 = node_i1
-        tree._node_i2 = node_i2
-        tree._node_value = node_value
-        tree._node_child = node_child
-        tree._root_node_ids = root_node_ids
-        tree._node_parent = node_parent
-        tree._cell_node_id = cell_node_id
-        tree._node_r_min = np.asarray(node_r_min, dtype=np.float64)
-        tree._node_r_max = np.asarray(node_r_max, dtype=np.float64)
-        tree._node_theta_min = np.asarray(node_theta_min, dtype=np.float64)
-        tree._node_theta_max = np.asarray(node_theta_max, dtype=np.float64)
-        tree._node_phi_start = np.asarray(node_phi_start, dtype=np.float64)
-        tree._node_phi_width = np.asarray(node_phi_width, dtype=np.float64)
-        tree._radial_edges = np.asarray(radial_edges, dtype=np.float64)
+        return {
+            "cell_levels": np.asarray(cell_levels, dtype=np.int64),
+            "cell_i0": np.asarray(cell_i0, dtype=np.int64),
+            "cell_i1": np.asarray(cell_i1, dtype=np.int64),
+            "cell_i2": np.asarray(cell_i2, dtype=np.int64),
+            "cell_centers": np.asarray(cell_centers, dtype=np.float64),
+            "cell_x_min": np.empty((0,), dtype=np.float64),
+            "cell_x_max": np.empty((0,), dtype=np.float64),
+            "cell_y_min": np.empty((0,), dtype=np.float64),
+            "cell_y_max": np.empty((0,), dtype=np.float64),
+            "cell_z_min": np.empty((0,), dtype=np.float64),
+            "cell_z_max": np.empty((0,), dtype=np.float64),
+            "xyz_min": np.empty((0,), dtype=np.float64),
+            "xyz_max": np.empty((0,), dtype=np.float64),
+            "cell_r_min": np.asarray(cell_r_min, dtype=np.float64),
+            "cell_r_max": np.asarray(cell_r_max, dtype=np.float64),
+            "cell_theta_min": np.asarray(cell_theta_min, dtype=np.float64),
+            "cell_theta_max": np.asarray(cell_theta_max, dtype=np.float64),
+            "cell_phi_start": np.asarray(phi_start, dtype=np.float64),
+            "cell_phi_width": np.asarray(phi_width, dtype=np.float64),
+            "node_depth": np.asarray(node_depth, dtype=np.int64),
+            "node_i0": np.asarray(node_i0, dtype=np.int64),
+            "node_i1": np.asarray(node_i1, dtype=np.int64),
+            "node_i2": np.asarray(node_i2, dtype=np.int64),
+            "node_value": np.asarray(node_value, dtype=np.int64),
+            "node_child": np.asarray(node_child, dtype=np.int64),
+            "root_node_ids": np.asarray(root_node_ids, dtype=np.int64),
+            "node_parent": np.asarray(node_parent, dtype=np.int64),
+            "cell_node_id": np.asarray(cell_node_id, dtype=np.int64),
+            "node_x_min": np.empty((0,), dtype=np.float64),
+            "node_x_max": np.empty((0,), dtype=np.float64),
+            "node_y_min": np.empty((0,), dtype=np.float64),
+            "node_y_max": np.empty((0,), dtype=np.float64),
+            "node_z_min": np.empty((0,), dtype=np.float64),
+            "node_z_max": np.empty((0,), dtype=np.float64),
+            "node_r_min": np.asarray(node_r_min, dtype=np.float64),
+            "node_r_max": np.asarray(node_r_max, dtype=np.float64),
+            "node_theta_min": np.asarray(node_theta_min, dtype=np.float64),
+            "node_theta_max": np.asarray(node_theta_max, dtype=np.float64),
+            "node_phi_start": np.asarray(node_phi_start, dtype=np.float64),
+            "node_phi_width": np.asarray(node_phi_width, dtype=np.float64),
+            "radial_edges": np.asarray(radial_edges, dtype=np.float64),
+            "r_min": float(r_min),
+            "r_max": float(r_max),
+        }

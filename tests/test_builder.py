@@ -675,7 +675,13 @@ def test_cartesian_tree_state_requires_cell_levels() -> None:
         cell_levels=None,
     )
     with pytest.raises(ValueError, match="Cartesian tree state requires cell_levels"):
-        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        CartesianOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_cartesian_tree_state_requires_at_least_one_valid_level() -> None:
@@ -688,7 +694,13 @@ def test_cartesian_tree_state_requires_at_least_one_valid_level() -> None:
         cell_levels=np.full(int(np.asarray(ds.corners).shape[0]), -1, dtype=np.int64),
     )
     with pytest.raises(ValueError, match="at least one valid cell level"):
-        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        CartesianOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_cartesian_tree_state_rejects_depth_above_tree_depth() -> None:
@@ -701,7 +713,13 @@ def test_cartesian_tree_state_rejects_depth_above_tree_depth() -> None:
         cell_levels=np.ones(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
     with pytest.raises(ValueError, match="depth exceeds tree_depth=0"):
-        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        CartesianOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_cartesian_tree_state_rejects_width_mismatch() -> None:
@@ -714,7 +732,13 @@ def test_cartesian_tree_state_rejects_width_mismatch() -> None:
         cell_levels=np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
     with pytest.raises(ValueError, match="width does not match inferred level 0"):
-        CartesianOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        CartesianOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_spherical_level_shapes_require_valid_levels() -> None:
@@ -752,7 +776,14 @@ def test_spherical_tree_state_requires_cell_levels() -> None:
         cell_levels=None,
     )
     with pytest.raises(ValueError, match="Spherical tree state requires cell_levels"):
-        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        SphericalOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            axis_rho_tol=tree.axis_rho_tol,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
@@ -765,7 +796,14 @@ def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
         cell_levels=np.full(int(np.asarray(ds.corners).shape[0]), -1, dtype=np.int64),
     )
     with pytest.raises(ValueError, match="at least one valid cell level"):
-        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        SphericalOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            axis_rho_tol=tree.axis_rho_tol,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
@@ -778,7 +816,14 @@ def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
         cell_levels=np.ones(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
     with pytest.raises(ValueError, match="depth exceeds tree_depth=0"):
-        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        SphericalOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            axis_rho_tol=tree.axis_rho_tol,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_spherical_tree_state_rejects_width_mismatch() -> None:
@@ -791,7 +836,14 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
         cell_levels=np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
     with pytest.raises(ValueError, match="width does not match inferred level 0"):
-        SphericalOctreeBuilder.populate_tree_state(tree, ds, np.asarray(ds.corners, dtype=np.int64))
+        SphericalOctreeBuilder.populate_tree_state(
+            leaf_shape=tree.leaf_shape,
+            max_level=tree.max_level,
+            cell_levels=tree.cell_levels,
+            axis_rho_tol=tree.axis_rho_tol,
+            ds=ds,
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
 
 
 def test_build_bind_false_returns_unbound_until_bind() -> None:
