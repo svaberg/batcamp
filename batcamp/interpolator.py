@@ -13,6 +13,7 @@ from numba import njit
 from numba import prange
 import numpy as np
 
+from .constants import XYZ_VARS
 from .octree import _lookup_cell_id_kernel
 from .octree import LookupKernelState
 from .octree import Octree
@@ -352,11 +353,11 @@ class OctreeInterpolator:
             logger.error("Octree is not bound to a dataset; cannot build interpolator.")
             raise ValueError("Octree is not bound to a dataset with corners.")
         self.tree = tree
-        lookup_geometry = self.tree.lookup_geometry()
+        self.tree._require_lookup()
         self._ds = tree.ds
-        self._corners = lookup_geometry.corners
-        self._points = lookup_geometry.points
-        self._lookup_state = lookup_geometry.coord_state
+        self._corners = self._ds.corners
+        self._points = np.column_stack(tuple(self._ds[name] for name in XYZ_VARS))
+        self._lookup_state = self.tree._coord_state
         self.fill_value = fill_value
 
         logger.debug(
