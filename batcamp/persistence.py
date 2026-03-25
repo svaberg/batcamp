@@ -24,6 +24,23 @@ class OctreeArrayState:
     cell_i0: np.ndarray
     cell_i1: np.ndarray
     cell_i2: np.ndarray
+    cell_centers: np.ndarray
+    cell_x_min: np.ndarray
+    cell_x_max: np.ndarray
+    cell_y_min: np.ndarray
+    cell_y_max: np.ndarray
+    cell_z_min: np.ndarray
+    cell_z_max: np.ndarray
+    xyz_min: np.ndarray
+    xyz_max: np.ndarray
+    cell_r_min: np.ndarray
+    cell_r_max: np.ndarray
+    r_min: float
+    r_max: float
+    cell_theta_min: np.ndarray
+    cell_theta_max: np.ndarray
+    cell_phi_start: np.ndarray
+    cell_phi_width: np.ndarray
     node_depth: np.ndarray
     node_i0: np.ndarray
     node_i1: np.ndarray
@@ -61,6 +78,23 @@ class OctreeArrayState:
             cell_i0=np.asarray(tree._i0, dtype=np.int64),
             cell_i1=np.asarray(tree._i1, dtype=np.int64),
             cell_i2=np.asarray(tree._i2, dtype=np.int64),
+            cell_centers=np.asarray(getattr(tree, "_cell_centers", np.empty((0, 3), dtype=np.float64)), dtype=np.float64),
+            cell_x_min=np.asarray(getattr(tree, "_cell_x_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_x_max=np.asarray(getattr(tree, "_cell_x_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_y_min=np.asarray(getattr(tree, "_cell_y_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_y_max=np.asarray(getattr(tree, "_cell_y_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_z_min=np.asarray(getattr(tree, "_cell_z_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_z_max=np.asarray(getattr(tree, "_cell_z_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            xyz_min=np.asarray(getattr(tree, "_xyz_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            xyz_max=np.asarray(getattr(tree, "_xyz_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_r_min=np.asarray(getattr(tree, "_cell_r_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_r_max=np.asarray(getattr(tree, "_cell_r_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            r_min=float(getattr(tree, "_r_min", np.nan)),
+            r_max=float(getattr(tree, "_r_max", np.nan)),
+            cell_theta_min=np.asarray(getattr(tree, "_cell_theta_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_theta_max=np.asarray(getattr(tree, "_cell_theta_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_phi_start=np.asarray(getattr(tree, "_cell_phi_start", np.empty((0,), dtype=np.float64)), dtype=np.float64),
+            cell_phi_width=np.asarray(getattr(tree, "_cell_phi_width", np.empty((0,), dtype=np.float64)), dtype=np.float64),
             node_depth=np.asarray(tree._node_depth, dtype=np.int64),
             node_i0=np.asarray(tree._node_i0, dtype=np.int64),
             node_i1=np.asarray(tree._node_i1, dtype=np.int64),
@@ -136,6 +170,23 @@ class OctreePersistenceState:
             cell_i0=np.asarray(arrays.cell_i0, dtype=np.int64),
             cell_i1=np.asarray(arrays.cell_i1, dtype=np.int64),
             cell_i2=np.asarray(arrays.cell_i2, dtype=np.int64),
+            cell_centers=np.asarray(arrays.cell_centers, dtype=np.float64),
+            cell_x_min=np.asarray(arrays.cell_x_min, dtype=np.float64),
+            cell_x_max=np.asarray(arrays.cell_x_max, dtype=np.float64),
+            cell_y_min=np.asarray(arrays.cell_y_min, dtype=np.float64),
+            cell_y_max=np.asarray(arrays.cell_y_max, dtype=np.float64),
+            cell_z_min=np.asarray(arrays.cell_z_min, dtype=np.float64),
+            cell_z_max=np.asarray(arrays.cell_z_max, dtype=np.float64),
+            xyz_min=np.asarray(arrays.xyz_min, dtype=np.float64),
+            xyz_max=np.asarray(arrays.xyz_max, dtype=np.float64),
+            cell_r_min=np.asarray(arrays.cell_r_min, dtype=np.float64),
+            cell_r_max=np.asarray(arrays.cell_r_max, dtype=np.float64),
+            r_min=float(arrays.r_min),
+            r_max=float(arrays.r_max),
+            cell_theta_min=np.asarray(arrays.cell_theta_min, dtype=np.float64),
+            cell_theta_max=np.asarray(arrays.cell_theta_max, dtype=np.float64),
+            cell_phi_start=np.asarray(arrays.cell_phi_start, dtype=np.float64),
+            cell_phi_width=np.asarray(arrays.cell_phi_width, dtype=np.float64),
             node_depth=np.asarray(arrays.node_depth, dtype=np.int64),
             node_i0=np.asarray(arrays.node_i0, dtype=np.int64),
             node_i1=np.asarray(arrays.node_i1, dtype=np.int64),
@@ -177,6 +228,23 @@ class OctreePersistenceState:
             "cell_i0",
             "cell_i1",
             "cell_i2",
+            "cell_centers",
+            "cell_x_min",
+            "cell_x_max",
+            "cell_y_min",
+            "cell_y_max",
+            "cell_z_min",
+            "cell_z_max",
+            "xyz_min",
+            "xyz_max",
+            "cell_r_min",
+            "cell_r_max",
+            "r_min",
+            "r_max",
+            "cell_theta_min",
+            "cell_theta_max",
+            "cell_phi_start",
+            "cell_phi_width",
             "node_depth",
             "node_i0",
             "node_i1",
@@ -236,6 +304,23 @@ class OctreePersistenceState:
                 cell_i0=np.asarray(data["cell_i0"], dtype=np.int64),
                 cell_i1=np.asarray(data["cell_i1"], dtype=np.int64),
                 cell_i2=np.asarray(data["cell_i2"], dtype=np.int64),
+                cell_centers=np.asarray(data["cell_centers"], dtype=np.float64),
+                cell_x_min=np.asarray(data["cell_x_min"], dtype=np.float64),
+                cell_x_max=np.asarray(data["cell_x_max"], dtype=np.float64),
+                cell_y_min=np.asarray(data["cell_y_min"], dtype=np.float64),
+                cell_y_max=np.asarray(data["cell_y_max"], dtype=np.float64),
+                cell_z_min=np.asarray(data["cell_z_min"], dtype=np.float64),
+                cell_z_max=np.asarray(data["cell_z_max"], dtype=np.float64),
+                xyz_min=np.asarray(data["xyz_min"], dtype=np.float64),
+                xyz_max=np.asarray(data["xyz_max"], dtype=np.float64),
+                cell_r_min=np.asarray(data["cell_r_min"], dtype=np.float64),
+                cell_r_max=np.asarray(data["cell_r_max"], dtype=np.float64),
+                r_min=float(data["r_min"]),
+                r_max=float(data["r_max"]),
+                cell_theta_min=np.asarray(data["cell_theta_min"], dtype=np.float64),
+                cell_theta_max=np.asarray(data["cell_theta_max"], dtype=np.float64),
+                cell_phi_start=np.asarray(data["cell_phi_start"], dtype=np.float64),
+                cell_phi_width=np.asarray(data["cell_phi_width"], dtype=np.float64),
                 node_depth=np.asarray(data["node_depth"], dtype=np.int64),
                 node_i0=np.asarray(data["node_i0"], dtype=np.int64),
                 node_i1=np.asarray(data["node_i1"], dtype=np.int64),
@@ -282,6 +367,23 @@ class OctreePersistenceState:
         tree._i0 = np.asarray(arrays.cell_i0, dtype=np.int64)
         tree._i1 = np.asarray(arrays.cell_i1, dtype=np.int64)
         tree._i2 = np.asarray(arrays.cell_i2, dtype=np.int64)
+        tree._cell_centers = np.asarray(arrays.cell_centers, dtype=np.float64)
+        tree._cell_x_min = np.asarray(arrays.cell_x_min, dtype=np.float64)
+        tree._cell_x_max = np.asarray(arrays.cell_x_max, dtype=np.float64)
+        tree._cell_y_min = np.asarray(arrays.cell_y_min, dtype=np.float64)
+        tree._cell_y_max = np.asarray(arrays.cell_y_max, dtype=np.float64)
+        tree._cell_z_min = np.asarray(arrays.cell_z_min, dtype=np.float64)
+        tree._cell_z_max = np.asarray(arrays.cell_z_max, dtype=np.float64)
+        tree._xyz_min = np.asarray(arrays.xyz_min, dtype=np.float64)
+        tree._xyz_max = np.asarray(arrays.xyz_max, dtype=np.float64)
+        tree._cell_r_min = np.asarray(arrays.cell_r_min, dtype=np.float64)
+        tree._cell_r_max = np.asarray(arrays.cell_r_max, dtype=np.float64)
+        tree._r_min = float(arrays.r_min)
+        tree._r_max = float(arrays.r_max)
+        tree._cell_theta_min = np.asarray(arrays.cell_theta_min, dtype=np.float64)
+        tree._cell_theta_max = np.asarray(arrays.cell_theta_max, dtype=np.float64)
+        tree._cell_phi_start = np.asarray(arrays.cell_phi_start, dtype=np.float64)
+        tree._cell_phi_width = np.asarray(arrays.cell_phi_width, dtype=np.float64)
         tree._node_depth = np.asarray(arrays.node_depth, dtype=np.int64)
         tree._node_i0 = np.asarray(arrays.node_i0, dtype=np.int64)
         tree._node_i1 = np.asarray(arrays.node_i1, dtype=np.int64)

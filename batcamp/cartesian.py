@@ -157,62 +157,29 @@ class _CartesianCellLookup:
     """
 
     def _init_lookup_state(self) -> None:
-        """Build per-cell lookup arrays from a bound Cartesian tree.
-
-        Cell geometry is reduced to per-axis min/max slab bounds.
-        """
+        """Pack builder-provided Cartesian tree geometry into lookup state."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        ds = self.ds
-        corners = np.array(ds.corners, dtype=np.int64)
-        if not set(Octree.XYZ_VARS).issubset(set(ds.variables)):
-            raise ValueError("Lookup requires X/Y/Z variables.")
-
-        self._corners = np.array(corners, dtype=np.int64)
-        self._points = np.column_stack(
-            (
-                np.array(ds[Octree.X_VAR], dtype=float),
-                np.array(ds[Octree.Y_VAR], dtype=float),
-                np.array(ds[Octree.Z_VAR], dtype=float),
-            )
-        )
-        cell_xyz = self._points[self._corners]
-        self._cell_centers = np.mean(cell_xyz, axis=1)
-        self._cell_x_min = np.min(cell_xyz[:, :, 0], axis=1)
-        self._cell_x_max = np.max(cell_xyz[:, :, 0], axis=1)
-        self._cell_y_min = np.min(cell_xyz[:, :, 1], axis=1)
-        self._cell_y_max = np.max(cell_xyz[:, :, 1], axis=1)
-        self._cell_z_min = np.min(cell_xyz[:, :, 2], axis=1)
-        self._cell_z_max = np.max(cell_xyz[:, :, 2], axis=1)
-        tiny = np.finfo(float).tiny
-        self._cell_dx = np.maximum(self._cell_x_max - self._cell_x_min, tiny)
-        self._cell_dy = np.maximum(self._cell_y_max - self._cell_y_min, tiny)
-        self._cell_dz = np.maximum(self._cell_z_max - self._cell_z_min, tiny)
-        self._xyz_min = np.array(
-            [
-                float(np.min(self._cell_x_min)),
-                float(np.min(self._cell_y_min)),
-                float(np.min(self._cell_z_min)),
-            ],
-            dtype=float,
-        )
-        self._xyz_max = np.array(
-            [
-                float(np.max(self._cell_x_max)),
-                float(np.max(self._cell_y_max)),
-                float(np.max(self._cell_z_max)),
-            ],
-            dtype=float,
-        )
-
-        n_cells = int(self._corners.shape[0])
-        if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
-            raise ValueError("Cartesian lookup requires exact builder-provided cell_levels.")
-        self._cell_level = np.array(self.cell_levels, dtype=np.int64)
-        self._cell_valid = self._cell_level >= 0
-
-        required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
-        required += (
+        required = (
+            "_corners",
+            "_points",
+            "_cell_centers",
+            "_cell_x_min",
+            "_cell_x_max",
+            "_cell_y_min",
+            "_cell_y_max",
+            "_cell_z_min",
+            "_cell_z_max",
+            "_xyz_min",
+            "_xyz_max",
+            "_i0",
+            "_i1",
+            "_i2",
+            "_node_depth",
+            "_node_i0",
+            "_node_i1",
+            "_node_i2",
+            "_node_value",
             "_node_child",
             "_root_node_ids",
             "_node_parent",
@@ -226,7 +193,25 @@ class _CartesianCellLookup:
         )
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
-            raise ValueError(f"Cartesian lookup requires builder-provided octree state: missing {missing}.")
+            raise ValueError(f"Cartesian lookup requires builder-provided geometry state: missing {missing}.")
+
+        self._corners = np.asarray(self._corners, dtype=np.int64)
+        self._points = np.asarray(self._points, dtype=np.float64)
+        self._cell_centers = np.asarray(self._cell_centers, dtype=np.float64)
+        self._cell_x_min = np.asarray(self._cell_x_min, dtype=np.float64)
+        self._cell_x_max = np.asarray(self._cell_x_max, dtype=np.float64)
+        self._cell_y_min = np.asarray(self._cell_y_min, dtype=np.float64)
+        self._cell_y_max = np.asarray(self._cell_y_max, dtype=np.float64)
+        self._cell_z_min = np.asarray(self._cell_z_min, dtype=np.float64)
+        self._cell_z_max = np.asarray(self._cell_z_max, dtype=np.float64)
+        self._xyz_min = np.asarray(self._xyz_min, dtype=np.float64)
+        self._xyz_max = np.asarray(self._xyz_max, dtype=np.float64)
+
+        n_cells = int(self._cell_centers.shape[0])
+        if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
+            raise ValueError("Cartesian lookup requires exact builder-provided cell_levels.")
+        self._cell_level = np.array(self.cell_levels, dtype=np.int64)
+        self._cell_valid = self._cell_level >= 0
         self._i0 = np.asarray(self._i0, dtype=np.int64)
         self._i1 = np.asarray(self._i1, dtype=np.int64)
         self._i2 = np.asarray(self._i2, dtype=np.int64)
@@ -368,7 +353,10 @@ class _CartesianCellLookup:
     def cell_step_hint(self, cell_id: int) -> float:
         """Return an initial step size hint for Python ray tracing."""
         cid = int(cell_id)
-        return float(max(float(self._cell_dx[cid]), float(self._cell_dy[cid]), float(self._cell_dz[cid]), 1e-6))
+        dx = float(self._cell_x_max[cid] - self._cell_x_min[cid])
+        dy = float(self._cell_y_max[cid] - self._cell_y_min[cid])
+        dz = float(self._cell_z_max[cid] - self._cell_z_min[cid])
+        return float(max(dx, dy, dz, 1e-6))
 
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
