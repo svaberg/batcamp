@@ -782,23 +782,6 @@ class Octree:
             return backend._domain_bounds_xyz(self)
         return backend._domain_bounds_rpa(self)
 
-    def lookup_cell_id(
-        self,
-        point: np.ndarray,
-        *,
-        coord: str,
-    ) -> int:
-        """Resolve one query point to a leaf `cell_id` (or `-1`)."""
-        return self._lookup_backend(str(self.tree_coord)).lookup_cell_id(self, point, coord=coord)
-
-    def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> "LookupHit | None":
-        """Materialize lookup metadata from one chosen cell id."""
-        return self._lookup_backend(str(self.tree_coord)).hit_from_chosen(
-            self,
-            chosen,
-            allow_invalid_level=allow_invalid_level,
-        )
-
     def lookup_point(
         self,
         point: np.ndarray,
@@ -813,8 +796,9 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
         self._require_lookup()
-        chosen = self.lookup_cell_id(q, coord=resolved_coord)
-        return self.hit_from_chosen(int(chosen))
+        backend = self._lookup_backend(str(self.tree_coord))
+        chosen = backend.lookup_cell_id(self, q, coord=resolved_coord)
+        return backend.hit_from_chosen(self, int(chosen))
 
     def contains_cell(
         self,
@@ -841,7 +825,11 @@ class Octree:
         n_cells = int(self.cell_levels.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-        hit = self.hit_from_chosen(cid, allow_invalid_level=True)
+        hit = self._lookup_backend(str(self.tree_coord)).hit_from_chosen(
+            self,
+            cid,
+            allow_invalid_level=True,
+        )
         if hit is None:
             raise ValueError(f"Invalid cell_id {cid}; cannot materialize LookupHit.")
         return hit
