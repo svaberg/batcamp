@@ -483,12 +483,12 @@ class OctreeInterpolator:
                 f"got {type(lookup_state).__name__}."
             )
 
-        self._cell_r0 = np.asarray(lookup_state.cell_r_min, dtype=np.float64)
-        self._cell_r1 = np.asarray(lookup_state.cell_r_max, dtype=np.float64)
-        self._cell_t0 = np.asarray(lookup_state.cell_theta_min, dtype=np.float64)
-        self._cell_t1 = np.asarray(lookup_state.cell_theta_max, dtype=np.float64)
-        self._cell_p_start = np.asarray(lookup_state.cell_phi_start, dtype=np.float64)
-        self._cell_p_width = np.asarray(lookup_state.cell_phi_width, dtype=np.float64)
+        self._cell_r0 = lookup_state.cell_r_min
+        self._cell_r1 = lookup_state.cell_r_max
+        self._cell_t0 = lookup_state.cell_theta_min
+        self._cell_t1 = lookup_state.cell_theta_max
+        self._cell_p_start = lookup_state.cell_phi_start
+        self._cell_p_width = lookup_state.cell_phi_width
 
         tiny = np.finfo(float).tiny
         self._cell_rden = np.maximum(self._cell_r1 - self._cell_r0, tiny)
@@ -550,12 +550,12 @@ class OctreeInterpolator:
         vy = pts[corners, 1]
         vz = pts[corners, 2]
 
-        self._cell_x0 = np.asarray(lookup_state.cell_x_min, dtype=np.float64)
-        self._cell_x1 = np.asarray(lookup_state.cell_x_max, dtype=np.float64)
-        self._cell_y0 = np.asarray(lookup_state.cell_y_min, dtype=np.float64)
-        self._cell_y1 = np.asarray(lookup_state.cell_y_max, dtype=np.float64)
-        self._cell_z0 = np.asarray(lookup_state.cell_z_min, dtype=np.float64)
-        self._cell_z1 = np.asarray(lookup_state.cell_z_max, dtype=np.float64)
+        self._cell_x0 = lookup_state.cell_x_min
+        self._cell_x1 = lookup_state.cell_x_max
+        self._cell_y0 = lookup_state.cell_y_min
+        self._cell_y1 = lookup_state.cell_y_max
+        self._cell_z0 = lookup_state.cell_z_min
+        self._cell_z1 = lookup_state.cell_z_max
 
         tiny = np.finfo(float).tiny
         self._cell_xden = np.maximum(self._cell_x1 - self._cell_x0, tiny)
@@ -828,12 +828,12 @@ class OctreeInterpolator:
     @property
     def corners(self) -> np.ndarray:
         """Return cell-to-node corner connectivity used by interpolation."""
-        return np.asarray(self._corners, dtype=np.int64)
+        return self._corners
 
     @property
     def point_values(self) -> np.ndarray:
         """Return per-node interpolation values in original component shape."""
-        return np.asarray(self._point_values)
+        return self._point_values
 
     def set_fields(
         self,

@@ -177,6 +177,8 @@ class _CartesianCellLookup:
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Cartesian lookup requires exact tree state: missing {missing}.")
+        # Cast once at the dataset->kernel boundary: corner ids must index cleanly
+        # and coordinate arrays feed float64 lookup kernels.
         corners = np.asarray(self.ds.corners, dtype=np.int64)
         x = np.asarray(self.ds[self.X_VAR], dtype=np.float64)
         y = np.asarray(self.ds[self.Y_VAR], dtype=np.float64)
@@ -191,30 +193,18 @@ class _CartesianCellLookup:
                 np.mean(cell_z, axis=1),
             )
         )
-        self._cell_x_min = np.asarray(np.min(cell_x, axis=1), dtype=np.float64)
-        self._cell_x_max = np.asarray(np.max(cell_x, axis=1), dtype=np.float64)
-        self._cell_y_min = np.asarray(np.min(cell_y, axis=1), dtype=np.float64)
-        self._cell_y_max = np.asarray(np.max(cell_y, axis=1), dtype=np.float64)
-        self._cell_z_min = np.asarray(np.min(cell_z, axis=1), dtype=np.float64)
-        self._cell_z_max = np.asarray(np.max(cell_z, axis=1), dtype=np.float64)
+        self._cell_x_min = np.min(cell_x, axis=1)
+        self._cell_x_max = np.max(cell_x, axis=1)
+        self._cell_y_min = np.min(cell_y, axis=1)
+        self._cell_y_max = np.max(cell_y, axis=1)
+        self._cell_z_min = np.min(cell_z, axis=1)
+        self._cell_z_max = np.max(cell_z, axis=1)
 
         n_cells = int(self._cell_centers.shape[0])
         if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
             raise ValueError("Cartesian lookup requires exact cell_levels.")
-        self._cell_level = np.array(self.cell_levels, dtype=np.int64)
+        self._cell_level = self.cell_levels
         self._cell_valid = self._cell_level >= 0
-        self._i0 = np.asarray(self._i0, dtype=np.int64)
-        self._i1 = np.asarray(self._i1, dtype=np.int64)
-        self._i2 = np.asarray(self._i2, dtype=np.int64)
-        self._node_depth = np.asarray(self._node_depth, dtype=np.int64)
-        self._node_i0 = np.asarray(self._node_i0, dtype=np.int64)
-        self._node_i1 = np.asarray(self._node_i1, dtype=np.int64)
-        self._node_i2 = np.asarray(self._node_i2, dtype=np.int64)
-        self._node_value = np.asarray(self._node_value, dtype=np.int64)
-        self._node_child = np.asarray(self._node_child, dtype=np.int64)
-        self._root_node_ids = np.asarray(self._root_node_ids, dtype=np.int64)
-        self._node_parent = np.asarray(self._node_parent, dtype=np.int64)
-        self._cell_node_id = np.asarray(self._cell_node_id, dtype=np.int64)
         n_nodes = int(self._node_value.shape[0])
         self._node_x_min = np.full(n_nodes, np.inf, dtype=np.float64)
         self._node_x_max = np.full(n_nodes, -np.inf, dtype=np.float64)
@@ -223,8 +213,8 @@ class _CartesianCellLookup:
         self._node_z_min = np.full(n_nodes, np.inf, dtype=np.float64)
         self._node_z_max = np.full(n_nodes, -np.inf, dtype=np.float64)
         leaf_mask = self._node_value >= 0
-        leaf_node_ids = np.flatnonzero(leaf_mask).astype(np.int64)
-        leaf_cell_ids = np.asarray(self._node_value[leaf_mask], dtype=np.int64)
+        leaf_node_ids = np.flatnonzero(leaf_mask)
+        leaf_cell_ids = self._node_value[leaf_mask]
         self._node_x_min[leaf_node_ids] = self._cell_x_min[leaf_cell_ids]
         self._node_x_max[leaf_node_ids] = self._cell_x_max[leaf_cell_ids]
         self._node_y_min[leaf_node_ids] = self._cell_y_min[leaf_cell_ids]
@@ -241,7 +231,7 @@ class _CartesianCellLookup:
             self._node_y_max[parent] = max(self._node_y_max[parent], self._node_y_max[nid])
             self._node_z_min[parent] = min(self._node_z_min[parent], self._node_z_min[nid])
             self._node_z_max[parent] = max(self._node_z_max[parent], self._node_z_max[nid])
-        root_ids = np.asarray(self._root_node_ids, dtype=np.int64)
+        root_ids = self._root_node_ids
         self._xyz_min = np.array(
             [
                 float(np.min(self._node_x_min[root_ids])),
@@ -321,7 +311,7 @@ class _CartesianCellLookup:
         )
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.asarray(self._xyz_min, dtype=float), np.asarray(self._xyz_max, dtype=float)
+        return self._xyz_min, self._xyz_max
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         if self.ds is None:
