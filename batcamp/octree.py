@@ -328,16 +328,8 @@ class Octree:
             from .face_neighbors import build_face_neighbors
 
             face_neighbors = build_face_neighbors(self, max_level=target_max_level)
-            self._cache_face_neighbors(face_neighbors)
+            cache[int(face_neighbors.max_level)] = face_neighbors
         return face_neighbors
-
-    def _cache_face_neighbors(self, face_neighbors: "OctreeFaceNeighbors") -> None:
-        """Store one prebuilt face-neighbor graph in the lazy octree cache."""
-        cache = getattr(self, "_face_neighbors_by_max_level", None)
-        if cache is None:
-            cache = {}
-            self._face_neighbors_by_max_level = cache
-        cache[int(face_neighbors.max_level)] = face_neighbors
 
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         """Return one cell's Cartesian bounds for subclasses."""
