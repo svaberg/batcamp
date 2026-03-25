@@ -11,7 +11,6 @@ from .builder import LevelShapeStatsMap
 from .builder import DEFAULT_AXIS_RHO_TOL
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
-from .octree import Octree
 
 
 class SphericalOctreeBuilder:
