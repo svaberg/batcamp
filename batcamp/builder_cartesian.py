@@ -10,7 +10,6 @@ from .constants import XYZ_VARS
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
-from .octree import Octree
 
 
 class CartesianOctreeBuilder:
