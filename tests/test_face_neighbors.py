@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import pytest
-from batread.dataset import Dataset
+from batread import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeBuilder

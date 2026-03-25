@@ -22,6 +22,15 @@
 - [x] Replace broad `except Exception` kernel fallbacks in `ray.py` with narrowly scoped exceptions and explicit failure policy.
 - [ ] Enforce ownership: spherical-specific methods/logic must live only in spherical classes/modules (no spherical helpers on coord-agnostic facades).
 - [ ] Seek and destroy wrapper layering: remove pass-through APIs that mostly forward to another method without adding meaningful behavior.
+- [ ] Builder inference cleanup: replace the Cartesian hand-tuned span tolerances with one inference pass that fits the most probable dyadic level ladder from all observed cell sizes.
+- [ ] Builder inference cleanup: infer the most probable Cartesian regular level shape from clustered spans instead of validating medians against fixed `isclose` thresholds.
+- [ ] Builder inference cleanup: replace the Cartesian axis-snap heuristic with edge clustering that resolves the most probable Cartesian grid from the observed bounds.
+- [ ] Builder inference cleanup: drive spherical boundary clustering from the most probable spherical edge lattice implied by the whole dataset, not one absolute cutoff.
+- [ ] Builder inference cleanup: replace the spherical local span tolerances with one inference step that fits the most probable dyadic angular spacing from noisy observed cells.
+- [ ] Builder inference cleanup: infer the likeliest spherical angular grid globally instead of relying on fixed validation thresholds for per-level medians.
+- [ ] Builder inference cleanup: infer the spherical radial edge lattice from clustered observed boundaries instead of depending on one hard-coded clustering tolerance.
+- [ ] Builder inference cleanup: replace the spherical angular snap tolerances with explicit inferred theta/phi edge sets so noisy data maps to the most probable octree.
+- [ ] Persistence format cleanup: decide whether the file-format version constant should exist at all, rather than leaving that question inline in the code.
 - [x] Fix Cartesian ray boundary-start behavior in compiled kernels (`_trace_segments_xyz_kernel`, `_integrate_xyz_scalar_exact_kernel`, `_integrate_xyz_scalar_midpoint_kernel`) so outward rays starting on a face do not integrate/trace as interior; add regression tests.
 - [x] Add missing runtime dependency declaration for `starwinds-readplt` in `pyproject.toml` to match imports from core modules.
 - [ ] Expand `[project.optional-dependencies].tests` to include non-pytest test imports (at least `pooch`) and verify tests run in a clean `. [tests]` environment.
