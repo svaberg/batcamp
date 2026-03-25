@@ -250,52 +250,6 @@ class _SphericalCellLookup:
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([self._r_min, 0.0, 0.0], dtype=float), np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
 
-    def lookup_cell_id(
-        self,
-        point: np.ndarray,
-        *,
-        coord: str,
-    ) -> int:
-        """Return the containing cell id for one point in `xyz` or `rpa`."""
-        q = np.array(point, dtype=float).reshape(3)
-        resolved = str(coord)
-        if resolved == "xyz":
-            return _SphericalCellLookup._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-        if resolved == "rpa":
-            return _SphericalCellLookup._lookup_rpa_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-        raise ValueError("coord must be 'xyz' or 'rpa'.")
-
-    def contains_cell(
-        self,
-        cell_id: int,
-        point: np.ndarray,
-        *,
-        coord: str,
-        tol: float = 1e-10,
-    ) -> bool:
-        """Return whether one point lies inside one cell."""
-        q = np.array(point, dtype=float).reshape(3)
-        resolved = str(coord)
-        if resolved == "xyz":
-            return _SphericalCellLookup._contains_xyz_cell(
-                self,
-                int(cell_id),
-                float(q[0]),
-                float(q[1]),
-                float(q[2]),
-                tol=float(tol),
-            )
-        if resolved == "rpa":
-            return _SphericalCellLookup._contains_rpa_cell(
-                self,
-                int(cell_id),
-                float(q[0]),
-                float(q[1]),
-                float(q[2]),
-                tol=float(tol),
-            )
-        raise ValueError("coord must be 'xyz' or 'rpa'.")
-
     def _lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
         """Return the containing spherical cell id, or `-1` when not found."""
         return int(
