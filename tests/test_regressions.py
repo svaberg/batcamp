@@ -7,7 +7,7 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
-from batcamp.spherical import _xyz_to_rpa_components
+from batcamp.octree import _xyz_to_rpa_components
 
 
 @pytest.fixture(scope="module")

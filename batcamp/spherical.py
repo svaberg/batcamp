@@ -12,7 +12,6 @@ from .constants import XYZ_VARS
 from .octree import _coord_state_inputs
 from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
-from .octree import _lookup_cell_id_kernel
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
@@ -131,18 +130,6 @@ class _SphericalCoordSupport:
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
         return _SphericalCoordSupport._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
 
-    def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
-        """Return the containing cell id for `(x, y, z)`, or `-1`."""
-        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
-            return -1
-        r = float(math.sqrt(x * x + y * y + z * z))
-        if r == 0.0:
-            polar = 0.0
-        else:
-            polar = float(math.acos(max(-1.0, min(1.0, z / r))))
-        azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return _SphericalCoordSupport._lookup_rpa_cell_id(self, r, polar, azimuth)
-
     def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
         """Return whether one spherical point lies inside one cell."""
         return bool(
@@ -155,32 +142,3 @@ class _SphericalCoordSupport:
                 float(tol),
             )
         )
-
-    def _lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
-        """Return the containing spherical cell id, or `-1` when not found."""
-        return int(
-            _lookup_cell_id_kernel(
-                float(r),
-                float(polar),
-                float(azimuth),
-                self._coord_state,
-                -1,
-            )
-        )
-
-
-@njit(cache=True)
-def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
-    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
-    r = math.sqrt(x * x + y * y + z * z)
-    if r == 0.0:
-        polar = 0.0
-    else:
-        zr = z / r
-        if zr < -1.0:
-            zr = -1.0
-        elif zr > 1.0:
-            zr = 1.0
-        polar = math.acos(zr)
-    azimuth = math.atan2(y, x) % _TWO_PI
-    return r, polar, azimuth

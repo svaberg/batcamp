@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from batread import Dataset
 from numba import njit
+from numba import prange
 
 from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
@@ -379,6 +380,70 @@ def _lookup_cell_id_kernel(
         lookup_state,
         tol,
     )
+
+
+@njit(cache=True)
+def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
+    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
+    r = np.sqrt(x * x + y * y + z * z)
+    if r == 0.0:
+        polar = 0.0
+    else:
+        zr = z / r
+        if zr < -1.0:
+            zr = -1.0
+        elif zr > 1.0:
+            zr = 1.0
+        polar = np.arccos(zr)
+    azimuth = np.arctan2(y, x) % (2.0 * np.pi)
+    return r, polar, azimuth
+
+
+@njit(cache=True, parallel=True)
+def _lookup_cell_ids_kernel(queries: np.ndarray, lookup_state: LookupKernelState) -> np.ndarray:
+    """Resolve a batch of same-coordinate queries to cell ids."""
+    n_query = int(queries.shape[0])
+    cell_ids = np.full(n_query, -1, dtype=np.int64)
+    chunk_size = 1024
+    n_chunks = (n_query + chunk_size - 1) // chunk_size
+    for chunk_id in prange(n_chunks):
+        start = chunk_id * chunk_size
+        end = min(n_query, start + chunk_size)
+        hint_cid = -1
+        for i in range(start, end):
+            cid = _lookup_cell_id_kernel(
+                queries[i, 0],
+                queries[i, 1],
+                queries[i, 2],
+                lookup_state,
+                hint_cid,
+            )
+            cell_ids[i] = cid
+            hint_cid = int(cid) if cid >= 0 else -1
+    return cell_ids
+
+
+@njit(cache=True, parallel=True)
+def _lookup_xyz_cell_ids_for_rpa_tree_kernel(queries_xyz: np.ndarray, lookup_state: LookupKernelState) -> np.ndarray:
+    """Resolve Cartesian queries against one spherical-tree lookup state."""
+    n_query = int(queries_xyz.shape[0])
+    cell_ids = np.full(n_query, -1, dtype=np.int64)
+    chunk_size = 1024
+    n_chunks = (n_query + chunk_size - 1) // chunk_size
+    for chunk_id in prange(n_chunks):
+        start = chunk_id * chunk_size
+        end = min(n_query, start + chunk_size)
+        hint_cid = -1
+        for i in range(start, end):
+            r, polar, azimuth = _xyz_to_rpa_components(
+                queries_xyz[i, 0],
+                queries_xyz[i, 1],
+                queries_xyz[i, 2],
+            )
+            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
+            cell_ids[i] = cid
+            hint_cid = int(cid) if cid >= 0 else -1
+    return cell_ids
 
 
 def _level_metadata_from_leaves(
@@ -804,6 +869,36 @@ class Octree:
             coord_state=self._coord_state,
         )
 
+    def lookup_points(self, points: np.ndarray, *, coord: TreeCoord) -> np.ndarray:
+        """Resolve one batch of query points to leaf cell ids, with `-1` for misses."""
+        q = np.array(points, dtype=np.float64, order="C")
+        if q.ndim == 1:
+            if q.size != 3:
+                raise ValueError("points must have shape (..., 3).")
+            shape = (1,)
+            q = q.reshape(1, 3)
+        else:
+            if q.shape[-1] != 3:
+                raise ValueError("points must have shape (..., 3).")
+            shape = q.shape[:-1]
+            q = q.reshape(-1, 3)
+
+        resolved_coord = str(coord)
+        if resolved_coord not in SUPPORTED_TREE_COORDS:
+            raise ValueError(
+                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+            )
+        self._require_lookup()
+        if str(self.tree_coord) == "xyz":
+            if resolved_coord != "xyz":
+                raise ValueError("Cartesian lookup supports only coord='xyz'.")
+            cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
+        elif resolved_coord == "xyz":
+            cell_ids = _lookup_xyz_cell_ids_for_rpa_tree_kernel(q, self._coord_state)
+        else:
+            cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
+        return cell_ids.reshape(shape)
+
     def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:
         """Return unique frontier nodes by truncating leaves to one level cutoff."""
         if self.cell_levels is None:
@@ -897,24 +992,8 @@ class Octree:
         coord: TreeCoord,
     ) -> "LookupHit | None":
         """Find which cell contains one point, or return `None` if not found."""
-        q = np.array(point, dtype=float).reshape(3)
-        resolved_coord = str(coord)
-        if resolved_coord not in SUPPORTED_TREE_COORDS:
-            raise ValueError(
-                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-            )
-        self._require_lookup()
-        backend = self._coord_support(str(self.tree_coord))
-        if str(self.tree_coord) == "xyz":
-            if resolved_coord != "xyz":
-                raise ValueError("Cartesian lookup supports only coord='xyz'.")
-            chosen = backend._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-        else:
-            if resolved_coord == "xyz":
-                chosen = backend._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-            else:
-                chosen = backend._lookup_rpa_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-        return self._hit_from_chosen(int(chosen))
+        chosen = int(self.lookup_points(np.asarray(point, dtype=float).reshape(1, 3), coord=coord)[0])
+        return self._hit_from_chosen(chosen)
 
     def contains_cell(
         self,

@@ -19,7 +19,7 @@ from .interpolator import _trilinear_from_cell_rpa
 from .octree import _lookup_cell_id_kernel
 from .octree import LookupKernelState
 from .octree import Octree
-from .spherical import _xyz_to_rpa_components
+from .octree import _xyz_to_rpa_components
 from .face_neighbors import FaceNeighborKernelState
 
 if TYPE_CHECKING:
