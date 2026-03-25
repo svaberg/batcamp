@@ -56,6 +56,13 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert np.array_equal(np.asarray(loaded._node_value, dtype=np.int64), np.asarray(tree._node_value, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._node_child, dtype=np.int64), np.asarray(tree._node_child, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._root_node_ids, dtype=np.int64), np.asarray(tree._root_node_ids, dtype=np.int64))
+
+    q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
+    hit_tree = tree.lookup_point(q_xyz, coord="xyz")
+    hit_loaded = loaded.lookup_point(q_xyz, coord="xyz")
+    assert hit_tree is not None
+    assert hit_loaded is not None
+    assert int(hit_tree.cell_id) == int(hit_loaded.cell_id)
     assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
     assert np.allclose(np.asarray(loaded._cell_centers, dtype=float), np.asarray(tree._cell_centers, dtype=float))
     assert np.allclose(np.asarray(loaded._cell_r_min, dtype=float), np.asarray(tree._cell_r_min, dtype=float))
@@ -66,13 +73,6 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert np.allclose(np.asarray(loaded._cell_phi_width, dtype=float), np.asarray(tree._cell_phi_width, dtype=float))
     assert float(loaded._r_min) == pytest.approx(float(tree._r_min))
     assert float(loaded._r_max) == pytest.approx(float(tree._r_max))
-
-    q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-    hit_tree = tree.lookup_point(q_xyz, coord="xyz")
-    hit_loaded = loaded.lookup_point(q_xyz, coord="xyz")
-    assert hit_tree is not None
-    assert hit_loaded is not None
-    assert int(hit_tree.cell_id) == int(hit_loaded.cell_id)
 
 
 @pytest.mark.slow
@@ -90,7 +90,7 @@ def test_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> None:
 
 @pytest.mark.slow
 def test_persistence_omits_legacy_corners_payload(tree_dataset_pair, tmp_path) -> None:
-    """Persistence file should not contain legacy corners payload keys."""
+    """Persistence file should contain only minimal saved state."""
     tree, ds = tree_dataset_pair
     path = tmp_path / "tree_no_corner_payload.npz"
     tree.save(path)
@@ -98,6 +98,7 @@ def test_persistence_omits_legacy_corners_payload(tree_dataset_pair, tmp_path) -
     with np.load(path, allow_pickle=False) as data:
         assert "corners" not in data.files
         assert "has_corners" not in data.files
+        assert set(data.files) == {"version", "tree_coord", "root_shape", "cell_levels", "cell_i0", "cell_i1", "cell_i2"}
     hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
     assert hit is not None
 

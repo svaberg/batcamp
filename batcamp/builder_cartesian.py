@@ -7,8 +7,6 @@ import numpy as np
 from batread.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
-from .builder import _build_node_arrays
-from .builder import _build_child_table
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
 from .octree import Octree
@@ -357,81 +355,9 @@ class CartesianOctreeBuilder:
         cell_i1[valid_ids] = i1
         cell_i2[valid_ids] = i2
 
-        node_depth, node_i0, node_i1, node_i2, node_value = _build_node_arrays(
-            depths,
-            i0,
-            i1,
-            i2,
-            valid_ids,
-            tree_depth=tree_depth,
-            label="Cartesian",
-        )
-        node_child, root_node_ids, node_parent = _build_child_table(
-            node_depth,
-            node_i0,
-            node_i1,
-            node_i2,
-            node_value,
-        )
-        cell_node_id = np.full(levels.shape[0], -1, dtype=np.int64)
-        leaf_mask = node_value >= 0
-        cell_node_id[node_value[leaf_mask]] = np.flatnonzero(leaf_mask).astype(np.int64)
-        node_shift = np.asarray(tree_depth - node_depth, dtype=np.int64)
-        node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
-        node_x0_f = np.left_shift(node_i0, node_shift)
-        node_x1_f = node_x0_f + node_width
-        node_y0_f = np.left_shift(node_i1, node_shift)
-        node_y1_f = node_y0_f + node_width
-        node_z0_f = np.left_shift(node_i2, node_shift)
-        node_z1_f = node_z0_f + node_width
-        node_x_min = float(xyz_min[0]) + node_x0_f.astype(float) * float(fine_step[0])
-        node_x_max = float(xyz_min[0]) + node_x1_f.astype(float) * float(fine_step[0])
-        node_y_min = float(xyz_min[1]) + node_y0_f.astype(float) * float(fine_step[1])
-        node_y_max = float(xyz_min[1]) + node_y1_f.astype(float) * float(fine_step[1])
-        node_z_min = float(xyz_min[2]) + node_z0_f.astype(float) * float(fine_step[2])
-        node_z_max = float(xyz_min[2]) + node_z1_f.astype(float) * float(fine_step[2])
         return {
             "cell_levels": np.asarray(cell_levels, dtype=np.int64),
             "cell_i0": np.asarray(cell_i0, dtype=np.int64),
             "cell_i1": np.asarray(cell_i1, dtype=np.int64),
             "cell_i2": np.asarray(cell_i2, dtype=np.int64),
-            "cell_centers": np.asarray(cell_centers, dtype=np.float64),
-            "cell_x_min": np.asarray(cell_x_min, dtype=np.float64),
-            "cell_x_max": np.asarray(cell_x_max, dtype=np.float64),
-            "cell_y_min": np.asarray(cell_y_min, dtype=np.float64),
-            "cell_y_max": np.asarray(cell_y_max, dtype=np.float64),
-            "cell_z_min": np.asarray(cell_z_min, dtype=np.float64),
-            "cell_z_max": np.asarray(cell_z_max, dtype=np.float64),
-            "xyz_min": np.asarray(xyz_min, dtype=np.float64),
-            "xyz_max": np.asarray(xyz_max, dtype=np.float64),
-            "cell_r_min": np.empty((0,), dtype=np.float64),
-            "cell_r_max": np.empty((0,), dtype=np.float64),
-            "cell_theta_min": np.empty((0,), dtype=np.float64),
-            "cell_theta_max": np.empty((0,), dtype=np.float64),
-            "cell_phi_start": np.empty((0,), dtype=np.float64),
-            "cell_phi_width": np.empty((0,), dtype=np.float64),
-            "node_depth": np.asarray(node_depth, dtype=np.int64),
-            "node_i0": np.asarray(node_i0, dtype=np.int64),
-            "node_i1": np.asarray(node_i1, dtype=np.int64),
-            "node_i2": np.asarray(node_i2, dtype=np.int64),
-            "node_value": np.asarray(node_value, dtype=np.int64),
-            "node_child": np.asarray(node_child, dtype=np.int64),
-            "root_node_ids": np.asarray(root_node_ids, dtype=np.int64),
-            "node_parent": np.asarray(node_parent, dtype=np.int64),
-            "cell_node_id": np.asarray(cell_node_id, dtype=np.int64),
-            "node_x_min": np.asarray(node_x_min, dtype=np.float64),
-            "node_x_max": np.asarray(node_x_max, dtype=np.float64),
-            "node_y_min": np.asarray(node_y_min, dtype=np.float64),
-            "node_y_max": np.asarray(node_y_max, dtype=np.float64),
-            "node_z_min": np.asarray(node_z_min, dtype=np.float64),
-            "node_z_max": np.asarray(node_z_max, dtype=np.float64),
-            "node_r_min": np.empty((0,), dtype=np.float64),
-            "node_r_max": np.empty((0,), dtype=np.float64),
-            "node_theta_min": np.empty((0,), dtype=np.float64),
-            "node_theta_max": np.empty((0,), dtype=np.float64),
-            "node_phi_start": np.empty((0,), dtype=np.float64),
-            "node_phi_width": np.empty((0,), dtype=np.float64),
-            "radial_edges": np.empty((0,), dtype=np.float64),
-            "r_min": np.nan,
-            "r_max": np.nan,
         }

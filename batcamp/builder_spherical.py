@@ -9,8 +9,6 @@ import numpy as np
 from batread.dataset import Dataset
 
 from .builder import LevelShapeStatsMap
-from .builder import _build_node_arrays
-from .builder import _build_child_table
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
 from .octree import DEFAULT_AXIS_RHO_TOL
@@ -508,83 +506,9 @@ class SphericalOctreeBuilder:
         cell_i1[valid_ids] = i1
         cell_i2[valid_ids] = i2
 
-        node_depth, node_i0, node_i1, node_i2, node_value = _build_node_arrays(
-            depths,
-            i0,
-            i1,
-            i2,
-            valid_ids,
-            tree_depth=tree_depth,
-            label="Spherical",
-        )
-        node_child, root_node_ids, node_parent = _build_child_table(
-            node_depth,
-            node_i0,
-            node_i1,
-            node_i2,
-            node_value,
-        )
-        cell_node_id = np.full(levels.shape[0], -1, dtype=np.int64)
-        leaf_mask = node_value >= 0
-        cell_node_id[node_value[leaf_mask]] = np.flatnonzero(leaf_mask).astype(np.int64)
-        node_shift = np.asarray(tree_depth - node_depth, dtype=np.int64)
-        node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
-        node_r0_f = np.left_shift(node_i0, node_shift)
-        node_r1_f = node_r0_f + node_width
-        node_t0_f = np.left_shift(node_i1, node_shift)
-        node_t1_f = node_t0_f + node_width
-        node_p0_f = np.left_shift(node_i2, node_shift)
-        node_p1_f = node_p0_f + node_width
-        d_theta_f = math.pi / float(int(leaf_shape[1]))
-        d_phi_f = (2.0 * math.pi) / float(int(leaf_shape[2]))
-        node_r_min = radial_edges[node_r0_f]
-        node_r_max = radial_edges[node_r1_f]
-        node_theta_min = node_t0_f.astype(float) * d_theta_f
-        node_theta_max = node_t1_f.astype(float) * d_theta_f
-        node_phi_start = np.mod(node_p0_f.astype(float) * d_phi_f, 2.0 * math.pi)
-        node_phi_width = node_width.astype(float) * d_phi_f
         return {
             "cell_levels": np.asarray(cell_levels, dtype=np.int64),
             "cell_i0": np.asarray(cell_i0, dtype=np.int64),
             "cell_i1": np.asarray(cell_i1, dtype=np.int64),
             "cell_i2": np.asarray(cell_i2, dtype=np.int64),
-            "cell_centers": np.asarray(cell_centers, dtype=np.float64),
-            "cell_x_min": np.empty((0,), dtype=np.float64),
-            "cell_x_max": np.empty((0,), dtype=np.float64),
-            "cell_y_min": np.empty((0,), dtype=np.float64),
-            "cell_y_max": np.empty((0,), dtype=np.float64),
-            "cell_z_min": np.empty((0,), dtype=np.float64),
-            "cell_z_max": np.empty((0,), dtype=np.float64),
-            "xyz_min": np.empty((0,), dtype=np.float64),
-            "xyz_max": np.empty((0,), dtype=np.float64),
-            "cell_r_min": np.asarray(cell_r_min, dtype=np.float64),
-            "cell_r_max": np.asarray(cell_r_max, dtype=np.float64),
-            "cell_theta_min": np.asarray(cell_theta_min, dtype=np.float64),
-            "cell_theta_max": np.asarray(cell_theta_max, dtype=np.float64),
-            "cell_phi_start": np.asarray(phi_start, dtype=np.float64),
-            "cell_phi_width": np.asarray(phi_width, dtype=np.float64),
-            "node_depth": np.asarray(node_depth, dtype=np.int64),
-            "node_i0": np.asarray(node_i0, dtype=np.int64),
-            "node_i1": np.asarray(node_i1, dtype=np.int64),
-            "node_i2": np.asarray(node_i2, dtype=np.int64),
-            "node_value": np.asarray(node_value, dtype=np.int64),
-            "node_child": np.asarray(node_child, dtype=np.int64),
-            "root_node_ids": np.asarray(root_node_ids, dtype=np.int64),
-            "node_parent": np.asarray(node_parent, dtype=np.int64),
-            "cell_node_id": np.asarray(cell_node_id, dtype=np.int64),
-            "node_x_min": np.empty((0,), dtype=np.float64),
-            "node_x_max": np.empty((0,), dtype=np.float64),
-            "node_y_min": np.empty((0,), dtype=np.float64),
-            "node_y_max": np.empty((0,), dtype=np.float64),
-            "node_z_min": np.empty((0,), dtype=np.float64),
-            "node_z_max": np.empty((0,), dtype=np.float64),
-            "node_r_min": np.asarray(node_r_min, dtype=np.float64),
-            "node_r_max": np.asarray(node_r_max, dtype=np.float64),
-            "node_theta_min": np.asarray(node_theta_min, dtype=np.float64),
-            "node_theta_max": np.asarray(node_theta_max, dtype=np.float64),
-            "node_phi_start": np.asarray(node_phi_start, dtype=np.float64),
-            "node_phi_width": np.asarray(node_phi_width, dtype=np.float64),
-            "radial_edges": np.asarray(radial_edges, dtype=np.float64),
-            "r_min": float(r_min),
-            "r_max": float(r_max),
         }

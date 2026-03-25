@@ -366,7 +366,7 @@ class OctreeBuilder:
         corners_arr = np.asarray(ds.corners, dtype=np.int64)
 
         if tree_coord == "rpa":
-            level_shapes, levels, min_level, max_level, leaf_shape, weighted_cells = self._rpa_builder.infer_tree_geometry(
+            level_shapes, levels, min_level, max_level, leaf_shape, _weighted_cells = self._rpa_builder.infer_tree_geometry(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
@@ -378,12 +378,9 @@ class OctreeBuilder:
                 corners_arr,
                 cell_levels=cell_levels,
             )
-            weighted_cells = int(
-                sum(int(level_shapes[level][4]) * (8 ** int(max_level - level)) for level in level_shapes)
-            )
 
         _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
-        _counts_full, root_shape, _depth = self._full_tree_counts(leaf_shape)
+        _unused_counts, root_shape, _depth = self._full_tree_counts(leaf_shape)
         level_offset = int(_depth) - int(max_level)
         if level_offset < 0:
             raise ValueError(
@@ -392,19 +389,6 @@ class OctreeBuilder:
         levels = np.asarray(levels, dtype=np.int64)
         levels_abs = np.array(levels, copy=True)
         levels_abs[levels_abs >= 0] += int(level_offset)
-        level_counts = tuple(
-            (
-                int(level + level_offset),
-                int(level_shapes[level][4]),
-                int(level_shapes[level][4] * (8 ** int(max_level - level))),
-            )
-            for level in sorted(level_shapes)
-        )
-        is_full = (
-            int(np.count_nonzero(levels_abs >= 0)) == int(levels_abs.size)
-            and int(sum(item[2] for item in level_counts)) == int(np.prod(leaf_shape))
-            and int(weighted_cells) == int(np.prod(leaf_shape))
-        )
         if tree_coord == "rpa":
             state_payload = self._rpa_builder.populate_tree_state(
                 leaf_shape=leaf_shape,
@@ -423,14 +407,8 @@ class OctreeBuilder:
                 corners=corners_arr,
             )
         state = OctreeState(
-            leaf_shape=tuple(int(v) for v in leaf_shape),
-            root_shape=tuple(int(v) for v in root_shape),
-            is_full=bool(is_full),
-            level_counts=tuple(tuple(int(v) for v in row) for row in level_counts),
-            min_level=int(min_level + level_offset),
-            max_level=int(max_level + level_offset),
             tree_coord=tree_coord,
-            axis_rho_tol=float(axis_rho_tol),
+            root_shape=tuple(int(v) for v in root_shape),
             **state_payload,
         )
         return Octree.from_state(
