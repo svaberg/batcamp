@@ -556,6 +556,7 @@ class Octree:
         if not set(XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         self.ds = ds
+        self._lookup_backend(str(self.tree_coord))._init_lookup_state(self)
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -637,17 +638,12 @@ class Octree:
             f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
         )
 
-    def build_lookup(self) -> None:
-        """Build the per-cell lookup data used by query methods."""
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Call bind(...) before lookup.")
-        self._lookup_backend(str(self.tree_coord))._init_lookup_state(self)
-
     def _require_lookup(self) -> "Octree":
-        """Ensure lookup data is built, then return `self`."""
+        """Require one bound octree with ready lookup state, then return `self`."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
-        self.build_lookup()
+        if not hasattr(self, "_lookup_state"):
+            raise ValueError("Octree lookup state is not initialized. Bind it to a dataset first.")
         return self
 
     @property
