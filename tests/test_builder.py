@@ -587,7 +587,7 @@ def test_build_materializes_exact_tree_state_before_lookup() -> None:
     assert np.asarray(xyz_tree._node_depth, dtype=np.int64).ndim == 1
     assert np.asarray(xyz_tree._node_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(xyz_tree._root_node_ids, dtype=np.int64).ndim == 1
-    assert np.asarray(xyz_tree._radial_edges, dtype=np.float64).size == 0
+    assert not hasattr(xyz_tree, "_radial_edges")
 
     rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa", bind=False)
     assert rpa_tree.cell_levels is not None
@@ -595,7 +595,7 @@ def test_build_materializes_exact_tree_state_before_lookup() -> None:
     assert np.asarray(rpa_tree._node_depth, dtype=np.int64).ndim == 1
     assert np.asarray(rpa_tree._node_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(rpa_tree._root_node_ids, dtype=np.int64).ndim == 1
-    assert np.asarray(rpa_tree._radial_edges, dtype=np.float64).size == int(rpa_tree.leaf_shape[0]) + 1
+    assert not hasattr(rpa_tree, "_radial_edges")
 
 
 def test_regular_spherical_lookup_materializes_exact_indices() -> None:

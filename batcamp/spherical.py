@@ -175,21 +175,12 @@ class _SphericalCellLookup:
     """Cell lookup helper for spherical trees."""
 
     def _init_lookup_state(self) -> None:
-        """Pack builder-provided spherical tree geometry into lookup state."""
+        """Rebuild spherical lookup geometry from exact leaf addresses."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
             "_corners",
             "_points",
-            "_cell_centers",
-            "_cell_r_min",
-            "_cell_r_max",
-            "_r_min",
-            "_r_max",
-            "_cell_theta_min",
-            "_cell_theta_max",
-            "_cell_phi_start",
-            "_cell_phi_width",
             "_i0",
             "_i1",
             "_i2",
@@ -198,35 +189,21 @@ class _SphericalCellLookup:
             "_node_i1",
             "_node_i2",
             "_node_value",
-            "_radial_edges",
             "_node_child",
             "_root_node_ids",
             "_node_parent",
             "_cell_node_id",
-            "_node_r_min",
-            "_node_r_max",
-            "_node_theta_min",
-            "_node_theta_max",
-            "_node_phi_start",
-            "_node_phi_width",
         )
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
-            raise ValueError(f"Spherical lookup requires builder-provided geometry state: missing {missing}.")
+            raise ValueError(f"Spherical lookup requires exact tree state: missing {missing}.")
         self._corners = np.asarray(self._corners, dtype=np.int64)
         self._points = np.asarray(self._points, dtype=np.float64)
-        self._cell_centers = np.asarray(self._cell_centers, dtype=np.float64)
-        self._cell_r_min = np.asarray(self._cell_r_min, dtype=np.float64)
-        self._cell_r_max = np.asarray(self._cell_r_max, dtype=np.float64)
-        self._cell_theta_min = np.asarray(self._cell_theta_min, dtype=np.float64)
-        self._cell_theta_max = np.asarray(self._cell_theta_max, dtype=np.float64)
-        self._cell_phi_start = np.asarray(self._cell_phi_start, dtype=np.float64)
-        self._cell_phi_width = np.asarray(self._cell_phi_width, dtype=np.float64)
-        self._r_min = float(self._r_min)
-        self._r_max = float(self._r_max)
+        cell_xyz = self._points[self._corners]
+        self._cell_centers = np.asarray(np.mean(cell_xyz, axis=1), dtype=np.float64)
         n_cells = int(self._cell_centers.shape[0])
         if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
-            raise ValueError("Spherical lookup requires exact builder-provided cell_levels.")
+            raise ValueError("Spherical lookup requires exact cell_levels.")
         self._cell_level = np.array(self.cell_levels, dtype=np.int64)
         self._i0 = np.asarray(self._i0, dtype=np.int64)
         self._i1 = np.asarray(self._i1, dtype=np.int64)
@@ -240,13 +217,64 @@ class _SphericalCellLookup:
         self._root_node_ids = np.asarray(self._root_node_ids, dtype=np.int64)
         self._node_parent = np.asarray(self._node_parent, dtype=np.int64)
         self._cell_node_id = np.asarray(self._cell_node_id, dtype=np.int64)
-        self._node_r_min = np.asarray(self._node_r_min, dtype=np.float64)
-        self._node_r_max = np.asarray(self._node_r_max, dtype=np.float64)
-        self._node_theta_min = np.asarray(self._node_theta_min, dtype=np.float64)
-        self._node_theta_max = np.asarray(self._node_theta_max, dtype=np.float64)
-        self._node_phi_start = np.asarray(self._node_phi_start, dtype=np.float64)
-        self._node_phi_width = np.asarray(self._node_phi_width, dtype=np.float64)
-        self._radial_edges = np.asarray(self._radial_edges, dtype=np.float64)
+        valid_ids = np.flatnonzero(self._cell_level >= 0).astype(np.int64)
+        shifts = np.asarray(int(self.max_level) - self._cell_level[valid_ids], dtype=np.int64)
+        width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
+        r0_f = np.left_shift(self._i0[valid_ids], shifts)
+        r1_f = r0_f + width_units
+        n_r_edges = int(self.leaf_shape[0]) + 1
+        radial_sum = np.zeros(n_r_edges, dtype=np.float64)
+        radial_count = np.zeros(n_r_edges, dtype=np.int64)
+        point_r = np.linalg.norm(self._points, axis=1)
+        cell_r_lo_obs = np.min(point_r[self._corners], axis=1)
+        cell_r_hi_obs = np.max(point_r[self._corners], axis=1)
+        for row, edge_idx in enumerate(r0_f):
+            radial_sum[int(edge_idx)] += float(cell_r_lo_obs[valid_ids[row]])
+            radial_count[int(edge_idx)] += 1
+        for row, edge_idx in enumerate(r1_f):
+            radial_sum[int(edge_idx)] += float(cell_r_hi_obs[valid_ids[row]])
+            radial_count[int(edge_idx)] += 1
+        if np.any(radial_count == 0):
+            missing_edge = int(np.flatnonzero(radial_count == 0)[0])
+            raise ValueError(f"Spherical lookup could not reconstruct radial edge {missing_edge}.")
+        self._radial_edges = radial_sum / radial_count
+        self._r_min = float(self._radial_edges[0])
+        self._r_max = float(self._radial_edges[-1])
+        self._cell_r_min = np.empty(n_cells, dtype=np.float64)
+        self._cell_r_max = np.empty(n_cells, dtype=np.float64)
+        self._cell_theta_min = np.empty(n_cells, dtype=np.float64)
+        self._cell_theta_max = np.empty(n_cells, dtype=np.float64)
+        self._cell_phi_start = np.empty(n_cells, dtype=np.float64)
+        self._cell_phi_width = np.empty(n_cells, dtype=np.float64)
+        self._cell_r_min.fill(np.nan)
+        self._cell_r_max.fill(np.nan)
+        self._cell_theta_min.fill(np.nan)
+        self._cell_theta_max.fill(np.nan)
+        self._cell_phi_start.fill(np.nan)
+        self._cell_phi_width.fill(np.nan)
+        d_theta_f = math.pi / float(int(self.leaf_shape[1]))
+        d_phi_f = (2.0 * math.pi) / float(int(self.leaf_shape[2]))
+        fine_i1 = np.left_shift(self._i1[valid_ids], shifts)
+        fine_i2 = np.left_shift(self._i2[valid_ids], shifts)
+        self._cell_r_min[valid_ids] = self._radial_edges[r0_f]
+        self._cell_r_max[valid_ids] = self._radial_edges[r1_f]
+        self._cell_theta_min[valid_ids] = fine_i1.astype(np.float64) * d_theta_f
+        self._cell_theta_max[valid_ids] = (fine_i1 + width_units).astype(np.float64) * d_theta_f
+        self._cell_phi_start[valid_ids] = np.mod(fine_i2.astype(np.float64) * d_phi_f, 2.0 * math.pi)
+        self._cell_phi_width[valid_ids] = width_units.astype(np.float64) * d_phi_f
+        node_shift = np.asarray(int(self.max_level) - self._node_depth, dtype=np.int64)
+        node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
+        node_r0_f = np.left_shift(self._node_i0, node_shift)
+        node_r1_f = node_r0_f + node_width
+        node_t0_f = np.left_shift(self._node_i1, node_shift)
+        node_t1_f = node_t0_f + node_width
+        node_p0_f = np.left_shift(self._node_i2, node_shift)
+        self._node_r_min = np.asarray(self._radial_edges[node_r0_f], dtype=np.float64)
+        self._node_r_max = np.asarray(self._radial_edges[node_r1_f], dtype=np.float64)
+        self._node_theta_min = np.asarray(node_t0_f.astype(np.float64) * d_theta_f, dtype=np.float64)
+        self._node_theta_max = np.asarray(node_t1_f.astype(np.float64) * d_theta_f, dtype=np.float64)
+        self._node_phi_start = np.asarray(np.mod(node_p0_f.astype(np.float64) * d_phi_f, 2.0 * math.pi), dtype=np.float64)
+        self._node_phi_width = np.asarray(node_width.astype(np.float64) * d_phi_f, dtype=np.float64)
         self._lookup_state = SphericalLookupKernelState(
             cell_r_min=self._cell_r_min,
             cell_r_max=self._cell_r_max,

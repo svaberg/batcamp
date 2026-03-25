@@ -18,7 +18,7 @@ from batread.dataset import Dataset
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 DEFAULT_AXIS_RHO_TOL = 1e-12
-OCTREE_FILE_VERSION = 4
+OCTREE_FILE_VERSION = 5
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
 
@@ -53,6 +53,80 @@ class LookupGeometryState(NamedTuple):
     corners: np.ndarray
     cell_centers: np.ndarray
     lookup_state: object
+
+
+def _level_metadata_from_leaves(
+    root_shape: GridShape,
+    cell_levels: np.ndarray,
+) -> tuple[GridShape, bool, LevelCountTable, int, int]:
+    """Rebuild tree summary metadata from exact leaf levels."""
+    levels = np.asarray(cell_levels, dtype=np.int64)
+    valid = levels >= 0
+    valid_levels = levels[valid]
+    if valid_levels.size == 0:
+        raise ValueError("Octree state requires at least one valid cell level.")
+    min_level = int(np.min(valid_levels))
+    max_level = int(np.max(valid_levels))
+    scale = 1 << max_level
+    leaf_shape = tuple(int(v) * scale for v in root_shape)
+    level_counts = tuple(
+        (
+            int(level),
+            int(np.count_nonzero(valid_levels == level)),
+            int(np.count_nonzero(valid_levels == level) * (8 ** int(max_level - level))),
+        )
+        for level in sorted(set(int(v) for v in valid_levels.tolist()))
+    )
+    weighted_cells = int(sum(item[2] for item in level_counts))
+    is_full = int(np.count_nonzero(valid)) == int(levels.size) and weighted_cells == int(np.prod(leaf_shape))
+    return leaf_shape, bool(is_full), level_counts, min_level, max_level
+
+
+def _node_state_from_leaves(
+    cell_levels: np.ndarray,
+    cell_i0: np.ndarray,
+    cell_i1: np.ndarray,
+    cell_i2: np.ndarray,
+    *,
+    max_level: int,
+) -> tuple[np.ndarray, ...]:
+    """Rebuild exact occupied nonleaves and leaf-node maps from leaf addresses."""
+    from .builder import _build_child_table
+    from .builder import _build_node_arrays
+
+    levels = np.asarray(cell_levels, dtype=np.int64)
+    i0_all = np.asarray(cell_i0, dtype=np.int64)
+    i1_all = np.asarray(cell_i1, dtype=np.int64)
+    i2_all = np.asarray(cell_i2, dtype=np.int64)
+    if not (levels.shape == i0_all.shape == i1_all.shape == i2_all.shape):
+        raise ValueError("Octree leaf level/index arrays must have matching shapes.")
+    valid_ids = np.flatnonzero(levels >= 0).astype(np.int64)
+    if valid_ids.size == 0:
+        raise ValueError("Octree state requires at least one valid leaf cell.")
+    depths = np.asarray(levels[valid_ids], dtype=np.int64)
+    leaf_i0 = np.asarray(i0_all[valid_ids], dtype=np.int64)
+    leaf_i1 = np.asarray(i1_all[valid_ids], dtype=np.int64)
+    leaf_i2 = np.asarray(i2_all[valid_ids], dtype=np.int64)
+    node_depth, node_i0, node_i1, node_i2, node_value = _build_node_arrays(
+        depths,
+        leaf_i0,
+        leaf_i1,
+        leaf_i2,
+        valid_ids,
+        tree_depth=int(max_level),
+        label="Restored",
+    )
+    node_child, root_node_ids, node_parent = _build_child_table(
+        node_depth,
+        node_i0,
+        node_i1,
+        node_i2,
+        node_value,
+    )
+    cell_node_id = np.full(levels.shape[0], -1, dtype=np.int64)
+    leaf_mask = node_value >= 0
+    cell_node_id[node_value[leaf_mask]] = np.flatnonzero(leaf_mask).astype(np.int64)
+    return node_depth, node_i0, node_i1, node_i2, node_value, node_child, root_node_ids, node_parent, cell_node_id
 
 
 def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
@@ -179,24 +253,53 @@ class Octree:
         """Instantiate one tree from exact saved state."""
         if bind and ds is None:
             raise ValueError("Octree.from_state requires ds when bind=True.")
-        resolved_axis_rho_tol = float(state.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
+        resolved_axis_rho_tol = float(DEFAULT_AXIS_RHO_TOL) if axis_rho_tol is None else float(axis_rho_tol)
+        root_shape = tuple(int(v) for v in state.root_shape)
+        cell_levels = np.asarray(state.cell_levels, dtype=np.int64)
+        cell_i0 = np.asarray(state.cell_i0, dtype=np.int64)
+        cell_i1 = np.asarray(state.cell_i1, dtype=np.int64)
+        cell_i2 = np.asarray(state.cell_i2, dtype=np.int64)
+        leaf_shape, is_full, level_counts, min_level, max_level = _level_metadata_from_leaves(root_shape, cell_levels)
+        (
+            node_depth,
+            node_i0,
+            node_i1,
+            node_i2,
+            node_value,
+            node_child,
+            root_node_ids,
+            node_parent,
+            cell_node_id,
+        ) = _node_state_from_leaves(
+            cell_levels,
+            cell_i0,
+            cell_i1,
+            cell_i2,
+            max_level=max_level,
+        )
         tree = cls(
-            leaf_shape=state.leaf_shape,
-            root_shape=state.root_shape,
-            is_full=state.is_full,
-            level_counts=state.level_counts,
-            min_level=state.min_level,
-            max_level=state.max_level,
+            leaf_shape=leaf_shape,
+            root_shape=root_shape,
+            is_full=is_full,
+            level_counts=level_counts,
+            min_level=min_level,
+            max_level=max_level,
             tree_coord=state.tree_coord,
-            cell_levels=np.asarray(state.cell_levels, dtype=np.int64),
+            cell_levels=cell_levels,
             axis_rho_tol=resolved_axis_rho_tol,
         )
-        for field_name, attr_name, dtype, _shape in state.ARRAY_SPECS:
-            if attr_name == "cell_levels":
-                continue
-            setattr(tree, attr_name, np.asarray(getattr(state, field_name), dtype=dtype))
-        for field_name, attr_name, _default in state.FLOAT_SCALAR_SPECS:
-            setattr(tree, attr_name, float(getattr(state, field_name)))
+        tree._i0 = cell_i0
+        tree._i1 = cell_i1
+        tree._i2 = cell_i2
+        tree._node_depth = node_depth
+        tree._node_i0 = node_i0
+        tree._node_i1 = node_i1
+        tree._node_i2 = node_i2
+        tree._node_value = node_value
+        tree._node_child = node_child
+        tree._root_node_ids = root_node_ids
+        tree._node_parent = node_parent
+        tree._cell_node_id = cell_node_id
         if bind:
             tree.bind(ds, axis_rho_tol=resolved_axis_rho_tol)
         return tree
