@@ -206,30 +206,6 @@ class _SphericalCoordSupport:
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([self._r_min, 0.0, 0.0], dtype=float), np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
 
-    def _lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
-        """Return the containing spherical cell id, or `-1` when not found."""
-        return int(
-            _lookup_rpa_cell_id_kernel(
-                float(r),
-                float(polar),
-                float(azimuth),
-                self._coord_state,
-            )
-        )
-
-    def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
-        """Return whether one spherical point lies inside one cell."""
-        return bool(
-            _contains_lookup_cell(
-                int(cell_id),
-                float(r),
-                float(polar),
-                float(azimuth) % _TWO_PI,
-                self._coord_state,
-                float(tol),
-            )
-        )
-
     def _contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
         """Return whether one Cartesian point lies inside one cell."""
         r = float(math.sqrt(x * x + y * y + z * z))
@@ -251,3 +227,27 @@ class _SphericalCoordSupport:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
         return _SphericalCoordSupport._lookup_rpa_cell_id(self, r, polar, azimuth)
+
+    def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
+        """Return whether one spherical point lies inside one cell."""
+        return bool(
+            _contains_lookup_cell(
+                int(cell_id),
+                float(r),
+                float(polar),
+                float(azimuth) % _TWO_PI,
+                self._coord_state,
+                float(tol),
+            )
+        )
+
+    def _lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
+        """Return the containing spherical cell id, or `-1` when not found."""
+        return int(
+            _lookup_rpa_cell_id_kernel(
+                float(r),
+                float(polar),
+                float(azimuth),
+                self._coord_state,
+            )
+        )
