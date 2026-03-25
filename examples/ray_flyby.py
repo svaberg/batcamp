@@ -23,6 +23,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from batcamp import FovCamera
+from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
 
@@ -58,12 +59,14 @@ def _time_call(fn, *args):
 def _load_ray_context() -> tuple[OctreeInterpolator, OctreeRayInterpolator, dict[str, float | str]]:
     data_path, resolve_s = _time_call(_resolve_sc_data_file)
     ds, read_s = _time_call(Dataset.from_file, str(data_path))
-    interp, interp_s = _time_call(OctreeInterpolator, ds, [_DEFAULT_FIELD])
+    tree, tree_s = _time_call(OctreeBuilder().build, ds)
+    interp, interp_s = _time_call(OctreeInterpolator, tree, [_DEFAULT_FIELD])
     ray, ray_s = _time_call(OctreeRayInterpolator, interp)
     timing = {
         "data_path": str(data_path),
         "resolve_s": resolve_s,
         "read_s": read_s,
+        "tree_s": tree_s,
         "interp_s": interp_s,
         "ray_s": ray_s,
     }
