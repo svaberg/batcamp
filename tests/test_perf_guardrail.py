@@ -13,6 +13,7 @@ from sample_data_helper import data_file
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 
 pytestmark = [
     pytest.mark.design_lockin,
@@ -31,9 +32,9 @@ def _xyz_points(ds: Dataset) -> np.ndarray:
     """Return dataset point coordinates as one dense `(n, 3)` array."""
     return np.column_stack(
         [
-            np.asarray(ds[Octree.X_VAR], dtype=float),
-            np.asarray(ds[Octree.Y_VAR], dtype=float),
-            np.asarray(ds[Octree.Z_VAR], dtype=float),
+            np.asarray(ds[XYZ_VARS[0]], dtype=float),
+            np.asarray(ds[XYZ_VARS[1]], dtype=float),
+            np.asarray(ds[XYZ_VARS[2]], dtype=float),
         ]
     )
 
@@ -64,9 +65,9 @@ def test_build_and_query_runtime_guardrail() -> None:
 
     xyz = np.column_stack(
         [
-            np.asarray(ds[Octree.X_VAR], dtype=float),
-            np.asarray(ds[Octree.Y_VAR], dtype=float),
-            np.asarray(ds[Octree.Z_VAR], dtype=float),
+            np.asarray(ds[XYZ_VARS[0]], dtype=float),
+            np.asarray(ds[XYZ_VARS[1]], dtype=float),
+            np.asarray(ds[XYZ_VARS[2]], dtype=float),
         ]
     )
     n_query = min(4000, xyz.shape[0])

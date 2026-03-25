@@ -6,6 +6,7 @@ from __future__ import annotations
 import numpy as np
 from batread import Dataset
 
+from .constants import XYZ_VARS
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
@@ -58,9 +59,9 @@ class CartesianOctreeBuilder:
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level axis counts/spacings for Cartesian octrees."""
-        x = np.asarray(ds[Octree.X_VAR], dtype=float)
-        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
-        z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
+        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -121,9 +122,9 @@ class CartesianOctreeBuilder:
         cell_levels: np.ndarray | None = None,
     ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int]:
         """Infer Cartesian level-shape map and validated levels."""
-        x = np.asarray(ds[Octree.X_VAR], dtype=float)
-        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
-        z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
+        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -178,9 +179,9 @@ class CartesianOctreeBuilder:
         max_level: int,
     ) -> tuple[int, int, int]:
         """Infer finest Cartesian `(n_x, n_y, n_z)` counts from geometry at `max_level`."""
-        x = np.asarray(ds[Octree.X_VAR], dtype=float)
-        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
-        z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
+        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -228,9 +229,9 @@ class CartesianOctreeBuilder:
 
         points = np.column_stack(
             (
-                np.asarray(ds[Octree.X_VAR], dtype=float),
-                np.asarray(ds[Octree.Y_VAR], dtype=float),
-                np.asarray(ds[Octree.Z_VAR], dtype=float),
+                np.asarray(ds[XYZ_VARS[0]], dtype=float),
+                np.asarray(ds[XYZ_VARS[1]], dtype=float),
+                np.asarray(ds[XYZ_VARS[2]], dtype=float),
             )
         )
         corners_arr = np.asarray(corners, dtype=np.int64)

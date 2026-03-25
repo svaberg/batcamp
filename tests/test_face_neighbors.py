@@ -9,6 +9,7 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from batcamp.ray import _candidate_face_neighbor_nodes_after_exit
 from batcamp.face_neighbors import build_face_neighbors
 from batcamp.face_neighbors import OctreeFaceNeighbors
@@ -29,9 +30,9 @@ def _build_cartesian_uniform_tree() -> Octree:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: points[:, 0],
-            Octree.Y_VAR: points[:, 1],
-            Octree.Z_VAR: points[:, 2],
+            XYZ_VARS[0]: points[:, 0],
+            XYZ_VARS[1]: points[:, 1],
+            XYZ_VARS[2]: points[:, 2],
         },
     )
     return OctreeBuilder().build(ds, tree_coord="xyz")
@@ -50,9 +51,9 @@ def _build_spherical_uniform_tree() -> Octree:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: points[:, 0],
-            Octree.Y_VAR: points[:, 1],
-            Octree.Z_VAR: points[:, 2],
+            XYZ_VARS[0]: points[:, 0],
+            XYZ_VARS[1]: points[:, 1],
+            XYZ_VARS[2]: points[:, 2],
         },
     )
     return OctreeBuilder().build(ds, tree_coord="rpa")
@@ -159,7 +160,7 @@ def _oracle_interpolator(tree: Octree) -> OctreeInterpolator:
     """Private test helper: build the regular interpolator used as oracle."""
     ds = tree.ds
     assert ds is not None
-    return OctreeInterpolator(tree, [Octree.X_VAR])
+    return OctreeInterpolator(tree, [XYZ_VARS[0]])
 
 
 def _oracle_ray_cell_ids(

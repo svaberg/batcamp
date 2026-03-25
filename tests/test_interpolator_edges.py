@@ -8,6 +8,7 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from batcamp.cartesian import _lookup_xyz_cell_id_kernel
 from batcamp.spherical import _lookup_rpa_cell_id_kernel
 from fake_dataset import FakeDataset as _FakeDataset
@@ -38,9 +39,9 @@ def _build_fake_dataset(
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Scalar": scalar,
             "Scalar2": scalar2,
         },
@@ -63,9 +64,9 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Scalar": scalar,
             "Scalar2": scalar2,
         },
@@ -152,9 +153,9 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Scalar": x + y + z,
         },
     )

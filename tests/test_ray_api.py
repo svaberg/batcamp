@@ -9,6 +9,7 @@ from batcamp import OctreeInterpolator
 from batcamp import OctreeBuilder
 from batcamp import OctreeRayInterpolator
 from batcamp import OctreeRayTracer
+from batcamp.constants import XYZ_VARS
 from batcamp.octree import Octree
 from batcamp.ray import FlatCamera
 from batcamp.ray import FovCamera
@@ -51,9 +52,9 @@ def _build_single_cell_trilinear_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "TrilinearXY": x * y,
         },
     )
