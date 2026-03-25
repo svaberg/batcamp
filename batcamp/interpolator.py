@@ -292,9 +292,6 @@ class OctreeInterpolator:
         """Create an interpolator from one built tree and point values."""
         if not isinstance(tree, Octree):
             raise TypeError("OctreeInterpolator requires a built Octree as its first argument.")
-        if tree.ds is None or tree.ds.corners is None:
-            logger.error("Octree is not bound to a dataset; cannot build interpolator.")
-            raise ValueError("Octree is not bound to a dataset with corners.")
         self.tree = tree
         self._ds = tree.ds
         self._corners = self._ds.corners
