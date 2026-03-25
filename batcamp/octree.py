@@ -276,7 +276,7 @@ class Octree:
         self._require_lookup()
         return np.asarray(self._cell_centers, dtype=float)
 
-    def _lookup_geometry(self) -> LookupGeometryState:
+    def lookup_geometry(self) -> LookupGeometryState:
         """Return bound point/cell arrays plus packed lookup state."""
         self._require_lookup()
         required = ("_points", "_corners", "_cell_centers", "_lookup_state")

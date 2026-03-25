@@ -250,7 +250,7 @@ def _face_neighbor_state_for_node_cells(face_neighbors) -> FaceNeighborKernelSta
 
 def _node_point_candidates(tree: Octree, face_neighbors) -> list[np.ndarray]:
     """Return unique descendant-corner point ids for every frontier node."""
-    lookup_geometry = tree._lookup_geometry()
+    lookup_geometry = tree.lookup_geometry()
     if tree.cell_levels is None:
         raise ValueError("Octree has no cell levels; cannot build truncated ray cells.")
     corners = lookup_geometry.corners
@@ -485,7 +485,7 @@ def _build_plane_state_from_ordered_corners(
 
 def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     """Build one Cartesian plane model from face_neighbors-aligned cell faces."""
-    lookup_geometry = tree._lookup_geometry()
+    lookup_geometry = tree.lookup_geometry()
     corners = lookup_geometry.corners
     points = lookup_geometry.points
     centers = lookup_geometry.cell_centers
@@ -583,7 +583,7 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
 
 def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> CartesianRayCellGeometry:
     """Build truncated Cartesian ray-cell geometry from one frontier face_neighbors."""
-    lookup_geometry = tree._lookup_geometry()
+    lookup_geometry = tree.lookup_geometry()
     points = lookup_geometry.points
     point_groups = _node_point_candidates(tree, face_neighbors)
     n_cells = int(face_neighbors.node_count)
@@ -674,7 +674,7 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
 
 def _build_spherical_ray_cell_geometry(tree: Octree, face_neighbors) -> SphericalRayCellGeometry:
     """Build truncated spherical ray-cell geometry from one frontier face_neighbors."""
-    lookup_geometry = tree._lookup_geometry()
+    lookup_geometry = tree.lookup_geometry()
     points = lookup_geometry.points
     point_groups = _node_point_candidates(tree, face_neighbors)
     point_r = np.linalg.norm(points, axis=1)
@@ -791,7 +791,7 @@ def _build_sparse_spherical_seed_lookup_state(
     geometry: SphericalRayCellGeometry,
 ) -> SphericalLookupKernelState:
     """Build one sparse coarse spherical lookup state keyed by representative leaf ids."""
-    lookup_geometry = tree._lookup_geometry()
+    lookup_geometry = tree.lookup_geometry()
     n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
     rep_cell_ids = np.asarray(face_neighbors.node_cell_ids, dtype=np.int64)
     n_nodes = int(rep_cell_ids.shape[0])
@@ -2191,7 +2191,7 @@ class OctreeRayTracer:
     def __init__(self, tree: Octree, *, max_level: int | None = None) -> None:
         """Bind one built octree."""
         self.tree = tree
-        lookup_geometry = tree._lookup_geometry()
+        lookup_geometry = tree.lookup_geometry()
         self.max_level = _resolve_ray_max_level(tree, max_level)
         self._tree_coord = str(tree.tree_coord)
         dmin, dmax = tree.domain_bounds(coord="xyz")

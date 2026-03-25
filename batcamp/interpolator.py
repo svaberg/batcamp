@@ -366,7 +366,7 @@ class OctreeInterpolator:
             logger.error("Octree is not bound to a dataset; cannot build interpolator.")
             raise ValueError("Octree is not bound to a dataset with corners.")
         self.tree = tree
-        lookup_geometry = self.tree._lookup_geometry()
+        lookup_geometry = self.tree.lookup_geometry()
         self._ds = tree.ds
         self._corners = lookup_geometry.corners
         self._points = lookup_geometry.points
