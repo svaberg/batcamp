@@ -14,10 +14,9 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
+from .constants import DEFAULT_TREE_COORD
+from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
-
-SUPPORTED_TREE_COORDS = ("rpa", "xyz")
-DEFAULT_TREE_COORD = "xyz"
 
 TreeCoord: TypeAlias = Literal["rpa", "xyz"]
 """Coordinate-system tag for octree state and lookup."""
