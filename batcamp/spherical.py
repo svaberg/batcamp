@@ -12,9 +12,7 @@ from .constants import XYZ_VARS
 from .octree import LookupKernelState
 from .octree import Octree
 from .octree import _contains_lookup_cell
-from .octree import _contains_lookup_domain
-from .octree import _lookup_descend_to_leaf
-from .octree import _lookup_hint_node
+from .octree import _lookup_cell_id_kernel
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
@@ -32,30 +30,7 @@ def _lookup_rpa_cell_id_kernel(
     prev_cid: int = -1,
 ) -> int:
     """Return the containing spherical cell id, or `-1` when not found."""
-    if not (math.isfinite(r) and math.isfinite(polar) and math.isfinite(azimuth)):
-        return -1
-    azimuth = azimuth % _TWO_PI
-    if not _contains_lookup_domain(r, polar, azimuth, lookup_state):
-        return -1
-    if prev_cid >= 0 and _contains_lookup_cell(int(prev_cid), r, polar, azimuth, lookup_state, _LOOKUP_CONTAIN_TOL):
-        return int(prev_cid)
-
-    current = _lookup_hint_node(
-        int(prev_cid),
-        r,
-        polar,
-        azimuth,
-        lookup_state,
-        _LOOKUP_CONTAIN_TOL,
-    )
-    return _lookup_descend_to_leaf(
-        r,
-        polar,
-        azimuth,
-        current,
-        lookup_state,
-        _LOOKUP_CONTAIN_TOL,
-    )
+    return _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, prev_cid, _LOOKUP_CONTAIN_TOL)
 
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
