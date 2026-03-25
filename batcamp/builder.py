@@ -15,7 +15,6 @@ from .octree import TreeCoord
 from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import DEFAULT_TREE_COORD
 from .octree import GridShape
-from .octree import infer_tree_coord_from_geometry
 from .octree import LevelCountTable
 from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
@@ -30,6 +29,36 @@ BlockAux: TypeAlias = tuple[int, GridShape]
 """Parsed BLOCKS aux tuple `(n_blocks, cells_per_block_xyz)`."""
 
 logger = logging.getLogger(__name__)
+
+
+def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
+    """Guess whether the mesh is Cartesian (`xyz`) or spherical-like (`rpa`)."""
+    corners = getattr(ds, "corners", None)
+    if corners is None:
+        raise ValueError("Dataset has no cell connectivity (corners).")
+    corners_arr = np.asarray(corners, dtype=np.int64)
+    if corners_arr.ndim != 2 or corners_arr.shape[0] == 0:
+        return "rpa"
+
+    if corners_arr.shape[0] > int(sample_size):
+        idx = np.linspace(0, corners_arr.shape[0] - 1, int(sample_size), dtype=np.int64)
+        sample = corners_arr[idx]
+    else:
+        sample = corners_arr
+
+    x = np.asarray(ds[Octree.X_VAR], dtype=float)
+    y = np.asarray(ds[Octree.Y_VAR], dtype=float)
+    z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+    xr = np.round(x[sample], 12)
+    yr = np.round(y[sample], 12)
+    zr = np.round(z[sample], 12)
+
+    ux = np.array([np.unique(row).size for row in xr], dtype=np.int64)
+    uy = np.array([np.unique(row).size for row in yr], dtype=np.int64)
+    uz = np.array([np.unique(row).size for row in zr], dtype=np.int64)
+    axis_like = (ux <= 2) & (uy <= 2) & (uz <= 2)
+    frac_axis_like = float(np.mean(axis_like)) if axis_like.size > 0 else 0.0
+    return "xyz" if frac_axis_like >= 0.98 else "rpa"
 
 
 def _median_positive(values: np.ndarray, *, tiny: float = 1e-12) -> float:

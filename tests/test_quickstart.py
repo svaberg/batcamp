@@ -3,7 +3,7 @@ import pytest
 from batread import Dataset
 
 from batcamp import Octree, OctreeBuilder, OctreeInterpolator
-from batcamp.octree import infer_tree_coord_from_geometry
+from batcamp.builder import infer_tree_coord_from_geometry
 from sample_data_helper import data_file
 
 
