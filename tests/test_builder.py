@@ -11,10 +11,10 @@ from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeBuilder
-from batcamp.builder import _build_node_arrays
 from batcamp.builder import _resolve_cell_levels
 from batcamp.builder_cartesian import CartesianOctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
+from batcamp.octree import _build_node_arrays
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -274,7 +274,6 @@ def _make_cartesian_tree(
         root_shape=root_shape,
         max_level=int(max_level),
         cell_levels=levels,
-        axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
     )
 
 
@@ -291,7 +290,6 @@ def _make_spherical_tree(
         root_shape=root_shape,
         max_level=int(max_level),
         cell_levels=levels,
-        axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
     )
 
 
@@ -770,7 +768,7 @@ def test_spherical_tree_state_requires_cell_levels() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=tree.axis_rho_tol,
+            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
             ds=ds,
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
@@ -790,7 +788,7 @@ def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=tree.axis_rho_tol,
+            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
             ds=ds,
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
@@ -810,7 +808,7 @@ def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=tree.axis_rho_tol,
+            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
             ds=ds,
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
@@ -830,7 +828,7 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=tree.axis_rho_tol,
+            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
             ds=ds,
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
