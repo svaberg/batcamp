@@ -646,6 +646,40 @@ class Octree:
             raise ValueError("Octree lookup state is not initialized. Bind it to a dataset first.")
         return self
 
+    @staticmethod
+    def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:
+        """Construct the root-to-leaf grid-index path for one cell."""
+        out: list[GridIndex] = []
+        for path_level in range(level + 1):
+            shift = level - path_level
+            out.append((i0 >> shift, i1 >> shift, i2 >> shift))
+        return tuple(out)
+
+    def _hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> "LookupHit | None":
+        """Build one `LookupHit` from an internal cell id."""
+        if chosen < 0:
+            return None
+        level = int(self.cell_levels[chosen])
+        if level < 0 and not allow_invalid_level:
+            return None
+        if level < 0:
+            path_level = int(self.max_level)
+        else:
+            path_level = int(level)
+            if path_level < 0:
+                raise ValueError(f"Derived negative level {level}; max_level={self.max_level}.")
+        cell_i0 = int(self._i0[chosen])
+        cell_i1 = int(self._i1[chosen])
+        cell_i2 = int(self._i2[chosen])
+        return LookupHit(
+            cell_id=int(chosen),
+            level=level,
+            i0=cell_i0,
+            i1=cell_i1,
+            i2=cell_i2,
+            path=self._path(cell_i0, cell_i1, cell_i2, path_level),
+        )
+
     @property
     def cell_count(self) -> int:
         """Return number of leaf cells in the exact tree state."""
@@ -806,7 +840,7 @@ class Octree:
                 chosen = backend._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
             else:
                 chosen = backend._lookup_rpa_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-        return backend.hit_from_chosen(self, int(chosen))
+        return self._hit_from_chosen(int(chosen))
 
     def contains_cell(
         self,
@@ -856,11 +890,7 @@ class Octree:
         n_cells = int(self.cell_levels.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-        hit = self._coord_support(str(self.tree_coord)).hit_from_chosen(
-            self,
-            cid,
-            allow_invalid_level=True,
-        )
+        hit = self._hit_from_chosen(cid, allow_invalid_level=True)
         if hit is None:
             raise ValueError(f"Invalid cell_id {cid}; cannot materialize LookupHit.")
         return hit
