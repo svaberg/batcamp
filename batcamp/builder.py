@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_AXIS_RHO_TOL = 1e-12
 """Default polar-axis radius tolerance used only during spherical builder inference."""
 
+DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
+"""Default minimum fraction of valid inferred cell levels accepted by builder utilities."""
+
 
 def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
     """Guess whether the mesh is Cartesian (`xyz`) or spherical-like (`rpa`)."""

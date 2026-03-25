@@ -7,10 +7,10 @@ from typing import Any
 
 from .builder import OctreeBuilder
 from .builder import DEFAULT_AXIS_RHO_TOL
+from .builder import DEFAULT_MIN_VALID_CELL_FRACTION
 from .builder import format_histogram
 from .builder import point_refinement_levels
 from .builder import valid_cell_fraction
-from .octree import DEFAULT_MIN_VALID_CELL_FRACTION
 from .octree import DEFAULT_TREE_COORD
 from .octree import LookupHit
 from .octree import Octree
