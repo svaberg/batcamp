@@ -161,8 +161,6 @@ class _CartesianCellLookup:
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
-            "_corners",
-            "_points",
             "_i0",
             "_i1",
             "_i2",
@@ -179,17 +177,26 @@ class _CartesianCellLookup:
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Cartesian lookup requires exact tree state: missing {missing}.")
-
-        self._corners = np.asarray(self._corners, dtype=np.int64)
-        self._points = np.asarray(self._points, dtype=np.float64)
-        cell_xyz = self._points[self._corners]
-        self._cell_centers = np.asarray(np.mean(cell_xyz, axis=1), dtype=np.float64)
-        self._cell_x_min = np.asarray(np.min(cell_xyz[:, :, 0], axis=1), dtype=np.float64)
-        self._cell_x_max = np.asarray(np.max(cell_xyz[:, :, 0], axis=1), dtype=np.float64)
-        self._cell_y_min = np.asarray(np.min(cell_xyz[:, :, 1], axis=1), dtype=np.float64)
-        self._cell_y_max = np.asarray(np.max(cell_xyz[:, :, 1], axis=1), dtype=np.float64)
-        self._cell_z_min = np.asarray(np.min(cell_xyz[:, :, 2], axis=1), dtype=np.float64)
-        self._cell_z_max = np.asarray(np.max(cell_xyz[:, :, 2], axis=1), dtype=np.float64)
+        corners = np.asarray(self.ds.corners, dtype=np.int64)
+        x = np.asarray(self.ds[self.X_VAR], dtype=np.float64)
+        y = np.asarray(self.ds[self.Y_VAR], dtype=np.float64)
+        z = np.asarray(self.ds[self.Z_VAR], dtype=np.float64)
+        cell_x = x[corners]
+        cell_y = y[corners]
+        cell_z = z[corners]
+        self._cell_centers = np.column_stack(
+            (
+                np.mean(cell_x, axis=1),
+                np.mean(cell_y, axis=1),
+                np.mean(cell_z, axis=1),
+            )
+        )
+        self._cell_x_min = np.asarray(np.min(cell_x, axis=1), dtype=np.float64)
+        self._cell_x_max = np.asarray(np.max(cell_x, axis=1), dtype=np.float64)
+        self._cell_y_min = np.asarray(np.min(cell_y, axis=1), dtype=np.float64)
+        self._cell_y_max = np.asarray(np.max(cell_y, axis=1), dtype=np.float64)
+        self._cell_z_min = np.asarray(np.min(cell_z, axis=1), dtype=np.float64)
+        self._cell_z_max = np.asarray(np.max(cell_z, axis=1), dtype=np.float64)
 
         n_cells = int(self._cell_centers.shape[0])
         if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
@@ -285,15 +292,26 @@ class _CartesianCellLookup:
 
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
-        return (
-            np.array([self._cell_x_min[cid], self._cell_y_min[cid], self._cell_z_min[cid]], dtype=float),
-            np.array([self._cell_x_max[cid], self._cell_y_max[cid], self._cell_z_max[cid]], dtype=float),
+        if self.ds is None or self.ds.corners is None:
+            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+        corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
+        x = np.asarray(self.ds[self.X_VAR], dtype=float)[corners]
+        y = np.asarray(self.ds[self.Y_VAR], dtype=float)[corners]
+        z = np.asarray(self.ds[self.Z_VAR], dtype=float)[corners]
+        return np.array([np.min(x), np.min(y), np.min(z)], dtype=float), np.array(
+            [np.max(x), np.max(y), np.max(z)],
+            dtype=float,
         )
 
     def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
-        corners = np.asarray(self._corners[cid], dtype=np.int64)
-        pts = np.asarray(self._points[corners], dtype=float)
+        if self.ds is None or self.ds.corners is None:
+            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+        corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
+        x = np.asarray(self.ds[self.X_VAR], dtype=float)[corners]
+        y = np.asarray(self.ds[self.Y_VAR], dtype=float)[corners]
+        z = np.asarray(self.ds[self.Z_VAR], dtype=float)[corners]
+        pts = np.column_stack((x, y, z))
         r = np.linalg.norm(pts, axis=1)
         theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
         phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
@@ -306,7 +324,15 @@ class _CartesianCellLookup:
         return np.asarray(self._xyz_min, dtype=float), np.asarray(self._xyz_max, dtype=float)
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
-        pts = np.asarray(self._points, dtype=float)
+        if self.ds is None:
+            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+        pts = np.column_stack(
+            (
+                np.asarray(self.ds[self.X_VAR], dtype=float),
+                np.asarray(self.ds[self.Y_VAR], dtype=float),
+                np.asarray(self.ds[self.Z_VAR], dtype=float),
+            )
+        )
         r = np.linalg.norm(pts, axis=1)
         theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
         phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
