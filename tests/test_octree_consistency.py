@@ -13,13 +13,17 @@ def advanced_context(difflevels_rpa_context: dict[str, object]) -> tuple[object,
     return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
 
 
-def _select_center_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarray:
+def _select_interior_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarray:
     """Private test helper: pick deterministic random interior query points."""
     rng = np.random.default_rng(seed)
-    centers = np.asarray(tree.cell_centers, dtype=float)
-    n = min(int(n_query), int(centers.shape[0]))
-    idx = rng.choice(centers.shape[0], size=n, replace=False)
-    return centers[idx]
+    n_cells = int(tree.cell_count)
+    n = min(int(n_query), n_cells)
+    idx = rng.choice(n_cells, size=n, replace=False)
+    queries = []
+    for cid in idx.tolist():
+        lo, hi = tree.cell_bounds(int(cid), coord="xyz")
+        queries.append(0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float)))
+    return np.asarray(queries, dtype=float)
 
 
 def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
@@ -36,7 +40,7 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
 def test_lookup_xyz_rpa_consistency(advanced_context) -> None:
     """Many interior points should map to the same cell in xyz and rpa lookup coords."""
     _ds, tree = advanced_context
-    queries = _select_center_queries(tree, n_query=64, seed=1)
+    queries = _select_interior_queries(tree, n_query=64, seed=1)
 
     for q in queries:
         hit_xyz = tree.lookup_point(q, coord="xyz")
@@ -57,7 +61,7 @@ def test_loaded_tree_interpolator_match(advanced_context, tmp_path) -> None:
     interp_a = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
     interp_b = OctreeInterpolator(loaded, ["Rho [g/cm^3]"])
 
-    queries = _select_center_queries(tree, n_query=64, seed=7)
+    queries = _select_interior_queries(tree, n_query=64, seed=7)
     vals_a, cids_a = interp_a(queries, return_cell_ids=True)
     vals_b, cids_b = interp_b(queries, return_cell_ids=True)
 

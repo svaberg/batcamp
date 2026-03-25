@@ -235,7 +235,6 @@ class CartesianOctreeBuilder:
         )
         corners_arr = np.asarray(corners, dtype=np.int64)
         cell_xyz = points[corners_arr]
-        cell_centers = np.mean(cell_xyz, axis=1)
         cell_x_min = np.min(cell_xyz[:, :, 0], axis=1)
         cell_x_max = np.max(cell_xyz[:, :, 0], axis=1)
         cell_y_min = np.min(cell_xyz[:, :, 1], axis=1)
