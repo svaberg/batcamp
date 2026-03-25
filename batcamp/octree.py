@@ -240,6 +240,51 @@ class Octree:
         self._require_lookup()
         return np.asarray(self._cell_centers, dtype=float)
 
+    def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:
+        """Return unique frontier nodes by truncating leaves to one level cutoff."""
+        if self.cell_levels is None:
+            raise ValueError("Octree has no cell_levels; cannot build frontier nodes.")
+        required = ("_i0", "_i1", "_i2")
+        missing = [name for name in required if not hasattr(self, name)]
+        if missing:
+            raise ValueError(f"Octree frontier nodes require exact leaf addresses: missing {missing}.")
+
+        levels_all = np.asarray(self.cell_levels, dtype=np.int64)
+        valid = levels_all >= 0
+        if not np.any(valid):
+            raise ValueError("Octree contains no valid cells (all levels are < 0).")
+
+        cell_ids = np.flatnonzero(valid).astype(np.int64)
+        i0_all = np.asarray(self._i0, dtype=np.int64)
+        i1_all = np.asarray(self._i1, dtype=np.int64)
+        i2_all = np.asarray(self._i2, dtype=np.int64)
+        if not (levels_all.shape == i0_all.shape == i1_all.shape == i2_all.shape):
+            raise ValueError("Cell level/index arrays must have matching shapes.")
+
+        levels_valid = levels_all[valid]
+        active_levels = np.minimum(levels_valid, int(max_level))
+        shift = levels_valid - active_levels
+        active_i0 = np.right_shift(i0_all[valid], shift)
+        active_i1 = np.right_shift(i1_all[valid], shift)
+        active_i2 = np.right_shift(i2_all[valid], shift)
+
+        keys = np.column_stack((active_levels, active_i0, active_i1, active_i2)).astype(np.int64)
+        unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+
+        node_cell_ids = np.full(unique_keys.shape[0], -1, dtype=np.int64)
+        cell_to_node_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
+        for row, node_id in enumerate(inverse):
+            nid = int(node_id)
+            if node_cell_ids[nid] < 0:
+                node_cell_ids[nid] = int(cell_ids[row])
+            cell_to_node_id[int(cell_ids[row])] = nid
+
+        levels = np.asarray(unique_keys[:, 0], dtype=np.int64)
+        i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
+        i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
+        i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
+        return levels, i0, i1, i2, node_cell_ids, cell_to_node_id
+
     def face_neighbors(self, *, max_level: int | None = None) -> "OctreeFaceNeighbors":
         """Return the lazily built face-neighbor graph for one level cutoff."""
         if self.cell_levels is None:

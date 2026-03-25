@@ -381,56 +381,6 @@ def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np
     return out
 
 
-def _frontier_nodes_from_octree(tree: Octree, max_level: int) -> tuple[np.ndarray, ...]:
-    """Build unique frontier nodes by truncating leaf levels to `max_level`."""
-    cell_levels = tree.cell_levels
-    if cell_levels is None:
-        raise ValueError("Octree has no cell_levels; cannot build face neighbors.")
-
-    levels_all = np.asarray(cell_levels, dtype=np.int64)
-
-    valid = levels_all >= 0
-    if not np.any(valid):
-        raise ValueError("Octree contains no valid cells (all levels are < 0).")
-    cell_ids = np.flatnonzero(valid).astype(np.int64)
-    # TODO: face_neighbors still reaches into tree._i0/_i1/_i2 directly.
-    # Promote exact leaf addresses to one non-private octree state accessor.
-    if not hasattr(tree, "_i0") or not hasattr(tree, "_i1") or not hasattr(tree, "_i2"):
-        raise ValueError("Octree indices (_i0/_i1/_i2) are unavailable; face neighbors require built tree state.")
-    i0_all = np.asarray(getattr(tree, "_i0"), dtype=np.int64)
-    i1_all = np.asarray(getattr(tree, "_i1"), dtype=np.int64)
-    i2_all = np.asarray(getattr(tree, "_i2"), dtype=np.int64)
-    if not (levels_all.shape == i0_all.shape == i1_all.shape == i2_all.shape):
-        raise ValueError("Cell level/index arrays must have matching shapes.")
-    i0_valid = i0_all[valid]
-    i1_valid = i1_all[valid]
-    i2_valid = i2_all[valid]
-
-    levels_valid = levels_all[valid]
-    active_levels = np.minimum(levels_valid, int(max_level))
-    shift = levels_valid - active_levels
-    active_i0 = np.right_shift(i0_valid, shift)
-    active_i1 = np.right_shift(i1_valid, shift)
-    active_i2 = np.right_shift(i2_valid, shift)
-
-    keys = np.column_stack((active_levels, active_i0, active_i1, active_i2)).astype(np.int64)
-    unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
-
-    node_cell_ids = np.full(unique_keys.shape[0], -1, dtype=np.int64)
-    cell_to_node_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
-    for row, node_id in enumerate(inverse):
-        nid = int(node_id)
-        if node_cell_ids[nid] < 0:
-            node_cell_ids[nid] = int(cell_ids[row])
-        cell_to_node_id[int(cell_ids[row])] = nid
-
-    levels = np.asarray(unique_keys[:, 0], dtype=np.int64)
-    i0 = np.asarray(unique_keys[:, 1], dtype=np.int64)
-    i1 = np.asarray(unique_keys[:, 2], dtype=np.int64)
-    i2 = np.asarray(unique_keys[:, 3], dtype=np.int64)
-    return levels, i0, i1, i2, node_cell_ids, cell_to_node_id
-
-
 def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> OctreeFaceNeighbors:
     """Build one face-neighbor graph from one octree."""
     if tree.cell_levels is None:
@@ -447,7 +397,7 @@ def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> Octre
             f"max_level={target_max_level} is outside [0, {max_tree_level}] for this tree."
         )
 
-    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = _frontier_nodes_from_octree(tree, target_max_level)
+    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = tree._frontier_nodes(target_max_level)
     min_level = int(np.min(levels))
     level_shapes = _level_shapes_for_cutoff(tree, min_level, target_max_level)
     periodic_i2 = str(tree.tree_coord) == "rpa"
