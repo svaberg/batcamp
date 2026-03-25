@@ -62,6 +62,8 @@
 - [x] Centralize `X [R]` / `Y [R]` / `Z [R]` names in `Octree` constants only and reference those constants everywhere else.
 - [x] Replace dynamic attribute probing in `Octree.cell_bounds/domain_bounds` with explicit subclass hooks.
 - [ ] Move `Octree.domain_bounds(...)` behind ray/camera-specific setup; it is only justified today by `batcamp/ray.py`, not by core octree lookup.
+- [ ] Revisit `Octree.face_neighbors(...)`; inside the library it is a ray-support API, not core octree lookup, so it may want to move behind ray-specific setup.
+- [ ] Remove `Octree.lookup_geometry()`; inside the library it is only a plumbing side-door for `batcamp/interpolator.py` and `batcamp/ray.py`, not a clean octree API.
 - [x] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
 - [x] Make coordinate conversion/interpolation APIs NumPy-first for bulk arrays; keep scalar conversion helpers private and limited to kernel internals.
 - [x] Rename `spherical.xyz_to_rpa_components` to private `_xyz_to_rpa_components` and keep it kernel-internal.
