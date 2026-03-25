@@ -8,9 +8,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .octree import GridShape
 from .octree import Octree
-from .octree import TreeCoord
+from .shared_types import GridShape
+from .shared_types import TreeCoord
 
 OCTREE_FILE_VERSION = 5
 

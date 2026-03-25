@@ -14,10 +14,10 @@ from batread import Dataset
 from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
-from .octree import TreeCoord
-from .octree import GridShape
-from .octree import LevelCountTable
 from .octree import Octree
+from .shared_types import GridShape
+from .shared_types import LevelCountTable
+from .shared_types import TreeCoord
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""

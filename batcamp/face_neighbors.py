@@ -9,9 +9,9 @@ from typing import NamedTuple
 from numba import njit
 import numpy as np
 
-from .octree import GridShape
 from .octree import Octree
-from .octree import TreeCoord
+from .shared_types import GridShape
+from .shared_types import TreeCoord
 
 FACE_COUNT = 6
 _NEG_POS = np.array([-1, 1], dtype=np.int64)
