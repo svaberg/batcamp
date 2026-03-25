@@ -4,6 +4,7 @@ from batread import Dataset
 
 from batcamp import Octree, OctreeBuilder, OctreeInterpolator
 from batcamp.builder import infer_tree_coord_from_geometry
+from octree_test_support import cell_bounds
 from sample_data_helper import data_file
 
 
@@ -27,7 +28,7 @@ _CASES = [
 def _midpoint_queries_xyz(tree: Octree, n_query: int) -> np.ndarray:
     queries = []
     for cid in range(min(int(n_query), int(tree.cell_count))):
-        lo, hi = tree.cell_bounds(cid, coord="xyz")
+        lo, hi = cell_bounds(tree, cid, coord="xyz")
         queries.append(0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float)))
     return np.asarray(queries, dtype=float)
 

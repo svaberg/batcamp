@@ -174,32 +174,6 @@ class _CartesianCoordSupport:
             node_axis2_width=self._node_z_max - self._node_z_min,
         )
 
-    def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-        cid = int(cell_id)
-        corners = self.ds.corners[cid]
-        x = self.ds[XYZ_VARS[0]][corners]
-        y = self.ds[XYZ_VARS[1]][corners]
-        z = self.ds[XYZ_VARS[2]][corners]
-        return np.array([np.min(x), np.min(y), np.min(z)], dtype=float), np.array(
-            [np.max(x), np.max(y), np.max(z)],
-            dtype=float,
-        )
-
-    def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-        cid = int(cell_id)
-        corners = self.ds.corners[cid]
-        x = self.ds[XYZ_VARS[0]][corners]
-        y = self.ds[XYZ_VARS[1]][corners]
-        z = self.ds[XYZ_VARS[2]][corners]
-        pts = np.column_stack((x, y, z))
-        r = np.linalg.norm(pts, axis=1)
-        theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
-        phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
-        return (
-            np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
-            np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
-        )
-
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
         return self._xyz_min, self._xyz_max
 

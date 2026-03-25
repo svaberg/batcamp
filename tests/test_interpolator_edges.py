@@ -14,6 +14,7 @@ from batcamp.spherical import _lookup_rpa_cell_id_kernel
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
+from octree_test_support import cell_bounds
 
 
 def _build_fake_dataset(
@@ -77,7 +78,7 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
 def _first_resolvable_rpa(tree: Octree) -> tuple[float, float, float]:
     """Private test helper: return one interior spherical point resolved by lookup."""
     for cid in range(int(tree.cell_count)):
-        lo, hi = tree.cell_bounds(int(cid), coord="rpa")
+        lo, hi = cell_bounds(tree, int(cid), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
         polar = 0.5 * (float(lo[1]) + float(hi[1]))
         width = float((hi[2] - lo[2]) % (2.0 * math.pi))
@@ -182,8 +183,8 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     tree._require_lookup()
     lookup_state = tree._coord_state
 
-    lo0, hi0 = tree.cell_bounds(0, coord="rpa")
-    lo1, hi1 = tree.cell_bounds(1, coord="rpa")
+    lo0, hi0 = cell_bounds(tree, 0, coord="rpa")
+    lo1, hi1 = cell_bounds(tree, 1, coord="rpa")
     q0 = np.array([
         0.5 * (float(lo0[0]) + float(hi0[0])),
         0.5 * (float(lo0[1]) + float(hi0[1])),

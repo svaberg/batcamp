@@ -5,6 +5,7 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
+from octree_test_support import cell_bounds
 
 
 @pytest.fixture(scope="module")
@@ -21,7 +22,7 @@ def _select_interior_queries(tree: Octree, *, n_query: int, seed: int) -> np.nda
     idx = rng.choice(n_cells, size=n, replace=False)
     queries = []
     for cid in idx.tolist():
-        lo, hi = tree.cell_bounds(int(cid), coord="xyz")
+        lo, hi = cell_bounds(tree, int(cid), coord="xyz")
         queries.append(0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float)))
     return np.asarray(queries, dtype=float)
 

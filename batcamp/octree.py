@@ -772,30 +772,6 @@ class Octree:
             cache[int(face_neighbors.max_level)] = face_neighbors
         return face_neighbors
 
-    def cell_bounds(
-        self,
-        cell_id: int,
-        *,
-        coord: TreeCoord = "xyz",
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return `(lo, hi)` bounds for one cell in requested coord."""
-        self._require_lookup()
-        cid = int(cell_id)
-        n_cells = int(self.cell_levels.shape[0])
-        if cid < 0 or cid >= n_cells:
-            raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-
-        resolved_coord = str(coord)
-        if resolved_coord not in SUPPORTED_TREE_COORDS:
-            raise ValueError(
-                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-            )
-
-        backend = self._coord_support(str(self.tree_coord))
-        if resolved_coord == "xyz":
-            return backend._cell_bounds_xyz(self, cid)
-        return backend._cell_bounds_rpa(self, cid)
-
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
         """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
         self._require_lookup()
