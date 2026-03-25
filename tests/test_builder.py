@@ -350,7 +350,7 @@ def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
 def test_xyz_lookup_reports_exact_adaptive_paths() -> None:
     """Adaptive Cartesian lookup should report exact discrete addresses and root-leaf paths."""
     ds, levels = _build_adaptive_xyz_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=levels, bind=True)
+    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=levels)
 
     coarse_hit = tree.lookup_point(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")
     assert coarse_hit is not None
@@ -452,7 +452,7 @@ def test_build_tree_rejects_all_invalid_levels() -> None:
     delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
     all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        builder._build(ds, tree_coord="rpa", cell_levels=all_invalid, bind=False)
+        builder._build(ds, tree_coord="rpa", cell_levels=all_invalid)
 
 
 def test_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogCaptureFixture) -> None:
@@ -569,9 +569,9 @@ def test_regular_spherical_tree_uses_absolute_levels() -> None:
     assert np.all(tree.cell_levels == tree.max_level)
 
 
-def test_build_materializes_exact_tree_state_before_lookup() -> None:
-    """Builder should attach exact tree indices before lookup is ever built."""
-    xyz_tree = OctreeBuilder()._build(_build_regular_xyz_dataset(), tree_coord="xyz", bind=False)
+def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
+    """Builder should attach exact tree indices on the ready bound tree."""
+    xyz_tree = OctreeBuilder()._build(_build_regular_xyz_dataset(), tree_coord="xyz")
     assert xyz_tree.cell_levels is not None
     assert np.asarray(xyz_tree._i0, dtype=np.int64).shape == xyz_tree.cell_levels.shape
     assert np.asarray(xyz_tree._node_depth, dtype=np.int64).ndim == 1
@@ -579,13 +579,13 @@ def test_build_materializes_exact_tree_state_before_lookup() -> None:
     assert np.asarray(xyz_tree._root_node_ids, dtype=np.int64).ndim == 1
     assert not hasattr(xyz_tree, "_radial_edges")
 
-    rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa", bind=False)
+    rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa")
     assert rpa_tree.cell_levels is not None
     assert np.asarray(rpa_tree._i0, dtype=np.int64).shape == rpa_tree.cell_levels.shape
     assert np.asarray(rpa_tree._node_depth, dtype=np.int64).ndim == 1
     assert np.asarray(rpa_tree._node_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(rpa_tree._root_node_ids, dtype=np.int64).ndim == 1
-    assert not hasattr(rpa_tree, "_radial_edges")
+    assert hasattr(rpa_tree, "_radial_edges")
 
 
 def test_regular_spherical_lookup_materializes_exact_indices() -> None:
@@ -610,14 +610,13 @@ def test_spherical_lookup_rejects_non_exact_geometry() -> None:
             _build_irregular_spherical_dataset(),
             tree_coord="rpa",
             cell_levels=cell_levels,
-            bind=True,
         )
 
 
 def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
     ds, cell_levels = _build_adaptive_xyz_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=cell_levels, bind=False)
+    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=cell_levels)
     assert tree.max_level == tree.depth == 1
     assert tree.min_level == 0
     assert tree.cell_levels is not None
@@ -838,26 +837,23 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
         )
 
 
-def test_build_bind_false_returns_unbound_until_bind() -> None:
-    """Builder with `bind=False` should return unbound tree requiring explicit bind."""
+def test_build_returns_bound_tree() -> None:
+    """Builder should return a tree already bound to the dataset."""
     ds = _build_regular_dataset()
     _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
     tree = OctreeBuilder()._build(
         ds,
         tree_coord="rpa",
         cell_levels=cell_levels,
-        bind=False,
     )
-    with pytest.raises(ValueError, match="not bound to a dataset"):
-        tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
-    tree._bind(ds)
     assert tree.ds is ds
+    assert tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz") is not None
 
 
-def test_build_bind_false_stores_tree_coord() -> None:
+def test_build_stores_tree_coord() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="xyz", bind=False)
+    tree = OctreeBuilder()._build(ds, tree_coord="xyz")
     assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
@@ -873,7 +869,6 @@ def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
             ds,
             tree_coord="rpa",
             cell_levels=None,
-            bind=False,
         )
 
 

@@ -619,7 +619,7 @@ class Octree:
         cell_i0: np.ndarray,
         cell_i1: np.ndarray,
         cell_i2: np.ndarray,
-        ds: Dataset | None = None,
+        ds: Dataset,
     ) -> None:
         """Build one octree directly from exact leaf addresses."""
         resolved_tree_coord = str(tree_coord)
@@ -630,7 +630,6 @@ class Octree:
         self.root_shape = tuple(int(v) for v in root_shape)
         self.tree_coord = resolved_tree_coord
         self.cell_levels = np.asarray(cell_levels, dtype=np.int64)
-        self.ds = None
 
         self.leaf_shape, self.is_full, self.level_counts, self.min_level, self.max_level = _level_metadata_from_leaves(
             self.root_shape,
@@ -656,8 +655,7 @@ class Octree:
             self._i2,
             max_level=self.max_level,
         )
-        if ds is not None:
-            self._bind(ds)
+        self._bind(ds)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -701,12 +699,9 @@ class Octree:
         cls,
         state: "OctreeState",
         *,
-        ds: Dataset | None = None,
-        bind: bool = True,
+        ds: Dataset,
     ) -> "Octree":
         """Instantiate one tree from exact saved state."""
-        if bind and ds is None:
-            raise ValueError("Octree.from_state requires ds when bind=True.")
         if str(state.tree_coord) not in SUPPORTED_TREE_COORDS:
             raise ValueError(
                 f"Unsupported tree_coord '{state.tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
@@ -718,7 +713,7 @@ class Octree:
             cell_i0=state.cell_i0,
             cell_i1=state.cell_i1,
             cell_i2=state.cell_i2,
-            ds=ds if bind else None,
+            ds=ds,
         )
 
     @classmethod
@@ -733,7 +728,7 @@ class Octree:
 
         in_path = Path(path)
         state = OctreeState.load_npz(in_path)
-        tree = cls.from_state(state, ds=ds, bind=True)
+        tree = cls.from_state(state, ds=ds)
         logger.info("Loaded octree from %s", str(in_path))
         return tree
 
@@ -808,8 +803,6 @@ class Octree:
 
     def lookup_geometry(self) -> BoundGeometryState:
         """Return bound dataset arrays plus packed coordinate geometry."""
-        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
-            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         return BoundGeometryState(
             points=np.column_stack(
                 (
@@ -841,10 +834,6 @@ class Octree:
             raise ValueError(
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
-        if not hasattr(self, "_coord_state"):
-            raise ValueError("Octree lookup requires ready coordinate geometry.")
         if str(self.tree_coord) == "xyz":
             if resolved_coord != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -861,8 +850,6 @@ class Octree:
         self,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Return per-cell axis starts and widths for the bound coordinate geometry."""
-        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
-            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         return (
             self._coord_state.cell_axis0_start,
             self._coord_state.cell_axis0_width,
@@ -946,8 +933,6 @@ class Octree:
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
         """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
-        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
-            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
@@ -978,8 +963,6 @@ class Octree:
         tol: float = 1e-10,
     ) -> bool:
         """Return whether one point lies inside one cell."""
-        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
-            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         q = np.array(point, dtype=float).reshape(3)
         backend = self._coord_support(str(self.tree_coord))
         if str(self.tree_coord) == "xyz":

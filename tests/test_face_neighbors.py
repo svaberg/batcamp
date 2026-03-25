@@ -88,6 +88,37 @@ def _build_two_level_topology_tree() -> Octree:
             np.array([idx[2] for idx in fine], dtype=np.int64),
         )
     )
+    n_cells = int(levels.shape[0])
+    cell_points: list[np.ndarray] = []
+    cell_corners = np.empty((n_cells, 8), dtype=np.int64)
+    for cell_id in range(n_cells):
+        x0 = 2.0 * float(cell_id)
+        pts = np.array(
+            [
+                [x0 + 0.0, 0.0, 0.0],
+                [x0 + 1.0, 0.0, 0.0],
+                [x0 + 0.0, 1.0, 0.0],
+                [x0 + 1.0, 1.0, 0.0],
+                [x0 + 0.0, 0.0, 1.0],
+                [x0 + 1.0, 0.0, 1.0],
+                [x0 + 0.0, 1.0, 1.0],
+                [x0 + 1.0, 1.0, 1.0],
+            ],
+            dtype=float,
+        )
+        start = 8 * cell_id
+        cell_points.append(pts)
+        cell_corners[cell_id] = np.arange(start, start + 8, dtype=np.int64)
+    points = np.vstack(cell_points)
+    ds = _FakeDataset(
+        points=points,
+        corners=cell_corners,
+        variables={
+            XYZ_VARS[0]: points[:, 0],
+            XYZ_VARS[1]: points[:, 1],
+            XYZ_VARS[2]: points[:, 2],
+        },
+    )
 
     tree = Octree(
         root_shape=(2, 2, 2),
@@ -96,6 +127,7 @@ def _build_two_level_topology_tree() -> Octree:
         cell_i0=i0,
         cell_i1=i1,
         cell_i2=i2,
+        ds=ds,
     )
     return tree
 

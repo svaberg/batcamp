@@ -250,7 +250,6 @@ class OctreeBuilder:
             tree_coord=resolved_tree_coord,
             axis_rho_tol=axis_rho_tol,
             cell_levels=None,
-            bind=True,
         )
 
     def _build(
@@ -260,9 +259,8 @@ class OctreeBuilder:
         tree_coord: TreeCoord = DEFAULT_TREE_COORD,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
         cell_levels: np.ndarray | None = None,
-        bind: bool = True,
     ) -> Octree:
-        """Internal build path with optional level and bind overrides."""
+        """Internal build path with optional exact cell-level override."""
         from .persistence import OctreeState
 
         if tree_coord not in SUPPORTED_TREE_COORDS:
@@ -322,6 +320,5 @@ class OctreeBuilder:
         )
         return Octree.from_state(
             state,
-            ds=ds if bind else None,
-            bind=bind,
+            ds=ds,
         )

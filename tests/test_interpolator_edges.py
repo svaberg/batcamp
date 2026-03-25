@@ -96,13 +96,6 @@ def test_constructor_rejects_query_coord_kw() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'query_coord'"):
         OctreeInterpolator(tree, ["Scalar"], query_coord="bad")
 
-def test_constructor_rejects_unbound_tree() -> None:
-    """Constructor should fail when the tree is not bound to a dataset."""
-    ds = _build_fake_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="rpa", bind=False)
-    with pytest.raises(ValueError, match="Octree is not bound"):
-        OctreeInterpolator(tree, ["Scalar"])
-
 def test_constructor_rejects_non_list_values() -> None:
     """Constructor should enforce tree-first values contracts."""
     ds = _build_fake_dataset()
@@ -286,9 +279,7 @@ def test_invalid_level_cells_treated_as_misses() -> None:
         ds,
         tree_coord="xyz",
         cell_levels=levels,
-        bind=False,
     )
-    tree._bind(ds)
 
     q_invalid = np.array([0.5, 0.0, 0.25], dtype=float)
     q_valid = np.array([1.5, 0.0, 0.25], dtype=float)
