@@ -14,7 +14,6 @@ from .constants import XYZ_VARS
 from .octree import _coord_state_inputs
 from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
-from .octree import _lookup_cell_id_kernel
 
 _LOOKUP_CONTAIN_TOL = 1e-10
 
@@ -141,17 +140,5 @@ class _CartesianCoordSupport:
                 float(z),
                 self._coord_state,
                 float(tol),
-            )
-        )
-
-    def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
-        """Return the containing cell id for `(x, y, z)`, or `-1`."""
-        return int(
-            _lookup_cell_id_kernel(
-                float(x),
-                float(y),
-                float(z),
-                self._coord_state,
-                -1,
             )
         )

@@ -14,10 +14,8 @@ from numba import prange
 import numpy as np
 
 from .constants import XYZ_VARS
-from .octree import _lookup_cell_id_kernel
-from .octree import LookupKernelState
 from .octree import Octree
-from .spherical import _xyz_to_rpa_components
+from .octree import _xyz_to_rpa_components
 
 logger = logging.getLogger(__name__)
 
@@ -186,140 +184,85 @@ def _trilinear_from_cell(
 
 
 @njit(cache=True, parallel=True)
-def _interp_batch_xyz(
+def _interp_from_cell_ids_xyz_rpa(
     queries_xyz: np.ndarray,
+    cell_ids: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
-    lookup_state: LookupKernelState,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate a batch of Cartesian queries and return values plus cell ids."""
+    ) -> np.ndarray:
+    """Evaluate spherical-tree interpolation for Cartesian queries with known cell ids."""
     n_query = queries_xyz.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
-    cell_ids = np.full(n_query, -1, dtype=np.int64)
-    chunk_size = int(_DEFAULT_SEED_CHUNK_SIZE)
-    n_chunks = (n_query + chunk_size - 1) // chunk_size
-    for chunk_id in prange(n_chunks):
-        start = chunk_id * chunk_size
-        end = min(n_query, start + chunk_size)
-        hint_cid = -1
-        for i in range(start, end):
-            out[i, :] = fill_values
-
-            x = queries_xyz[i, 0]
-            y = queries_xyz[i, 1]
-            z = queries_xyz[i, 2]
-            r = math.sqrt(x * x + y * y + z * z)
-            if r == 0.0:
-                polar = 0.0
-            else:
-                zr = z / r
-                if zr < -1.0:
-                    zr = -1.0
-                elif zr > 1.0:
-                    zr = 1.0
-                polar = math.acos(zr)
-            azimuth = math.atan2(y, x) % _TWO_PI
-            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
-            if cid < 0:
-                hint_cid = -1
-                continue
-            cell_ids[i] = cid
-            hint_cid = int(cid)
-            _trilinear_from_cell_rpa(
-                out[i],
-                cid,
-                r,
-                polar,
-                azimuth,
-                interp_state,
-            )
-    return out, cell_ids
+    for i in prange(n_query):
+        out[i, :] = fill_values
+        cid = int(cell_ids[i])
+        if cid < 0:
+            continue
+        r, polar, azimuth = _xyz_to_rpa_components(
+            queries_xyz[i, 0],
+            queries_xyz[i, 1],
+            queries_xyz[i, 2],
+        )
+        _trilinear_from_cell_rpa(out[i], cid, r, polar, azimuth, interp_state)
+    return out
 
 
 @njit(cache=True, parallel=True)
-def _interp_batch_rpa(
+def _interp_from_cell_ids_rpa(
     queries_rpa: np.ndarray,
+    cell_ids: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
-    lookup_state: LookupKernelState,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate a batch of spherical queries and return values plus cell ids."""
+    ) -> np.ndarray:
+    """Evaluate spherical-tree interpolation for spherical queries with known cell ids."""
     n_query = queries_rpa.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
-    cell_ids = np.full(n_query, -1, dtype=np.int64)
-    chunk_size = int(_DEFAULT_SEED_CHUNK_SIZE)
-    n_chunks = (n_query + chunk_size - 1) // chunk_size
-    for chunk_id in prange(n_chunks):
-        start = chunk_id * chunk_size
-        end = min(n_query, start + chunk_size)
-        hint_cid = -1
-        for i in range(start, end):
-            out[i, :] = fill_values
-
-            r = queries_rpa[i, 0]
-            polar = queries_rpa[i, 1]
-            azimuth = queries_rpa[i, 2] % _TWO_PI
-            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
-            if cid < 0:
-                hint_cid = -1
-                continue
-            cell_ids[i] = cid
-            hint_cid = int(cid)
-            _trilinear_from_cell_rpa(
-                out[i],
-                cid,
-                r,
-                polar,
-                azimuth,
-                interp_state,
-            )
-    return out, cell_ids
+    for i in prange(n_query):
+        out[i, :] = fill_values
+        cid = int(cell_ids[i])
+        if cid < 0:
+            continue
+        _trilinear_from_cell_rpa(
+            out[i],
+            cid,
+            queries_rpa[i, 0],
+            queries_rpa[i, 1],
+            queries_rpa[i, 2] % _TWO_PI,
+            interp_state,
+        )
+    return out
 
 
 @njit(cache=True, parallel=True)
-def _interp_batch_xyz_cartesian(
+def _interp_from_cell_ids_xyz_cartesian(
     queries_xyz: np.ndarray,
+    cell_ids: np.ndarray,
     fill_values: np.ndarray,
     interp_state: CartesianInterpKernelState,
-    lookup_state: LookupKernelState,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate Cartesian queries for Cartesian trees via compiled kernels.
+    ) -> np.ndarray:
+    """Evaluate Cartesian-tree interpolation for Cartesian queries with known cell ids.
 
     Assumes the Cartesian backend cell model (axis-aligned per-cell bounds).
     """
     n_query = queries_xyz.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
-    cell_ids = np.full(n_query, -1, dtype=np.int64)
-    chunk_size = int(_DEFAULT_SEED_CHUNK_SIZE)
-    n_chunks = (n_query + chunk_size - 1) // chunk_size
-    for chunk_id in prange(n_chunks):
-        start = chunk_id * chunk_size
-        end = min(n_query, start + chunk_size)
-        hint_cid = -1
-        for i in range(start, end):
-            out[i, :] = fill_values
-
-            x = queries_xyz[i, 0]
-            y = queries_xyz[i, 1]
-            z = queries_xyz[i, 2]
-            cid = _lookup_cell_id_kernel(x, y, z, lookup_state, hint_cid)
-            if cid < 0:
-                hint_cid = -1
-                continue
-            cell_ids[i] = cid
-            hint_cid = int(cid)
-            _trilinear_from_cell(
-                out[i],
-                cid,
-                x,
-                y,
-                z,
-                interp_state,
-            )
-    return out, cell_ids
+    for i in prange(n_query):
+        out[i, :] = fill_values
+        cid = int(cell_ids[i])
+        if cid < 0:
+            continue
+        _trilinear_from_cell(
+            out[i],
+            cid,
+            queries_xyz[i, 0],
+            queries_xyz[i, 1],
+            queries_xyz[i, 2],
+            interp_state,
+        )
+    return out
 
 class OctreeInterpolator:
     """LinearNDInterpolator-like callable built on octree leaf lookup.
@@ -357,7 +300,6 @@ class OctreeInterpolator:
         self._ds = tree.ds
         self._corners = self._ds.corners
         self._points = np.column_stack(tuple(self._ds[name] for name in XYZ_VARS))
-        self._lookup_state = self.tree._coord_state
         self.fill_value = fill_value
 
         logger.debug(
@@ -463,7 +405,7 @@ class OctreeInterpolator:
         vr = self._node_r[corners]
         vt = self._node_theta[corners]
         vp = self._node_phi[corners]
-        lookup_state = self._lookup_state
+        lookup_state = self.tree._coord_state
         self._cell_r0 = lookup_state.cell_axis0_start
         self._cell_r1 = lookup_state.cell_axis0_start + lookup_state.cell_axis0_width
         self._cell_t0 = lookup_state.cell_axis1_start
@@ -521,7 +463,7 @@ class OctreeInterpolator:
         """
         corners = self._corners
         pts = self._points
-        lookup_state = self._lookup_state
+        lookup_state = self.tree._coord_state
         vx = pts[corners, 0]
         vy = pts[corners, 1]
         vz = pts[corners, 2]
@@ -586,7 +528,6 @@ class OctreeInterpolator:
                 cell_phi_full=self._cell_phi_full,
                 cell_phi_tiny=self._cell_phi_tiny,
             )
-            self._lookup_state_rpa = self._lookup_state
             return
         if self._tree_coord == "xyz":
             self._interp_state_xyz = CartesianInterpKernelState(
@@ -600,7 +541,6 @@ class OctreeInterpolator:
                 cell_z0=self._cell_z0,
                 cell_zden=self._cell_zden,
             )
-            self._lookup_state_xyz = self._lookup_state
             return
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel cache setup.")
 
@@ -628,25 +568,28 @@ class OctreeInterpolator:
         if self._tree_coord == "rpa":
             r, polar, azimuth = _xyz_to_rpa_components(float(q_xyz[0, 0]), float(q_xyz[0, 1]), float(q_xyz[0, 2]))
             q_rpa = np.array([[r, polar, azimuth]], dtype=np.float64, order="C")
-            _interp_batch_xyz(
+            cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
+            cell_ids_rpa = self.tree.lookup_points(q_rpa, coord="rpa").reshape(-1)
+            _interp_from_cell_ids_xyz_rpa(
                 q_xyz,
+                cell_ids_xyz,
                 fill,
                 self._interp_state_rpa,
-                self._lookup_state_rpa,
             )
-            _interp_batch_rpa(
+            _interp_from_cell_ids_rpa(
                 q_rpa,
+                cell_ids_rpa,
                 fill,
                 self._interp_state_rpa,
-                self._lookup_state_rpa,
             )
             return
         if self._tree_coord == "xyz":
-            _interp_batch_xyz_cartesian(
+            cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
+            _interp_from_cell_ids_xyz_cartesian(
                 q_xyz,
+                cell_ids_xyz,
                 fill,
                 self._interp_state_xyz,
-                self._lookup_state_xyz,
             )
             return
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel warmup.")
@@ -728,23 +671,22 @@ class OctreeInterpolator:
         t_after_fill = perf_counter() if debug_timing else 0.0
 
         if self._tree_coord == "rpa":
-            batch_kernel = _interp_batch_xyz if qs == "xyz" else _interp_batch_rpa
+            cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-rpa")
-            out2d, cell_ids = batch_kernel(
-                q_array,
-                fill,
-                self._interp_state_rpa,
-                self._lookup_state_rpa,
-            )
+            if qs == "xyz":
+                out2d = _interp_from_cell_ids_xyz_rpa(q_array, cell_ids, fill, self._interp_state_rpa)
+            else:
+                out2d = _interp_from_cell_ids_rpa(q_array, cell_ids, fill, self._interp_state_rpa)
         else:
+            cell_ids = self.tree.lookup_points(q_array, coord="xyz").reshape(-1)
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-xyz")
-            out2d, cell_ids = _interp_batch_xyz_cartesian(
+            out2d = _interp_from_cell_ids_xyz_cartesian(
                 q_array,
+                cell_ids,
                 fill,
                 self._interp_state_xyz,
-                self._lookup_state_xyz,
             )
         t_after_kernel = perf_counter() if debug_timing else 0.0
 
