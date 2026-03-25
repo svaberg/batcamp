@@ -381,7 +381,13 @@ class OctreeInterpolator:
         self.value_names: tuple[str, ...] = ()
         self._point_values = self._coerce_point_values(values)
         self._tree_coord = str(self.tree.tree_coord)
-        self._configure_backend()
+        if self._tree_coord == "rpa":
+            self._prepare_spherical_points()
+            self._prepare_trilinear_cache()
+        elif self._tree_coord == "xyz":
+            self._prepare_trilinear_cache_xyz()
+        else:
+            raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
         self.prepare_kernel_cache()
         self.warmup_kernels()
         logger.info(
@@ -390,17 +396,6 @@ class OctreeInterpolator:
             int(self.tree.max_level),
             tuple(self.tree.leaf_shape),
         )
-
-    def _configure_backend(self) -> None:
-        """Select backend-specific helpers and precompute per-cell arrays."""
-        if self._tree_coord == "rpa":
-            self._prepare_spherical_points()
-            self._prepare_trilinear_cache()
-            return
-        if self._tree_coord == "xyz":
-            self._prepare_trilinear_cache_xyz()
-            return
-        raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
 
     def _coerce_point_values(self, values: list[str] | np.ndarray | None) -> np.ndarray:
         """Resolve requested fields into an array indexed by dataset points."""
@@ -680,15 +675,6 @@ class OctreeInterpolator:
             return
         raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel warmup.")
 
-    def _validate_query_coord(self, qs: str) -> None:
-        """Validate query coordinate mode against this interpolator backend."""
-        if qs not in {"xyz", "rpa"}:
-            logger.error("Invalid query_coord=%s in call", qs)
-            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
-        if self._tree_coord == "xyz" and qs == "rpa":
-            logger.error("query_coord='rpa' is not supported for Cartesian trees.")
-            raise ValueError("query_coord='rpa' is only supported for tree_coord='rpa'.")
-
     @staticmethod
     def prepare_queries(*args) -> tuple[np.ndarray, tuple[int, ...]]:
         """Normalize query inputs to `(N, 3)` plus broadcast output shape.
@@ -745,7 +731,12 @@ class OctreeInterpolator:
         If `return_cell_ids=True`, also returns the resolved cell ids.
         """
         qs = str(query_coord)
-        self._validate_query_coord(qs)
+        if qs not in {"xyz", "rpa"}:
+            logger.error("Invalid query_coord=%s in call", qs)
+            raise ValueError("query_coord must be 'xyz' or 'rpa'.")
+        if self._tree_coord == "xyz" and qs == "rpa":
+            logger.error("query_coord='rpa' is not supported for Cartesian trees.")
+            raise ValueError("query_coord='rpa' is only supported for tree_coord='rpa'.")
 
         debug_timing = logger.isEnabledFor(logging.DEBUG)
         t0_total = perf_counter() if debug_timing else 0.0
