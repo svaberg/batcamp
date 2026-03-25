@@ -250,27 +250,6 @@ class _SphericalCellLookup:
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([self._r_min, 0.0, 0.0], dtype=float), np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
 
-    def _contains_rpa(
-        self,
-        cids: np.ndarray,
-        r: float,
-        polar: float,
-        azimuth: float,
-    ) -> np.ndarray:
-        """Return a boolean mask for which candidate cells contain the point."""
-        tol = 1e-10
-        if cids.size == 0:
-            return np.array([], dtype=np.bool_)
-        ok_r = (r >= (self._cell_r_min[cids] - tol)) & (r <= (self._cell_r_max[cids] + tol))
-        ok_t = (polar >= (self._cell_theta_min[cids] - tol)) & (
-            polar <= (self._cell_theta_max[cids] + tol)
-        )
-        starts = self._cell_phi_start[cids]
-        widths = self._cell_phi_width[cids]
-        dphi = np.mod(azimuth - starts, 2.0 * math.pi)
-        ok_p = (widths >= (2.0 * math.pi - tol)) | (dphi <= (widths + tol))
-        return ok_r & ok_t & ok_p
-
     def lookup_cell_id(
         self,
         point: np.ndarray,
@@ -350,15 +329,6 @@ class _SphericalCellLookup:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
         return _SphericalCellLookup._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
-
-    def cell_step_hint(self, cell_id: int) -> float:
-        """Return an initial step-size hint for Python ray tracing."""
-        cid = int(cell_id)
-        r_span = float(self._cell_r_max[cid] - self._cell_r_min[cid])
-        theta_span = float(self._cell_theta_max[cid] - self._cell_theta_min[cid])
-        phi_span = float(min(self._cell_phi_width[cid], 2.0 * math.pi))
-        length_scale = max(float(self._cell_r_max[cid]), 1.0)
-        return float(max(r_span, length_scale * theta_span, length_scale * phi_span, 1e-6))
 
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""

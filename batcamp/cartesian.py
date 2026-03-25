@@ -298,14 +298,6 @@ class _CartesianCellLookup:
             )
         )
 
-    def cell_step_hint(self, cell_id: int) -> float:
-        """Return an initial step size hint for Python ray tracing."""
-        cid = int(cell_id)
-        dx = float(self._cell_x_max[cid] - self._cell_x_min[cid])
-        dy = float(self._cell_y_max[cid] - self._cell_y_min[cid])
-        dz = float(self._cell_z_max[cid] - self._cell_z_min[cid])
-        return float(max(dx, dy, dz, 1e-6))
-
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
         return int(
