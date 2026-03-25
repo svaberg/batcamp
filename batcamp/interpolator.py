@@ -369,7 +369,7 @@ class OctreeInterpolator:
         self._ds = tree.ds
         self._corners = lookup_geometry.corners
         self._points = lookup_geometry.points
-        self._lookup_state = lookup_geometry.lookup_state
+        self._lookup_state = lookup_geometry.coord_state
         self.fill_value = fill_value
 
         logger.debug(

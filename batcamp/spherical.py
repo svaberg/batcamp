@@ -77,8 +77,8 @@ def _lookup_rpa_cell_id_kernel(
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
 
-    def _init_lookup_state(self) -> None:
-        """Rebuild spherical lookup geometry from exact leaf addresses."""
+    def _bind_geometry(self) -> None:
+        """Attach spherical bound geometry derived from exact leaf addresses."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
@@ -166,7 +166,7 @@ class _SphericalCoordSupport:
         self._node_theta_max = node_t1_f * d_theta_f
         self._node_phi_start = np.mod(node_p0_f * d_phi_f, 2.0 * math.pi)
         self._node_phi_width = node_width * d_phi_f
-        self._lookup_state = LookupKernelState(
+        self._coord_state = LookupKernelState(
             cell_axis0_start=self._cell_r_min,
             cell_axis0_width=self._cell_r_max - self._cell_r_min,
             cell_axis1_start=self._cell_theta_min,
@@ -245,7 +245,7 @@ class _SphericalCoordSupport:
                 float(r),
                 float(polar),
                 float(azimuth),
-                self._lookup_state,
+                self._coord_state,
             )
         )
 
@@ -257,7 +257,7 @@ class _SphericalCoordSupport:
                 float(r),
                 float(polar),
                 float(azimuth) % _TWO_PI,
-                self._lookup_state,
+                self._coord_state,
                 float(tol),
             )
         )

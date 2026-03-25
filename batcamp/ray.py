@@ -490,7 +490,7 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     corners = lookup_geometry.corners
     points = lookup_geometry.points
     centers = np.mean(points[corners], axis=1)
-    lookup_state = lookup_geometry.lookup_state
+    lookup_state = lookup_geometry.coord_state
     n_cells = int(corners.shape[0])
 
     face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
@@ -627,7 +627,7 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
         cell_yden[node_id] = dy
         cell_zden[node_id] = dz
 
-    seed_lookup = lookup_geometry.lookup_state
+    seed_lookup = lookup_geometry.coord_state
     lookup_state = LookupKernelState(
         cell_axis0_start=cell_x0,
         cell_axis0_width=cell_xden,
@@ -2213,7 +2213,7 @@ class OctreeRayTracer:
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
         _r_lo, r_hi = tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
-        self._seed_lookup_state = lookup_geometry.lookup_state
+        self._seed_lookup_state = lookup_geometry.coord_state
         self._seed_cell_plane_state = None
 
         if int(self.max_level) >= int(tree.max_level):
@@ -2248,7 +2248,7 @@ class OctreeRayTracer:
                     "Cartesian ray tracing requires CartesianRayCellGeometry; "
                     f"got {type(geometry).__name__}."
                 )
-            self._cell_lookup_state = geometry.lookup_state
+            self._cell_lookup_state = geometry.coord_state
             self._cell_plane_state = None
         elif self._tree_coord == "rpa":
             if not isinstance(geometry, SphericalRayCellGeometry):

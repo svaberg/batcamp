@@ -43,12 +43,12 @@ if TYPE_CHECKING:
     from .face_neighbors import OctreeFaceNeighbors
 
 
-class LookupGeometryState(NamedTuple):
-    """Bound dataset arrays and packed lookup state owned by one octree."""
+class BoundGeometryState(NamedTuple):
+    """Bound dataset arrays and packed coordinate geometry owned by one octree."""
 
     points: np.ndarray
     corners: np.ndarray
-    lookup_state: "LookupKernelState"
+    coord_state: "LookupKernelState"
 
 
 class LookupKernelState(NamedTuple):
@@ -556,7 +556,7 @@ class Octree:
         if not set(XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         self.ds = ds
-        self._coord_support(str(self.tree_coord))._init_lookup_state(self)
+        self._coord_support(str(self.tree_coord))._bind_geometry(self)
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -639,11 +639,11 @@ class Octree:
         )
 
     def _require_lookup(self) -> "Octree":
-        """Require one bound octree with ready lookup state, then return `self`."""
+        """Require one bound octree with ready coordinate geometry, then return `self`."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
-        if not hasattr(self, "_lookup_state"):
-            raise ValueError("Octree lookup state is not initialized. Bind it to a dataset first.")
+        if not hasattr(self, "_coord_state"):
+            raise ValueError("Octree bound geometry is not initialized. Bind it to a dataset first.")
         return self
 
     @staticmethod
@@ -685,16 +685,16 @@ class Octree:
         """Return number of leaf cells in the exact tree state."""
         return int(self.cell_levels.shape[0])
 
-    def lookup_geometry(self) -> LookupGeometryState:
-        """Return bound dataset arrays plus packed lookup state."""
+    def lookup_geometry(self) -> BoundGeometryState:
+        """Return bound dataset arrays plus packed coordinate geometry."""
         self._require_lookup()
-        required = ("_lookup_state",)
+        required = ("_coord_state",)
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Octree lookup geometry is incomplete: missing {missing}.")
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
-        return LookupGeometryState(
+        return BoundGeometryState(
             points=np.column_stack(
                 (
                     np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64),
@@ -703,7 +703,7 @@ class Octree:
                 )
             ),
             corners=np.asarray(self.ds.corners, dtype=np.int64),
-            lookup_state=self._lookup_state,
+            coord_state=self._coord_state,
         )
 
     def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:
