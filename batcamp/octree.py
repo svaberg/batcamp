@@ -18,7 +18,6 @@ from batread.dataset import Dataset
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 DEFAULT_AXIS_RHO_TOL = 1e-12
-OCTREE_FILE_VERSION = 5
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
 

@@ -12,9 +12,9 @@ from .builder import valid_cell_fraction
 from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import DEFAULT_MIN_VALID_CELL_FRACTION
 from .octree import DEFAULT_TREE_COORD
-from .octree import OCTREE_FILE_VERSION
 from .octree import LookupHit
 from .octree import Octree
+from .persistence import OCTREE_FILE_VERSION
 
 __all__ = [
     "OctreeBuilder",
