@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeBuilder
@@ -265,20 +267,14 @@ def _make_cartesian_tree(
     root_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray | None,
-) -> Octree:
+) -> SimpleNamespace:
     levels = None if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
-    valid = np.empty((0,), dtype=np.int64) if levels is None else levels[levels >= 0]
-    min_level = int(np.min(valid)) if valid.size > 0 else 0
-    count = int(valid.size)
-    return Octree(
+    return SimpleNamespace(
         leaf_shape=leaf_shape,
         root_shape=root_shape,
-        is_full=False,
-        level_counts=((min_level, count, count),),
-        min_level=min_level,
         max_level=int(max_level),
-        tree_coord="xyz",
         cell_levels=levels,
+        axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
     )
 
 
@@ -288,20 +284,14 @@ def _make_spherical_tree(
     root_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray | None,
-) -> Octree:
+) -> SimpleNamespace:
     levels = None if cell_levels is None else np.asarray(cell_levels, dtype=np.int64)
-    valid = np.empty((0,), dtype=np.int64) if levels is None else levels[levels >= 0]
-    min_level = int(np.min(valid)) if valid.size > 0 else 0
-    count = int(valid.size)
-    return Octree(
+    return SimpleNamespace(
         leaf_shape=leaf_shape,
         root_shape=root_shape,
-        is_full=False,
-        level_counts=((min_level, count, count),),
-        min_level=min_level,
         max_level=int(max_level),
-        tree_coord="rpa",
         cell_levels=levels,
+        axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
     )
 
 
