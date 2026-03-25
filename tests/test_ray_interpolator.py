@@ -217,11 +217,8 @@ def test_cartesian_outside_inward_traces_and_integrates() -> None:
 
     origins = origin.reshape(1, 3)
     exact = np.asarray(ray.integrate_field_along_rays(origins, direction, t0, t1), dtype=float)
-    midpoint = np.asarray(ray.integrate_field_along_rays_midpoint(origins, direction, t0, t1), dtype=float)
     assert np.all(np.isfinite(exact))
-    assert np.all(np.isfinite(midpoint))
     assert float(exact[0]) > 0.0
-    assert float(midpoint[0]) > 0.0
 
 
 def test_spherical_outside_inward_traces_and_integrates() -> None:
@@ -249,58 +246,6 @@ def test_spherical_outside_inward_traces_and_integrates() -> None:
     v = np.asarray(vals, dtype=float).reshape(-1)
     assert np.any(cids >= 0)
     assert np.any(np.isfinite(v[cids >= 0]))
-
-
-def test_adaptive_midpoint_offsets_consistent() -> None:
-    """Adaptive midpoint packing should return monotone offsets and matching lengths."""
-    ds = _build_fake_cartesian_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(tree, ["Scalar"])
-    ray = OctreeRayInterpolator(interp)
-
-    origins = np.array(
-        [[0.0, -0.2, 0.1], [0.0, 0.0, 0.2], [0.0, 0.2, 0.3]],
-        dtype=float,
-    )
-    mids, weights, offsets = ray.adaptive_midpoint_rule(
-        origins,
-        np.array([1.0, 0.1, -0.05], dtype=float),
-        0.0,
-        2.0,
-        chunk_size=2,
-    )
-
-    assert mids.ndim == 2 and mids.shape[1] == 3
-    assert weights.ndim == 1
-    assert mids.shape[0] == weights.shape[0]
-    assert offsets.shape == (origins.shape[0] + 1,)
-    assert int(offsets[0]) == 0
-    assert int(offsets[-1]) == int(weights.shape[0])
-    assert np.all(np.diff(offsets) >= 0)
-    assert np.all(weights >= 0.0)
-
-
-def test_midpoint_matches_exact_for_linear_field() -> None:
-    """Midpoint quadrature should match exact integral for globally linear fields."""
-    ds = _build_fake_cartesian_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    interp = OctreeInterpolator(tree, ["Scalar"])
-    ray = OctreeRayInterpolator(interp)
-
-    origins = np.array(
-        [[0.0, -0.2, 0.0], [0.0, 0.0, 0.2], [0.0, 0.2, 0.4]],
-        dtype=float,
-    )
-    direction = np.array([1.0, 0.2, -0.1], dtype=float)
-    t0 = 0.0
-    t1 = 1.0
-
-    exact = np.asarray(ray.integrate_field_along_rays(origins, direction, t0, t1, chunk_size=2), dtype=float)
-    midpoint = np.asarray(
-        ray.integrate_field_along_rays_midpoint(origins, direction, t0, t1, chunk_size=2),
-        dtype=float,
-    )
-    assert np.allclose(midpoint, exact, atol=1e-8, rtol=1e-9)
 
 
 def test_direct_ray_integral_matches_exact_for_trilinear_field() -> None:
@@ -507,9 +452,6 @@ def test_vector_integrals_shape_on_all_miss() -> None:
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
 
     exact = np.asarray(ray.integrate_field_along_rays(origins, direction, 0.0, 1.0), dtype=float)
-    midpoint = np.asarray(ray.integrate_field_along_rays_midpoint(origins, direction, 0.0, 1.0), dtype=float)
 
     assert exact.shape == (origins.shape[0], 2)
-    assert midpoint.shape == (origins.shape[0], 2)
     assert np.all(np.isnan(exact))
-    assert np.all(np.isnan(midpoint))

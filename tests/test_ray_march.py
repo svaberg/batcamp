@@ -320,7 +320,7 @@ def test_next_cell_from_exit_for_xyz_and_rpa(tree_case) -> None:
     assert got_next == expected_next
 
 
-def test_midpoint_integral_finds_shell_after_outside_start() -> None:
+def test_integral_finds_shell_after_outside_start() -> None:
     """Ray regression: spherical shell rays must not return empty from inside hole."""
     points, corners = _build_spherical_hex_mesh(
         nr=1,
@@ -354,7 +354,7 @@ def test_midpoint_integral_finds_shell_after_outside_start() -> None:
     cell_ids, _t_enter, _t_exit = OctreeRayTracer(tree).trace(origin, direction, t0, t1)
     assert cell_ids.size > 0
 
-    ray_int = float(ray.integrate_field_along_rays_midpoint(origin[None, :], direction, t0, t1)[0])
+    ray_int = float(ray.integrate_field_along_rays(origin[None, :], direction, t0, t1)[0])
     t = np.linspace(t0, t1, 512, dtype=float)
     q = origin[None, :] + t[:, None] * direction[None, :]
     vals = np.asarray(interp(q, query_coord="xyz", log_outside_domain=False), dtype=float).reshape(-1)
