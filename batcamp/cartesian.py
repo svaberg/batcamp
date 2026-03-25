@@ -14,9 +14,6 @@ from numba import njit
 import numpy as np
 
 from .constants import XYZ_VARS
-from .octree import GridIndex
-from .octree import GridPath
-from .octree import LookupHit
 from .octree import LookupKernelState
 from .octree import Octree
 from .octree import _contains_lookup_cell
@@ -179,15 +176,6 @@ class _CartesianCoordSupport:
             node_axis2_width=self._node_z_max - self._node_z_min,
         )
 
-    @staticmethod
-    def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:
-        """Construct root-to-leaf index path for one leaf coordinate triplet."""
-        out: list[GridIndex] = []
-        for path_level in range(level + 1):
-            shift = level - path_level
-            out.append((i0 >> shift, i1 >> shift, i2 >> shift))
-        return tuple(out)
-
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
         if self.ds is None or self.ds.corners is None:
@@ -269,29 +257,4 @@ class _CartesianCoordSupport:
                 float(z),
                 self._lookup_state,
             )
-        )
-
-    def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> LookupHit | None:
-        """Build a `LookupHit` from an internal cell id."""
-        if chosen < 0:
-            return None
-        level = int(self._cell_level[chosen])
-        if level < 0 and not allow_invalid_level:
-            return None
-        if level < 0:
-            path_level = int(self.max_level)
-        else:
-            path_level = int(level)
-            if path_level < 0:
-                raise ValueError(f"Derived negative level {level}; max_level={self.max_level}.")
-        cell_i0 = int(self._i0[chosen])
-        cell_i1 = int(self._i1[chosen])
-        cell_i2 = int(self._i2[chosen])
-        return LookupHit(
-            cell_id=int(chosen),
-            level=level,
-            i0=cell_i0,
-            i1=cell_i1,
-            i2=cell_i2,
-            path=_CartesianCoordSupport._path(cell_i0, cell_i1, cell_i2, path_level),
         )
