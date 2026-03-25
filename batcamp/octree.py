@@ -183,7 +183,6 @@ class Octree:
     cell_levels: np.ndarray | None = None
     ds: Dataset | None = field(default=None, repr=False)
     axis_rho_tol: float = field(default=DEFAULT_AXIS_RHO_TOL, repr=False)
-    _lookup_ready: bool = field(default=False, init=False, repr=False)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -216,8 +215,6 @@ class Octree:
         if not set(self.XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         next_axis_rho_tol = float(self.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
-        ds_changed = self.ds is not ds
-        tol_changed = not np.isclose(float(self.axis_rho_tol), next_axis_rho_tol, rtol=0.0, atol=0.0)
 
         self.ds = ds
         self.axis_rho_tol = next_axis_rho_tol
@@ -229,8 +226,6 @@ class Octree:
                 np.asarray(ds[self.Z_VAR], dtype=float),
             )
         )
-        if ds_changed or tol_changed:
-            self._lookup_ready = False
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -359,12 +354,9 @@ class Octree:
 
     def _require_lookup(self) -> "Octree":
         """Ensure lookup data is built, then return `self`."""
-        if self._lookup_ready:
-            return self
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
         self.build_lookup()
-        self._lookup_ready = True
         return self
 
     @property

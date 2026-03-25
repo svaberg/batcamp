@@ -101,7 +101,6 @@ def _build_two_level_topology_tree() -> Octree:
     tree._i0 = i0
     tree._i1 = i1
     tree._i2 = i2
-    tree._lookup_ready = True
     return tree
 
 
