@@ -12,7 +12,6 @@ import numpy as np
 from batread import Dataset
 
 from .octree import TreeCoord
-from .octree import DEFAULT_AXIS_RHO_TOL
 from .octree import DEFAULT_TREE_COORD
 from .octree import GridShape
 from .octree import LevelCountTable
@@ -29,6 +28,9 @@ BlockAux: TypeAlias = tuple[int, GridShape]
 """Parsed BLOCKS aux tuple `(n_blocks, cells_per_block_xyz)`."""
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_AXIS_RHO_TOL = 1e-12
+"""Default polar-axis radius tolerance used only during spherical builder inference."""
 
 
 def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
