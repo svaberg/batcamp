@@ -767,14 +767,6 @@ class Octree:
             f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
         )
 
-    def _require_lookup(self) -> "Octree":
-        """Require one bound octree with ready coordinate geometry, then return `self`."""
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
-        if not hasattr(self, "_coord_state"):
-            raise ValueError("Octree bound geometry is not initialized. Bind it to a dataset first.")
-        return self
-
     @staticmethod
     def _path(i0: int, i1: int, i2: int, level: int) -> GridPath:
         """Construct the root-to-leaf grid-index path for one cell."""
@@ -816,7 +808,8 @@ class Octree:
 
     def lookup_geometry(self) -> BoundGeometryState:
         """Return bound dataset arrays plus packed coordinate geometry."""
-        self._require_lookup()
+        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
+            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         return BoundGeometryState(
             points=np.column_stack(
                 (
@@ -848,7 +841,10 @@ class Octree:
             raise ValueError(
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
-        self._require_lookup()
+        if self.ds is None or self.ds.corners is None:
+            raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
+        if not hasattr(self, "_coord_state"):
+            raise ValueError("Octree lookup requires ready coordinate geometry.")
         if str(self.tree_coord) == "xyz":
             if resolved_coord != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -865,7 +861,8 @@ class Octree:
         self,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Return per-cell axis starts and widths for the bound coordinate geometry."""
-        self._require_lookup()
+        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
+            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         return (
             self._coord_state.cell_axis0_start,
             self._coord_state.cell_axis0_width,
@@ -949,7 +946,8 @@ class Octree:
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
         """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
-        self._require_lookup()
+        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
+            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
@@ -980,7 +978,8 @@ class Octree:
         tol: float = 1e-10,
     ) -> bool:
         """Return whether one point lies inside one cell."""
-        self._require_lookup()
+        if self.ds is None or self.ds.corners is None or not hasattr(self, "_coord_state"):
+            raise ValueError("Octree lookup requires a bound dataset and ready coordinate geometry.")
         q = np.array(point, dtype=float).reshape(3)
         backend = self._coord_support(str(self.tree_coord))
         if str(self.tree_coord) == "xyz":

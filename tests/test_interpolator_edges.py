@@ -160,7 +160,6 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
         },
     )
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    tree._require_lookup()
     lookup_state = tree._coord_state
 
     q0 = np.array([0.5, -0.5, -0.5], dtype=float)
@@ -179,7 +178,6 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     """Spherical lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
     ds = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
-    tree._require_lookup()
     lookup_state = tree._coord_state
 
     lo0, hi0 = cell_bounds(tree, 0, coord="rpa")
