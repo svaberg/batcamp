@@ -382,23 +382,6 @@ def _lookup_cell_id_kernel(
     )
 
 
-@njit(cache=True)
-def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
-    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
-    r = np.sqrt(x * x + y * y + z * z)
-    if r == 0.0:
-        polar = 0.0
-    else:
-        zr = z / r
-        if zr < -1.0:
-            zr = -1.0
-        elif zr > 1.0:
-            zr = 1.0
-        polar = np.arccos(zr)
-    azimuth = np.arctan2(y, x) % (2.0 * np.pi)
-    return r, polar, azimuth
-
-
 @njit(cache=True, parallel=True)
 def _lookup_cell_ids_kernel(queries: np.ndarray, lookup_state: LookupKernelState) -> np.ndarray:
     """Resolve a batch of same-coordinate queries to cell ids."""
@@ -418,29 +401,6 @@ def _lookup_cell_ids_kernel(queries: np.ndarray, lookup_state: LookupKernelState
                 lookup_state,
                 hint_cid,
             )
-            cell_ids[i] = cid
-            hint_cid = int(cid) if cid >= 0 else -1
-    return cell_ids
-
-
-@njit(cache=True, parallel=True)
-def _lookup_xyz_cell_ids_for_rpa_tree_kernel(queries_xyz: np.ndarray, lookup_state: LookupKernelState) -> np.ndarray:
-    """Resolve Cartesian queries against one spherical-tree lookup state."""
-    n_query = int(queries_xyz.shape[0])
-    cell_ids = np.full(n_query, -1, dtype=np.int64)
-    chunk_size = 1024
-    n_chunks = (n_query + chunk_size - 1) // chunk_size
-    for chunk_id in prange(n_chunks):
-        start = chunk_id * chunk_size
-        end = min(n_query, start + chunk_size)
-        hint_cid = -1
-        for i in range(start, end):
-            r, polar, azimuth = _xyz_to_rpa_components(
-                queries_xyz[i, 0],
-                queries_xyz[i, 1],
-                queries_xyz[i, 2],
-            )
-            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
             cell_ids[i] = cid
             hint_cid = int(cid) if cid >= 0 else -1
     return cell_ids
@@ -894,6 +854,8 @@ class Octree:
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
             cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
         elif resolved_coord == "xyz":
+            from .spherical import _lookup_xyz_cell_ids_for_rpa_tree_kernel
+
             cell_ids = _lookup_xyz_cell_ids_for_rpa_tree_kernel(q, self._coord_state)
         else:
             cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)

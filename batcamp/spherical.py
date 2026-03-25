@@ -6,9 +6,11 @@ from __future__ import annotations
 import math
 
 from numba import njit
+from numba import prange
 import numpy as np
 
 from .constants import XYZ_VARS
+from .octree import _lookup_cell_id_kernel
 from .octree import _coord_state_inputs
 from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
@@ -122,12 +124,7 @@ class _SphericalCoordSupport:
 
     def _contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
         """Return whether one Cartesian point lies inside one cell."""
-        r = float(math.sqrt(x * x + y * y + z * z))
-        if r == 0.0:
-            polar = 0.0
-        else:
-            polar = float(math.acos(max(-1.0, min(1.0, z / r))))
-        azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
+        r, polar, azimuth = _xyz_to_rpa_components(float(x), float(y), float(z))
         return _SphericalCoordSupport._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
 
     def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
@@ -142,3 +139,43 @@ class _SphericalCoordSupport:
                 float(tol),
             )
         )
+
+
+@njit(cache=True)
+def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
+    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
+    r = np.sqrt(x * x + y * y + z * z)
+    if r == 0.0:
+        polar = 0.0
+    else:
+        zr = z / r
+        if zr < -1.0:
+            zr = -1.0
+        elif zr > 1.0:
+            zr = 1.0
+        polar = np.arccos(zr)
+    azimuth = np.arctan2(y, x) % _TWO_PI
+    return r, polar, azimuth
+
+
+@njit(cache=True, parallel=True)
+def _lookup_xyz_cell_ids_for_rpa_tree_kernel(queries_xyz: np.ndarray, lookup_state) -> np.ndarray:
+    """Resolve Cartesian queries against one spherical-tree lookup state."""
+    n_query = int(queries_xyz.shape[0])
+    cell_ids = np.full(n_query, -1, dtype=np.int64)
+    chunk_size = 1024
+    n_chunks = (n_query + chunk_size - 1) // chunk_size
+    for chunk_id in prange(n_chunks):
+        start = chunk_id * chunk_size
+        end = min(n_query, start + chunk_size)
+        hint_cid = -1
+        for i in range(start, end):
+            r, polar, azimuth = _xyz_to_rpa_components(
+                queries_xyz[i, 0],
+                queries_xyz[i, 1],
+                queries_xyz[i, 2],
+            )
+            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
+            cell_ids[i] = cid
+            hint_cid = int(cid) if cid >= 0 else -1
+    return cell_ids
