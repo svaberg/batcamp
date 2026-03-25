@@ -180,10 +180,10 @@ class _CartesianCoordSupport:
         cid = int(cell_id)
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
-        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=float)[corners]
-        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=float)[corners]
-        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=float)[corners]
+        corners = self.ds.corners[cid]
+        x = self.ds[XYZ_VARS[0]][corners]
+        y = self.ds[XYZ_VARS[1]][corners]
+        z = self.ds[XYZ_VARS[2]][corners]
         return np.array([np.min(x), np.min(y), np.min(z)], dtype=float), np.array(
             [np.max(x), np.max(y), np.max(z)],
             dtype=float,
@@ -193,10 +193,10 @@ class _CartesianCoordSupport:
         cid = int(cell_id)
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
-        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=float)[corners]
-        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=float)[corners]
-        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=float)[corners]
+        corners = self.ds.corners[cid]
+        x = self.ds[XYZ_VARS[0]][corners]
+        y = self.ds[XYZ_VARS[1]][corners]
+        z = self.ds[XYZ_VARS[2]][corners]
         pts = np.column_stack((x, y, z))
         r = np.linalg.norm(pts, axis=1)
         theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
@@ -211,12 +211,12 @@ class _CartesianCoordSupport:
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         if self.ds is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+            raise ValueError("Lookup requires a bound octree with dataset.")
         pts = np.column_stack(
             (
-                np.asarray(self.ds[XYZ_VARS[0]], dtype=float),
-                np.asarray(self.ds[XYZ_VARS[1]], dtype=float),
-                np.asarray(self.ds[XYZ_VARS[2]], dtype=float),
+                self.ds[XYZ_VARS[0]],
+                self.ds[XYZ_VARS[1]],
+                self.ds[XYZ_VARS[2]],
             )
         )
         r = np.linalg.norm(pts, axis=1)

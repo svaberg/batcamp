@@ -199,12 +199,12 @@ class _SphericalCoordSupport:
         cid = int(cell_id)
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
+        corners = self.ds.corners[cid]
         pts = np.column_stack(
             (
-                np.asarray(self.ds[XYZ_VARS[0]], dtype=float)[corners],
-                np.asarray(self.ds[XYZ_VARS[1]], dtype=float)[corners],
-                np.asarray(self.ds[XYZ_VARS[2]], dtype=float)[corners],
+                self.ds[XYZ_VARS[0]][corners],
+                self.ds[XYZ_VARS[1]][corners],
+                self.ds[XYZ_VARS[2]][corners],
             )
         )
         return np.min(pts, axis=0), np.max(pts, axis=0)
@@ -225,12 +225,12 @@ class _SphericalCoordSupport:
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
         if self.ds is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+            raise ValueError("Lookup requires a bound octree with dataset.")
         pts = np.column_stack(
             (
-                np.asarray(self.ds[XYZ_VARS[0]], dtype=float),
-                np.asarray(self.ds[XYZ_VARS[1]], dtype=float),
-                np.asarray(self.ds[XYZ_VARS[2]], dtype=float),
+                self.ds[XYZ_VARS[0]],
+                self.ds[XYZ_VARS[1]],
+                self.ds[XYZ_VARS[2]],
             )
         )
         return np.min(pts, axis=0), np.max(pts, axis=0)
