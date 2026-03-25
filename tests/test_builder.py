@@ -311,12 +311,12 @@ def test_xyz_fixture_builds_tree(cartesian_octree_context) -> None:
     assert interp.tree is tree
 
 
-def test_xyz_lookup_hits_cell_centers(cartesian_octree_context) -> None:
-    """Cartesian lookup should resolve each cell center to its own cell id."""
+def test_xyz_lookup_hits_cell_midpoints(cartesian_octree_context) -> None:
+    """Cartesian lookup should resolve each cell midpoint to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
-    centers = np.array(tree.cell_centers, dtype=float)
-    for cid in range(centers.shape[0]):
-        q = centers[cid]
+    for cid in range(tree.cell_count):
+        lo, hi = tree.cell_bounds(cid, coord="xyz")
+        q = 0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float))
         hit = tree.lookup_point(q, coord="xyz")
         assert hit is not None
         assert int(hit.cell_id) == int(cid)

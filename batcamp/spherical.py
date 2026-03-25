@@ -46,7 +46,6 @@ class SphericalLookupKernelState(NamedTuple):
     cell_phi_start: np.ndarray
     cell_phi_width: np.ndarray
     cell_valid: np.ndarray
-    cell_centers: np.ndarray
     r_min: float
     r_max: float
     node_value: np.ndarray
@@ -201,17 +200,7 @@ class _SphericalCellLookup:
         x = np.asarray(self.ds[self.X_VAR], dtype=np.float64)
         y = np.asarray(self.ds[self.Y_VAR], dtype=np.float64)
         z = np.asarray(self.ds[self.Z_VAR], dtype=np.float64)
-        cell_x = x[corners]
-        cell_y = y[corners]
-        cell_z = z[corners]
-        self._cell_centers = np.column_stack(
-            (
-                np.mean(cell_x, axis=1),
-                np.mean(cell_y, axis=1),
-                np.mean(cell_z, axis=1),
-            )
-        )
-        n_cells = int(self._cell_centers.shape[0])
+        n_cells = int(corners.shape[0])
         if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
             raise ValueError("Spherical lookup requires exact cell_levels.")
         self._cell_level = self.cell_levels
@@ -281,7 +270,6 @@ class _SphericalCellLookup:
             cell_phi_start=self._cell_phi_start,
             cell_phi_width=self._cell_phi_width,
             cell_valid=(self._cell_level >= 0),
-            cell_centers=self._cell_centers,
             r_min=float(self._r_min),
             r_max=float(self._r_max),
             node_value=self._node_value,
@@ -482,7 +470,6 @@ class _SphericalCellLookup:
         """Build a `LookupHit` from an internal cell id."""
         if chosen < 0:
             return None
-        center = self._cell_centers[chosen]
         level = int(self._cell_level[chosen])
         if level < 0 and not allow_invalid_level:
             return None
@@ -502,5 +489,4 @@ class _SphericalCellLookup:
             i1=cell_i1,
             i2=cell_i2,
             path=_SphericalCellLookup._path(cell_i0, cell_i1, cell_i2, path_level),
-            center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         )

@@ -347,7 +347,6 @@ class SphericalOctreeBuilder:
             )
         )
         corners_arr = np.asarray(corners, dtype=np.int64)
-        cell_centers = np.mean(points[corners_arr], axis=1)
         levels = np.asarray(cell_levels, dtype=np.int64)
         valid = levels >= 0
         valid_ids = np.flatnonzero(valid).astype(np.int64)

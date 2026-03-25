@@ -90,6 +90,22 @@ def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generato
     return np.array(xyz_list), np.array(rpa_list)
 
 
+def _midpoints_xyz(tree: Octree, cids: np.ndarray) -> np.ndarray:
+    xyz_list: list[np.ndarray] = []
+    for cid in cids.tolist():
+        lo, hi = tree.cell_bounds(int(cid), coord="rpa")
+        r = 0.5 * (float(lo[0]) + float(hi[0]))
+        theta = 0.5 * (float(lo[1]) + float(hi[1]))
+        phi0 = float(lo[2])
+        phi_width = float((hi[2] - lo[2]) % (2.0 * math.pi))
+        if np.isclose(phi_width, 0.0, atol=1e-12):
+            phi_width = 2.0 * math.pi
+        phi = (phi0 + 0.5 * phi_width) % (2.0 * math.pi)
+        st = math.sin(theta)
+        xyz_list.append(np.array([r * st * math.cos(phi), r * st * math.sin(phi), r * math.cos(theta)]))
+    return np.asarray(xyz_list, dtype=float)
+
+
 def _interpolation_valid_cells(
     tree: Octree,
     *,
@@ -113,12 +129,12 @@ def _interpolation_valid_cells(
     return np.array(good, dtype=np.int64)
 
 
-def test_lookup_hits_cell_centers(synthetic_context) -> None:
-    """Lookup of each synthetic cell center should return the corresponding cell id."""
+def test_lookup_hits_cell_midpoints(synthetic_context) -> None:
+    """Lookup of each synthetic cell midpoint should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context
-    centers = np.array(tree.cell_centers, dtype=float)
-    for cid in range(centers.shape[0]):
-        q = centers[cid]
+    queries = _midpoints_xyz(tree, np.arange(tree.cell_count, dtype=np.int64))
+    for cid in range(queries.shape[0]):
+        q = queries[cid]
         hit = tree.lookup_point(q, coord="xyz")
         assert hit is not None
         assert int(hit.cell_id) == int(cid)
@@ -202,7 +218,7 @@ def test_outside_points_use_fill_and_negative_cell_id(synthetic_context) -> None
     fill = -999.0
     interp = OctreeInterpolator(tree, ["LinField"], fill_value=fill)
 
-    inside = np.array(tree.cell_centers[0]).reshape(1, 3)
+    inside = _midpoints_xyz(tree, np.array([0], dtype=np.int64))
     outside = np.array([[100.0, 0.0, 0.0], [-100.0, 0.0, 0.0]])
     q = np.vstack((inside, outside))
 

@@ -70,7 +70,6 @@ class SphericalRayCellGeometry(NamedTuple):
 
     face_neighbor_state: FaceNeighborKernelState
     plane_state: CellPlaneKernelState
-    cell_centers: np.ndarray
     corners: np.ndarray
     bin_to_corner: np.ndarray
     cell_r0: np.ndarray
@@ -488,7 +487,7 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     lookup_geometry = tree.lookup_geometry()
     corners = lookup_geometry.corners
     points = lookup_geometry.points
-    centers = lookup_geometry.cell_centers
+    centers = np.mean(points[corners], axis=1)
     lookup_state = lookup_geometry.lookup_state
     n_cells = int(corners.shape[0])
 
@@ -749,7 +748,6 @@ def _build_spherical_ray_cell_geometry(tree: Octree, face_neighbors) -> Spherica
     return SphericalRayCellGeometry(
         face_neighbor_state=_face_neighbor_state_for_node_cells(face_neighbors),
         plane_state=plane_state,
-        cell_centers=centers,
         corners=corners,
         bin_to_corner=bin_to_corner,
         cell_r0=cell_r0,
@@ -802,7 +800,6 @@ def _build_sparse_spherical_seed_lookup_state(
     cell_phi_start = np.zeros(n_leaf_cells, dtype=np.float64)
     cell_phi_width = np.zeros(n_leaf_cells, dtype=np.float64)
     cell_valid = np.zeros(n_leaf_cells, dtype=np.bool_)
-    cell_centers = np.zeros((n_leaf_cells, 3), dtype=np.float64)
     for node_id, rep_cid in enumerate(rep_cell_ids):
         cid = int(rep_cid)
         cell_r_min[cid] = float(geometry.cell_r0[node_id])
@@ -812,7 +809,6 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_phi_start[cid] = float(geometry.cell_p_start[node_id])
         cell_phi_width[cid] = float(geometry.cell_p_width[node_id])
         cell_valid[cid] = True
-        cell_centers[cid, :] = geometry.cell_centers[node_id, :]
 
     if not isinstance(lookup_geometry.lookup_state, SphericalLookupKernelState):
         raise TypeError(
@@ -832,7 +828,6 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_phi_start=cell_phi_start,
         cell_phi_width=cell_phi_width,
         cell_valid=cell_valid,
-        cell_centers=cell_centers,
         r_min=float(np.min(geometry.cell_r0)),
         r_max=float(np.max(geometry.cell_r0 + geometry.cell_rden)),
         node_value=np.asarray(rep_cell_ids, dtype=np.int64),

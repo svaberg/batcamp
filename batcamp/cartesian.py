@@ -186,13 +186,6 @@ class _CartesianCellLookup:
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
-        self._cell_centers = np.column_stack(
-            (
-                np.mean(cell_x, axis=1),
-                np.mean(cell_y, axis=1),
-                np.mean(cell_z, axis=1),
-            )
-        )
         self._cell_x_min = np.min(cell_x, axis=1)
         self._cell_x_max = np.max(cell_x, axis=1)
         self._cell_y_min = np.min(cell_y, axis=1)
@@ -200,7 +193,7 @@ class _CartesianCellLookup:
         self._cell_z_min = np.min(cell_z, axis=1)
         self._cell_z_max = np.max(cell_z, axis=1)
 
-        n_cells = int(self._cell_centers.shape[0])
+        n_cells = int(corners.shape[0])
         if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
             raise ValueError("Cartesian lookup requires exact cell_levels.")
         self._cell_level = self.cell_levels
@@ -410,7 +403,6 @@ class _CartesianCellLookup:
         """Build a `LookupHit` from an internal cell id."""
         if chosen < 0:
             return None
-        center = self._cell_centers[chosen]
         level = int(self._cell_level[chosen])
         if level < 0 and not allow_invalid_level:
             return None
@@ -430,5 +422,4 @@ class _CartesianCellLookup:
             i1=cell_i1,
             i2=cell_i2,
             path=_CartesianCellLookup._path(cell_i0, cell_i1, cell_i2, path_level),
-            center_xyz=(float(center[0]), float(center[1]), float(center[2])),
         )

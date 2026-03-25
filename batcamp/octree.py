@@ -43,11 +43,10 @@ if TYPE_CHECKING:
 
 
 class LookupGeometryState(NamedTuple):
-    """Bound point/cell arrays and packed lookup state owned by one octree."""
+    """Bound dataset arrays and packed lookup state owned by one octree."""
 
     points: np.ndarray
     corners: np.ndarray
-    cell_centers: np.ndarray
     lookup_state: object
 
 
@@ -432,20 +431,13 @@ class Octree:
 
     @property
     def cell_count(self) -> int:
-        """Return number of leaf cells available in the bound lookup."""
-        self._require_lookup()
-        return int(self._cell_centers.shape[0])
-
-    @property
-    def cell_centers(self) -> np.ndarray:
-        """Return leaf-cell centers in Cartesian coordinates."""
-        self._require_lookup()
-        return self._cell_centers
+        """Return number of leaf cells in the exact tree state."""
+        return int(self.cell_levels.shape[0])
 
     def lookup_geometry(self) -> LookupGeometryState:
-        """Return bound point/cell arrays plus packed lookup state."""
+        """Return bound dataset arrays plus packed lookup state."""
         self._require_lookup()
-        required = ("_cell_centers", "_lookup_state")
+        required = ("_lookup_state",)
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Octree lookup geometry is incomplete: missing {missing}.")
@@ -460,7 +452,6 @@ class Octree:
                 )
             ),
             corners=np.asarray(self.ds.corners, dtype=np.int64),
-            cell_centers=self._cell_centers,
             lookup_state=self._lookup_state,
         )
 
@@ -545,7 +536,7 @@ class Octree:
         """Return `(lo, hi)` bounds for one cell in requested coord."""
         self._require_lookup()
         cid = int(cell_id)
-        n_cells = int(self._cell_centers.shape[0])
+        n_cells = int(self.cell_levels.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
 
@@ -629,7 +620,7 @@ class Octree:
         """Return lookup metadata for a known cell id."""
         cid = int(cell_id)
         self._require_lookup()
-        n_cells = int(self._cell_centers.shape[0])
+        n_cells = int(self.cell_levels.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
         hit = self.hit_from_chosen(cid, allow_invalid_level=True)
@@ -647,4 +638,3 @@ class LookupHit:
     i1: int
     i2: int
     path: GridPath
-    center_xyz: tuple[float, float, float]

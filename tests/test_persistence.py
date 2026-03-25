@@ -64,7 +64,6 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert hit_loaded is not None
     assert int(hit_tree.cell_id) == int(hit_loaded.cell_id)
     assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_centers, dtype=float), np.asarray(tree._cell_centers, dtype=float))
     assert np.allclose(np.asarray(loaded._cell_r_min, dtype=float), np.asarray(tree._cell_r_min, dtype=float))
     assert np.allclose(np.asarray(loaded._cell_r_max, dtype=float), np.asarray(tree._cell_r_max, dtype=float))
     assert np.allclose(np.asarray(loaded._cell_theta_min, dtype=float), np.asarray(tree._cell_theta_min, dtype=float))

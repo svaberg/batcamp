@@ -24,6 +24,14 @@ _CASES = [
 ]
 
 
+def _midpoint_queries_xyz(tree: Octree, n_query: int) -> np.ndarray:
+    queries = []
+    for cid in range(min(int(n_query), int(tree.cell_count))):
+        lo, hi = tree.cell_bounds(cid, coord="xyz")
+        queries.append(0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float)))
+    return np.asarray(queries, dtype=float)
+
+
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
     """Inference contract: geometry-based coord inference matches expected."""
@@ -54,7 +62,7 @@ def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     ds = Dataset.from_file(str(data_file(name)))
     tree_explicit = OctreeBuilder().build(ds, tree_coord=tree_coord)
     tree_auto = OctreeBuilder().build(ds)
-    queries = np.asarray(tree_explicit.cell_centers[:16], dtype=float)
+    queries = _midpoint_queries_xyz(tree_explicit, 16)
 
     interp_explicit = OctreeInterpolator(tree_explicit, ["Rho [g/cm^3]"])
     interp_auto = OctreeInterpolator(tree_auto, ["Rho [g/cm^3]"])
