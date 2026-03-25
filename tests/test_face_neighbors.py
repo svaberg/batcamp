@@ -89,18 +89,13 @@ def _build_two_level_topology_tree() -> Octree:
     )
 
     tree = Octree(
-        leaf_shape=(4, 4, 4),
         root_shape=(2, 2, 2),
-        is_full=False,
-        level_counts=((0, len(coarse), len(coarse) * 8), (1, len(fine), len(fine))),
-        min_level=0,
-        max_level=1,
         tree_coord="xyz",
         cell_levels=levels,
+        cell_i0=i0,
+        cell_i1=i1,
+        cell_i2=i2,
     )
-    tree._i0 = i0
-    tree._i1 = i1
-    tree._i2 = i2
     return tree
 
 

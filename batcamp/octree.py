@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dataclasses import field
 import logging
 from pathlib import Path
 from typing import ClassVar
@@ -158,7 +157,6 @@ def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> T
     return "xyz" if frac_axis_like >= 0.98 else "rpa"
 
 
-@dataclass
 class Octree:
     """Adaptive octree summary plus bound lookup/ray-query entrypoints.
 
@@ -172,16 +170,56 @@ class Octree:
     XY_VARS: ClassVar[tuple[str, str]] = (X_VAR, Y_VAR)
     XYZ_VARS: ClassVar[tuple[str, str, str]] = (X_VAR, Y_VAR, Z_VAR)
 
-    leaf_shape: GridShape
-    root_shape: GridShape
-    is_full: bool
-    level_counts: LevelCountTable
-    min_level: int
-    max_level: int
-    tree_coord: TreeCoord = DEFAULT_TREE_COORD
-    cell_levels: np.ndarray | None = None
-    ds: Dataset | None = field(default=None, repr=False)
-    axis_rho_tol: float = field(default=DEFAULT_AXIS_RHO_TOL, repr=False)
+    def __init__(
+        self,
+        *,
+        root_shape: GridShape,
+        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
+        cell_levels: np.ndarray,
+        cell_i0: np.ndarray,
+        cell_i1: np.ndarray,
+        cell_i2: np.ndarray,
+        ds: Dataset | None = None,
+        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    ) -> None:
+        """Build one octree directly from exact leaf addresses."""
+        resolved_tree_coord = str(tree_coord)
+        if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
+            raise ValueError(
+                f"Unsupported tree_coord '{resolved_tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+            )
+        self.root_shape = tuple(int(v) for v in root_shape)
+        self.tree_coord = resolved_tree_coord
+        self.cell_levels = np.asarray(cell_levels, dtype=np.int64)
+        self.axis_rho_tol = float(axis_rho_tol)
+        self.ds = None
+
+        self.leaf_shape, self.is_full, self.level_counts, self.min_level, self.max_level = _level_metadata_from_leaves(
+            self.root_shape,
+            self.cell_levels,
+        )
+        self._i0 = np.asarray(cell_i0, dtype=np.int64)
+        self._i1 = np.asarray(cell_i1, dtype=np.int64)
+        self._i2 = np.asarray(cell_i2, dtype=np.int64)
+        (
+            self._node_depth,
+            self._node_i0,
+            self._node_i1,
+            self._node_i2,
+            self._node_value,
+            self._node_child,
+            self._root_node_ids,
+            self._node_parent,
+            self._cell_node_id,
+        ) = _node_state_from_leaves(
+            self.cell_levels,
+            self._i0,
+            self._i1,
+            self._i2,
+            max_level=self.max_level,
+        )
+        if ds is not None:
+            self.bind(ds, axis_rho_tol=self.axis_rho_tol)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -252,55 +290,16 @@ class Octree:
                 f"Unsupported tree_coord '{state.tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
         resolved_axis_rho_tol = float(DEFAULT_AXIS_RHO_TOL) if axis_rho_tol is None else float(axis_rho_tol)
-        root_shape = tuple(int(v) for v in state.root_shape)
-        cell_levels = np.asarray(state.cell_levels, dtype=np.int64)
-        cell_i0 = np.asarray(state.cell_i0, dtype=np.int64)
-        cell_i1 = np.asarray(state.cell_i1, dtype=np.int64)
-        cell_i2 = np.asarray(state.cell_i2, dtype=np.int64)
-        leaf_shape, is_full, level_counts, min_level, max_level = _level_metadata_from_leaves(root_shape, cell_levels)
-        (
-            node_depth,
-            node_i0,
-            node_i1,
-            node_i2,
-            node_value,
-            node_child,
-            root_node_ids,
-            node_parent,
-            cell_node_id,
-        ) = _node_state_from_leaves(
-            cell_levels,
-            cell_i0,
-            cell_i1,
-            cell_i2,
-            max_level=max_level,
-        )
-        tree = cls(
-            leaf_shape=leaf_shape,
-            root_shape=root_shape,
-            is_full=is_full,
-            level_counts=level_counts,
-            min_level=min_level,
-            max_level=max_level,
+        return cls(
+            root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
-            cell_levels=cell_levels,
+            cell_levels=np.asarray(state.cell_levels, dtype=np.int64),
+            cell_i0=np.asarray(state.cell_i0, dtype=np.int64),
+            cell_i1=np.asarray(state.cell_i1, dtype=np.int64),
+            cell_i2=np.asarray(state.cell_i2, dtype=np.int64),
+            ds=ds if bind else None,
             axis_rho_tol=resolved_axis_rho_tol,
         )
-        tree._i0 = cell_i0
-        tree._i1 = cell_i1
-        tree._i2 = cell_i2
-        tree._node_depth = node_depth
-        tree._node_i0 = node_i0
-        tree._node_i1 = node_i1
-        tree._node_i2 = node_i2
-        tree._node_value = node_value
-        tree._node_child = node_child
-        tree._root_node_ids = root_node_ids
-        tree._node_parent = node_parent
-        tree._cell_node_id = cell_node_id
-        if bind:
-            tree.bind(ds, axis_rho_tol=resolved_axis_rho_tol)
-        return tree
 
     @classmethod
     def load(
