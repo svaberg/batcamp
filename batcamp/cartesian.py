@@ -8,7 +8,6 @@ Cartesian backend are exact under this axis-aligned representation.
 """
 
 from __future__ import annotations
-from numba import njit
 import numpy as np
 
 from .constants import XYZ_VARS
@@ -18,21 +17,8 @@ from .octree import _contains_lookup_cell
 from .octree import _lookup_cell_id_kernel
 
 _LOOKUP_CONTAIN_TOL = 1e-10
-_MISSING_NODE_VALUE = -1
 
 CartesianLookupKernelState = LookupKernelState
-
-
-@njit(cache=False)
-def _lookup_xyz_cell_id_kernel(
-    x: float,
-    y: float,
-    z: float,
-    lookup_state: LookupKernelState,
-    prev_cid: int = -1,
-) -> int:
-    """Resolve one Cartesian query to a cell id by descending sparse child containment."""
-    return _lookup_cell_id_kernel(x, y, z, lookup_state, prev_cid, _LOOKUP_CONTAIN_TOL)
 
 
 class _CartesianCoordSupport:
@@ -193,10 +179,11 @@ class _CartesianCoordSupport:
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
         return int(
-            _lookup_xyz_cell_id_kernel(
+            _lookup_cell_id_kernel(
                 float(x),
                 float(y),
                 float(z),
                 self._coord_state,
+                -1,
             )
         )
