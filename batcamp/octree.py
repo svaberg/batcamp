@@ -8,8 +8,6 @@ import logging
 from pathlib import Path
 from typing import NamedTuple
 from typing import TYPE_CHECKING
-from typing import Literal
-from typing import TypeAlias
 
 import numpy as np
 from batread import Dataset
@@ -18,24 +16,11 @@ from numba import njit
 from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
-
-TreeCoord: TypeAlias = Literal["rpa", "xyz"]
-"""Coordinate-system tag for octree state and lookup."""
-
-GridShape: TypeAlias = tuple[int, int, int]
-"""Grid extents `(n_axis0, n_axis1, n_axis2)`."""
-
-GridIndex: TypeAlias = tuple[int, int, int]
-"""Discrete cell/bin index triplet `(i_axis0, i_axis1, i_axis2)`."""
-
-GridPath: TypeAlias = tuple[GridIndex, ...]
-"""Root-to-leaf sequence of `GridIndex` entries."""
-
-LevelCountRow: TypeAlias = tuple[int, int, int]
-"""Tuple meaning `(level, leaf_count, fine_equivalent_count)`."""
-
-LevelCountTable: TypeAlias = tuple[LevelCountRow, ...]
-"""Sorted collection of per-level count rows."""
+from .shared_types import GridIndex
+from .shared_types import GridPath
+from .shared_types import GridShape
+from .shared_types import LevelCountTable
+from .shared_types import TreeCoord
 
 logger = logging.getLogger(__name__)
 
