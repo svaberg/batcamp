@@ -898,24 +898,6 @@ def _ray_cell_geometry_for_max_level(tree: Octree, max_level: int) -> CartesianR
     raise ValueError(f"Unsupported tree_coord '{tree.tree_coord}'.")
 
 
-def _point_values_2d(interpolator: "OctreeInterpolator") -> np.ndarray:
-    """Pack interpolated node values into the 2-D kernel layout."""
-    point_values = np.asarray(interpolator.point_values, dtype=np.float64)
-    return np.array(point_values.reshape(int(point_values.shape[0]), -1), dtype=np.float64, order="C")
-
-
-def _interp_state_from_ray_geometry(
-    point_values_2d: np.ndarray,
-    geometry: CartesianRayCellGeometry | SphericalRayCellGeometry,
-) -> CartesianInterpKernelState | SphericalInterpKernelState:
-    """Build one interpolation kernel state from one ray-geometry bundle."""
-    if isinstance(geometry, CartesianRayCellGeometry):
-        return _cartesian_interp_state_from_geometry(point_values_2d, geometry)
-    if isinstance(geometry, SphericalRayCellGeometry):
-        return _spherical_interp_state_from_geometry(point_values_2d, geometry)
-    raise TypeError(f"Unsupported truncated ray geometry {type(geometry).__name__}.")
-
-
 @njit(cache=True)
 def _contains_xyz_from_state(
     cid: int,
@@ -2516,7 +2498,18 @@ class OctreeRayInterpolator:
                 raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
         else:
             geometry = _ray_cell_geometry_for_max_level(self.tree, int(self.max_level))
-            self._interp_state = _interp_state_from_ray_geometry(_point_values_2d(interpolator), geometry)
+            point_values = np.asarray(interpolator.point_values, dtype=np.float64)
+            point_values_2d = np.array(
+                point_values.reshape(int(point_values.shape[0]), -1),
+                dtype=np.float64,
+                order="C",
+            )
+            if isinstance(geometry, CartesianRayCellGeometry):
+                self._interp_state = _cartesian_interp_state_from_geometry(point_values_2d, geometry)
+            elif isinstance(geometry, SphericalRayCellGeometry):
+                self._interp_state = _spherical_interp_state_from_geometry(point_values_2d, geometry)
+            else:
+                raise TypeError(f"Unsupported truncated ray geometry {type(geometry).__name__}.")
 
         if tree_coord == "xyz":
             if not isinstance(self._seed_lookup_state, CartesianLookupKernelState):
