@@ -797,7 +797,15 @@ class Octree:
             )
         self._require_lookup()
         backend = self._lookup_backend(str(self.tree_coord))
-        chosen = backend.lookup_cell_id(self, q, coord=resolved_coord)
+        if str(self.tree_coord) == "xyz":
+            if resolved_coord != "xyz":
+                raise ValueError("Cartesian lookup supports only coord='xyz'.")
+            chosen = backend._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
+        else:
+            if resolved_coord == "xyz":
+                chosen = backend._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
+            else:
+                chosen = backend._lookup_rpa_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
         return backend.hit_from_chosen(self, int(chosen))
 
     def contains_cell(
@@ -810,12 +818,35 @@ class Octree:
     ) -> bool:
         """Return whether one point lies inside one cell."""
         self._require_lookup()
-        return self._lookup_backend(str(self.tree_coord)).contains_cell(
+        q = np.array(point, dtype=float).reshape(3)
+        backend = self._lookup_backend(str(self.tree_coord))
+        if str(self.tree_coord) == "xyz":
+            if str(coord) != "xyz":
+                raise ValueError("Cartesian lookup supports only coord='xyz'.")
+            return backend._contains_xyz_cell(
+                self,
+                int(cell_id),
+                float(q[0]),
+                float(q[1]),
+                float(q[2]),
+                tol=float(tol),
+            )
+        if str(coord) == "xyz":
+            return backend._contains_xyz_cell(
+                self,
+                int(cell_id),
+                float(q[0]),
+                float(q[1]),
+                float(q[2]),
+                tol=float(tol),
+            )
+        return backend._contains_rpa_cell(
             self,
-            cell_id,
-            point,
-            coord=coord,
-            tol=tol,
+            int(cell_id),
+            float(q[0]),
+            float(q[1]),
+            float(q[2]),
+            tol=float(tol),
         )
 
     def hit_from_cell_id(self, cell_id: int) -> "LookupHit":

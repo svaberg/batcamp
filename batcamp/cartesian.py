@@ -242,41 +242,6 @@ class _CartesianCellLookup:
             np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
         )
 
-    def contains_cell(
-        self,
-        cell_id: int,
-        point: np.ndarray,
-        *,
-        coord: str,
-        tol: float = _LOOKUP_CONTAIN_TOL,
-    ) -> bool:
-        """Return whether one point lies inside one Cartesian cell slab."""
-        resolved = str(coord)
-        if resolved != "xyz":
-            raise ValueError("Cartesian lookup supports only coord='xyz'.")
-        q = np.array(point, dtype=float).reshape(3)
-        return _CartesianCellLookup._contains_xyz_cell(
-            self,
-            int(cell_id),
-            float(q[0]),
-            float(q[1]),
-            float(q[2]),
-            tol=float(tol),
-        )
-
-    def lookup_cell_id(
-        self,
-        point: np.ndarray,
-        *,
-        coord: str,
-    ) -> int:
-        """Return the containing Cartesian cell id, or `-1` when not found."""
-        resolved = str(coord)
-        if resolved != "xyz":
-            raise ValueError("Cartesian lookup supports only coord='xyz'.")
-        q = np.array(point, dtype=float).reshape(3)
-        return _CartesianCellLookup._lookup_xyz_cell_id(self, float(q[0]), float(q[1]), float(q[2]))
-
     def _contains_xyz_cell(
         self,
         cell_id: int,
