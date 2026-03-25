@@ -22,8 +22,8 @@ SphericalLookupKernelState = LookupKernelState
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
 
-    def _bind_geometry(self) -> None:
-        """Attach spherical bound geometry derived from exact leaf addresses."""
+    def _attach_coord_state(self) -> None:
+        """Derive and attach spherical runtime state from the bound dataset."""
         required = (
             "_i0",
             "_i1",
