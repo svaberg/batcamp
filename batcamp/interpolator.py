@@ -368,12 +368,16 @@ class OctreeInterpolator:
         self.tree = tree
         self.tree._require_lookup()
         self._ds = tree.ds
-        self._corners = np.array(self._ds.corners, dtype=np.int64)
+        if not hasattr(self.tree, "_corners") or not hasattr(self.tree, "_points") or not hasattr(self.tree, "_lookup_state"):
+            raise ValueError("Octree lookup geometry is unavailable after lookup initialization.")
+        self._corners = np.asarray(self.tree._corners, dtype=np.int64)
+        self._points = np.asarray(self.tree._points, dtype=np.float64)
+        self._lookup_state = self.tree._lookup_state
         self.fill_value = fill_value
 
         logger.debug(
             "Initializing OctreeInterpolator: points=%d, cells=%d",
-            int(self._ds.points.shape[0]),
+            int(self._points.shape[0]),
             int(self._corners.shape[0]),
         )
         self.value_names: tuple[str, ...] = ()
@@ -465,9 +469,9 @@ class OctreeInterpolator:
 
     def _prepare_spherical_points(self) -> None:
         """Precompute spherical coordinates `(r, theta, phi)` for each node."""
-        x = np.array(self._ds[Octree.X_VAR], dtype=float)
-        y = np.array(self._ds[Octree.Y_VAR], dtype=float)
-        z = np.array(self._ds[Octree.Z_VAR], dtype=float)
+        x = self._points[:, 0]
+        y = self._points[:, 1]
+        z = self._points[:, 2]
         r = np.sqrt(x * x + y * y + z * z)
         self._node_r = r
         self._node_theta = np.arccos(np.clip(z / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
@@ -479,13 +483,19 @@ class OctreeInterpolator:
         vr = self._node_r[corners]
         vt = self._node_theta[corners]
         vp = self._node_phi[corners]
+        lookup_state = self._lookup_state
+        if not isinstance(lookup_state, SphericalLookupKernelState):
+            raise TypeError(
+                "Spherical interpolation requires SphericalLookupKernelState; "
+                f"got {type(lookup_state).__name__}."
+            )
 
-        self._cell_r0 = np.min(vr, axis=1)
-        self._cell_r1 = np.max(vr, axis=1)
-        self._cell_t0 = np.min(vt, axis=1)
-        self._cell_t1 = np.max(vt, axis=1)
-        self._cell_p_start = self.tree._cell_phi_start
-        self._cell_p_width = self.tree._cell_phi_width
+        self._cell_r0 = np.asarray(lookup_state.cell_r_min, dtype=np.float64)
+        self._cell_r1 = np.asarray(lookup_state.cell_r_max, dtype=np.float64)
+        self._cell_t0 = np.asarray(lookup_state.cell_theta_min, dtype=np.float64)
+        self._cell_t1 = np.asarray(lookup_state.cell_theta_max, dtype=np.float64)
+        self._cell_p_start = np.asarray(lookup_state.cell_phi_start, dtype=np.float64)
+        self._cell_p_width = np.asarray(lookup_state.cell_phi_width, dtype=np.float64)
 
         tiny = np.finfo(float).tiny
         self._cell_rden = np.maximum(self._cell_r1 - self._cell_r0, tiny)
@@ -536,17 +546,23 @@ class OctreeInterpolator:
         axis-aligned min/max bounds (slab normalization).
         """
         corners = self._corners
-        pts = np.array(self.tree._points, dtype=float)
+        pts = self._points
+        lookup_state = self._lookup_state
+        if not isinstance(lookup_state, CartesianLookupKernelState):
+            raise TypeError(
+                "Cartesian interpolation requires CartesianLookupKernelState; "
+                f"got {type(lookup_state).__name__}."
+            )
         vx = pts[corners, 0]
         vy = pts[corners, 1]
         vz = pts[corners, 2]
 
-        self._cell_x0 = np.min(vx, axis=1)
-        self._cell_x1 = np.max(vx, axis=1)
-        self._cell_y0 = np.min(vy, axis=1)
-        self._cell_y1 = np.max(vy, axis=1)
-        self._cell_z0 = np.min(vz, axis=1)
-        self._cell_z1 = np.max(vz, axis=1)
+        self._cell_x0 = np.asarray(lookup_state.cell_x_min, dtype=np.float64)
+        self._cell_x1 = np.asarray(lookup_state.cell_x_max, dtype=np.float64)
+        self._cell_y0 = np.asarray(lookup_state.cell_y_min, dtype=np.float64)
+        self._cell_y1 = np.asarray(lookup_state.cell_y_max, dtype=np.float64)
+        self._cell_z0 = np.asarray(lookup_state.cell_z_min, dtype=np.float64)
+        self._cell_z1 = np.asarray(lookup_state.cell_z_max, dtype=np.float64)
 
         tiny = np.finfo(float).tiny
         self._cell_xden = np.maximum(self._cell_x1 - self._cell_x0, tiny)
@@ -610,7 +626,7 @@ class OctreeInterpolator:
             cell_phi_full=self._cell_phi_full,
             cell_phi_tiny=self._cell_phi_tiny,
         )
-        self._lookup_state_rpa = self.tree._lookup_state
+        self._lookup_state_rpa = self._lookup_state
 
     def _prepare_kernel_cache_xyz(self) -> None:
         """Build packed arrays for the Cartesian backend."""
@@ -625,7 +641,7 @@ class OctreeInterpolator:
             cell_z0=self._cell_z0,
             cell_zden=self._cell_zden,
         )
-        self._lookup_state_xyz = self.tree._lookup_state
+        self._lookup_state_xyz = self._lookup_state
 
     def _fill_value_vector(self) -> np.ndarray:
         """Convert `fill_value` to one vector of length `n_components`."""
@@ -644,7 +660,7 @@ class OctreeInterpolator:
 
     def warmup_kernels(self) -> None:
         """Trigger JIT compilation ahead of first real query."""
-        q_xyz = np.array(self.tree._points[:1], dtype=np.float64, order="C")
+        q_xyz = np.array(self._points[:1], dtype=np.float64, order="C")
         if q_xyz.shape[0] == 0:
             q_xyz = np.zeros((1, 3), dtype=np.float64)
         fill = self._fill_value_vector()
