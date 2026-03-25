@@ -9,50 +9,24 @@ from numba import njit
 import numpy as np
 
 from .constants import XYZ_VARS
-from .octree import LookupKernelState
-from .octree import Octree
+from .octree import _coord_state_inputs
+from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
 from .octree import _lookup_cell_id_kernel
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
 
-SphericalLookupKernelState = LookupKernelState
-
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
 
     def _attach_coord_state(self) -> None:
         """Derive and attach spherical runtime state from the bound dataset."""
-        required = (
-            "_i0",
-            "_i1",
-            "_i2",
-            "_node_depth",
-            "_node_i0",
-            "_node_i1",
-            "_node_i2",
-            "_node_value",
-            "_node_child",
-            "_root_node_ids",
-            "_node_parent",
-            "_cell_node_id",
-        )
-        missing = [name for name in required if not hasattr(self, name)]
-        if missing:
-            raise ValueError(f"Spherical lookup requires exact tree state: missing {missing}.")
-        # Cast once at the dataset->kernel boundary: corner ids must index cleanly
-        # and spherical lookup kernels run on float64 coordinates.
-        corners = np.asarray(self.ds.corners, dtype=np.int64)
-        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64)
-        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64)
-        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64)
+        corners, x, y, z, cell_levels = _coord_state_inputs(self, coord_name="Spherical")
         n_cells = int(corners.shape[0])
-        if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
-            raise ValueError("Spherical lookup requires exact cell_levels.")
-        self._cell_level = self.cell_levels
-        valid_ids = np.flatnonzero(self._cell_level >= 0)
-        shifts = int(self.max_level) - self._cell_level[valid_ids]
+        cell_valid = cell_levels >= 0
+        valid_ids = np.flatnonzero(cell_valid)
+        shifts = int(self.max_level) - cell_levels[valid_ids]
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
         r0_f = np.left_shift(self._i0[valid_ids], shifts)
         r1_f = r0_f + width_units
@@ -109,14 +83,15 @@ class _SphericalCoordSupport:
         self._node_theta_max = node_t1_f * d_theta_f
         self._node_phi_start = np.mod(node_p0_f * d_phi_f, 2.0 * math.pi)
         self._node_phi_width = node_width * d_phi_f
-        self._coord_state = LookupKernelState(
+        self._coord_state = _pack_coord_state(
+            self,
             cell_axis0_start=self._cell_r_min,
             cell_axis0_width=self._cell_r_max - self._cell_r_min,
             cell_axis1_start=self._cell_theta_min,
             cell_axis1_width=self._cell_theta_max - self._cell_theta_min,
             cell_axis2_start=self._cell_phi_start,
             cell_axis2_width=self._cell_phi_width,
-            cell_valid=(self._cell_level >= 0),
+            cell_valid=cell_valid,
             domain_axis0_start=float(self._r_min),
             domain_axis0_width=float(self._r_max - self._r_min),
             domain_axis1_start=0.0,
@@ -125,11 +100,6 @@ class _SphericalCoordSupport:
             domain_axis2_width=float(_TWO_PI),
             axis2_period=float(_TWO_PI),
             axis2_periodic=True,
-            node_value=self._node_value,
-            node_child=self._node_child,
-            root_node_ids=self._root_node_ids,
-            node_parent=self._node_parent,
-            cell_node_id=self._cell_node_id,
             node_axis0_start=self._node_r_min,
             node_axis0_width=self._node_r_max - self._node_r_min,
             node_axis1_start=self._node_theta_min,

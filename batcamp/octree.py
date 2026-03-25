@@ -66,6 +66,95 @@ class LookupKernelState(NamedTuple):
     node_axis2_start: np.ndarray
     node_axis2_width: np.ndarray
 
+def _coord_state_inputs(
+    tree: "Octree",
+    *,
+    coord_name: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the bound dataset arrays and exact leaf levels needed for coordinate state."""
+    missing = [
+        name
+        for name in (
+            "_i0",
+            "_i1",
+            "_i2",
+            "_node_depth",
+            "_node_i0",
+            "_node_i1",
+            "_node_i2",
+            "_node_value",
+            "_node_child",
+            "_root_node_ids",
+            "_node_parent",
+            "_cell_node_id",
+        )
+        if not hasattr(tree, name)
+    ]
+    if missing:
+        raise ValueError(f"{coord_name} lookup requires exact tree state: missing {missing}.")
+    corners = np.asarray(tree.ds.corners, dtype=np.int64)
+    x, y, z = (np.asarray(tree.ds[name], dtype=np.float64) for name in XYZ_VARS)
+    cell_levels = tree.cell_levels
+    if cell_levels is None or int(cell_levels.shape[0]) != int(corners.shape[0]):
+        raise ValueError(f"{coord_name} lookup requires exact cell_levels.")
+    return corners, x, y, z, cell_levels
+
+
+def _pack_coord_state(
+    tree: "Octree",
+    *,
+    cell_axis0_start: np.ndarray,
+    cell_axis0_width: np.ndarray,
+    cell_axis1_start: np.ndarray,
+    cell_axis1_width: np.ndarray,
+    cell_axis2_start: np.ndarray,
+    cell_axis2_width: np.ndarray,
+    cell_valid: np.ndarray,
+    domain_axis0_start: float,
+    domain_axis0_width: float,
+    domain_axis1_start: float,
+    domain_axis1_width: float,
+    domain_axis2_start: float,
+    domain_axis2_width: float,
+    axis2_period: float,
+    axis2_periodic: bool,
+    node_axis0_start: np.ndarray,
+    node_axis0_width: np.ndarray,
+    node_axis1_start: np.ndarray,
+    node_axis1_width: np.ndarray,
+    node_axis2_start: np.ndarray,
+    node_axis2_width: np.ndarray,
+) -> LookupKernelState:
+    """Pack one shared lookup state from topology plus coordinate-specific geometry."""
+    return LookupKernelState(
+        cell_axis0_start=cell_axis0_start,
+        cell_axis0_width=cell_axis0_width,
+        cell_axis1_start=cell_axis1_start,
+        cell_axis1_width=cell_axis1_width,
+        cell_axis2_start=cell_axis2_start,
+        cell_axis2_width=cell_axis2_width,
+        cell_valid=cell_valid,
+        domain_axis0_start=domain_axis0_start,
+        domain_axis0_width=domain_axis0_width,
+        domain_axis1_start=domain_axis1_start,
+        domain_axis1_width=domain_axis1_width,
+        domain_axis2_start=domain_axis2_start,
+        domain_axis2_width=domain_axis2_width,
+        axis2_period=axis2_period,
+        axis2_periodic=axis2_periodic,
+        node_value=tree._node_value,
+        node_child=tree._node_child,
+        root_node_ids=tree._root_node_ids,
+        node_parent=tree._node_parent,
+        cell_node_id=tree._cell_node_id,
+        node_axis0_start=node_axis0_start,
+        node_axis0_width=node_axis0_width,
+        node_axis1_start=node_axis1_start,
+        node_axis1_width=node_axis1_width,
+        node_axis2_start=node_axis2_start,
+        node_axis2_width=node_axis2_width,
+    )
+
 
 @njit(cache=True)
 def _contains_lookup_interval(
