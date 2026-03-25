@@ -236,7 +236,9 @@ class CartesianOctreeBuilder:
                 np.asarray(ds[Octree.Z_VAR], dtype=float),
             )
         )
-        cell_xyz = points[np.asarray(corners, dtype=np.int64)]
+        corners_arr = np.asarray(corners, dtype=np.int64)
+        cell_xyz = points[corners_arr]
+        cell_centers = np.mean(cell_xyz, axis=1)
         cell_x_min = np.min(cell_xyz[:, :, 0], axis=1)
         cell_x_max = np.max(cell_xyz[:, :, 0], axis=1)
         cell_y_min = np.min(cell_xyz[:, :, 1], axis=1)
@@ -385,6 +387,17 @@ class CartesianOctreeBuilder:
         node_y_max = float(xyz_min[1]) + node_y1_f.astype(float) * float(fine_step[1])
         node_z_min = float(xyz_min[2]) + node_z0_f.astype(float) * float(fine_step[2])
         node_z_max = float(xyz_min[2]) + node_z1_f.astype(float) * float(fine_step[2])
+        tree._corners = np.asarray(corners_arr, dtype=np.int64)
+        tree._points = np.asarray(points, dtype=np.float64)
+        tree._cell_centers = np.asarray(cell_centers, dtype=np.float64)
+        tree._cell_x_min = np.asarray(cell_x_min, dtype=np.float64)
+        tree._cell_x_max = np.asarray(cell_x_max, dtype=np.float64)
+        tree._cell_y_min = np.asarray(cell_y_min, dtype=np.float64)
+        tree._cell_y_max = np.asarray(cell_y_max, dtype=np.float64)
+        tree._cell_z_min = np.asarray(cell_z_min, dtype=np.float64)
+        tree._cell_z_max = np.asarray(cell_z_max, dtype=np.float64)
+        tree._xyz_min = np.asarray(xyz_min, dtype=np.float64)
+        tree._xyz_max = np.asarray(xyz_max, dtype=np.float64)
         tree._i0 = cell_i0
         tree._i1 = cell_i1
         tree._i2 = cell_i2

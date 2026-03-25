@@ -17,7 +17,7 @@ from batread.dataset import Dataset
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 DEFAULT_AXIS_RHO_TOL = 1e-12
-OCTREE_FILE_VERSION = 3
+OCTREE_FILE_VERSION = 4
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
 
@@ -129,12 +129,22 @@ class Octree:
         """Attach a dataset to this tree so lookup and ray methods can run."""
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")
+        if not set(self.XYZ_VARS).issubset(set(ds.variables)):
+            raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         next_axis_rho_tol = float(self.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
         ds_changed = self.ds is not ds
         tol_changed = not np.isclose(float(self.axis_rho_tol), next_axis_rho_tol, rtol=0.0, atol=0.0)
 
         self.ds = ds
         self.axis_rho_tol = next_axis_rho_tol
+        self._corners = np.asarray(ds.corners, dtype=np.int64)
+        self._points = np.column_stack(
+            (
+                np.asarray(ds[self.X_VAR], dtype=float),
+                np.asarray(ds[self.Y_VAR], dtype=float),
+                np.asarray(ds[self.Z_VAR], dtype=float),
+            )
+        )
         if ds_changed or tol_changed:
             self._lookup_ready = False
 

@@ -353,6 +353,7 @@ class SphericalOctreeBuilder:
             )
         )
         corners_arr = np.asarray(corners, dtype=np.int64)
+        cell_centers = np.mean(points[corners_arr], axis=1)
         levels = np.asarray(tree.cell_levels, dtype=np.int64)
         valid = levels >= 0
         valid_ids = np.flatnonzero(valid).astype(np.int64)
@@ -538,6 +539,17 @@ class SphericalOctreeBuilder:
         node_theta_max = node_t1_f.astype(float) * d_theta_f
         node_phi_start = np.mod(node_p0_f.astype(float) * d_phi_f, 2.0 * math.pi)
         node_phi_width = node_width.astype(float) * d_phi_f
+        tree._corners = np.asarray(corners_arr, dtype=np.int64)
+        tree._points = np.asarray(points, dtype=np.float64)
+        tree._cell_centers = np.asarray(cell_centers, dtype=np.float64)
+        tree._cell_r_min = np.asarray(cell_r_min, dtype=np.float64)
+        tree._cell_r_max = np.asarray(cell_r_max, dtype=np.float64)
+        tree._r_min = float(r_min)
+        tree._r_max = float(r_max)
+        tree._cell_theta_min = np.asarray(cell_theta_min, dtype=np.float64)
+        tree._cell_theta_max = np.asarray(cell_theta_max, dtype=np.float64)
+        tree._cell_phi_start = np.asarray(phi_start, dtype=np.float64)
+        tree._cell_phi_width = np.asarray(phi_width, dtype=np.float64)
         tree._i0 = cell_i0
         tree._i1 = cell_i1
         tree._i2 = cell_i2

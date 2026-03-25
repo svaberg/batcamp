@@ -175,110 +175,59 @@ class _SphericalCellLookup:
     """Cell lookup helper for spherical trees."""
 
     def _init_lookup_state(self) -> None:
-        """Build lookup arrays from a bound spherical tree."""
+        """Pack builder-provided spherical tree geometry into lookup state."""
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
-        ds = self.ds
-        corners = np.array(ds.corners, dtype=np.int64)
-        cell_levels = self.cell_levels
-        axis_rho_tol = float(self.axis_rho_tol)
-        if not set(Octree.XYZ_VARS).issubset(set(ds.variables)):
-            raise ValueError("Lookup requires X/Y/Z variables.")
-
-        self._axis_rho_tol = axis_rho_tol
-        self._corners = np.array(corners, dtype=np.int64)
-        self._points = np.column_stack(
-            (
-                np.array(ds[Octree.X_VAR], dtype=float),
-                np.array(ds[Octree.Y_VAR], dtype=float),
-                np.array(ds[Octree.Z_VAR], dtype=float),
-            )
-        )
-        self._cell_centers = np.mean(self._points[self._corners], axis=1)
-        n_cells = int(self._corners.shape[0])
-        if cell_levels is None or int(cell_levels.shape[0]) != n_cells:
-            raise ValueError("Spherical lookup requires exact builder-provided cell_levels.")
-        self._cell_level = np.array(cell_levels, dtype=np.int64)
-        _SphericalCellLookup._build_index(self)
-
-    def _build_index(self) -> None:
-        """Build per-level lookup tables, bins, and per-cell bounds."""
-        n_cells = self._corners.shape[0]
-        valid = self._cell_level >= 0
-        if not np.any(valid):
-            raise ValueError("Lookup requires at least one valid leaf level.")
-
-        self._max_level = int(self.max_level)
-        valid_levels = sorted(set(int(v) for v in self._cell_level[valid].tolist()))
-        shape_by_level: dict[int, tuple[int, int, int]] = {}
-        dtheta_by_level: dict[int, float] = {}
-        dphi_by_level: dict[int, float] = {}
-        for level in valid_levels:
-            depth = int(level)
-            if depth < 0:
-                raise ValueError(f"Derived negative level {level}; max_level={self.max_level}.")
-            nr = int(self.root_shape[0] * (1 << depth))
-            ntheta = int(self.root_shape[1] * (1 << depth))
-            nphi = int(self.root_shape[2] * (1 << depth))
-            shape_by_level[level] = (nr, ntheta, nphi)
-            dtheta_by_level[level] = math.pi / float(ntheta)
-            dphi_by_level[level] = _TWO_PI / float(nphi)
-        self._shape_by_level = shape_by_level
-        self._dtheta_by_level = dtheta_by_level
-        self._dphi_by_level = dphi_by_level
-
-        levels_asc = np.array(sorted(self._shape_by_level.keys()), dtype=np.int64)
-        level_cap = int(np.max(levels_asc)) + 1
-        shape_table = np.full((level_cap, 3), -1, dtype=np.int64)
-        bin_level_offset = np.full(level_cap, -1, dtype=np.int64)
-        running_offset = 0
-        for level in levels_asc:
-            lvl = int(level)
-            shape = self._shape_by_level[lvl]
-            shape_table[lvl, 0] = int(shape[0])
-            shape_table[lvl, 1] = int(shape[1])
-            shape_table[lvl, 2] = int(shape[2])
-            bin_level_offset[lvl] = running_offset
-            running_offset += int(shape[1]) * int(shape[2])
-        self._shape_table = shape_table
-        self._bin_level_offset = bin_level_offset
-        points_r = np.linalg.norm(self._points, axis=1)
-        cell_r_min = np.min(points_r[self._corners], axis=1)
-        cell_r_max = np.max(points_r[self._corners], axis=1)
-        theta_points = np.arccos(
-            np.clip(self._points[:, 2] / np.maximum(points_r, np.finfo(float).tiny), -1.0, 1.0)
-        )
-        phi_points = np.mod(np.arctan2(self._points[:, 1], self._points[:, 0]), 2.0 * math.pi)
-        rho_points = np.hypot(self._points[:, 0], self._points[:, 1])
-        axis_mask = rho_points[self._corners] <= self._axis_rho_tol
-        self._cell_r_min = cell_r_min
-        self._cell_r_max = cell_r_max
-        self._r_min = float(np.min(cell_r_min))
-        self._r_max = float(np.max(cell_r_max))
-        self._cell_theta_min = np.min(theta_points[self._corners], axis=1)
-        self._cell_theta_max = np.max(theta_points[self._corners], axis=1)
-
-        phi_start = np.empty(n_cells, dtype=float)
-        phi_width = np.empty(n_cells, dtype=float)
-        phi_corners = phi_points[self._corners]
-        for cid in range(n_cells):
-            vals = phi_corners[cid, ~axis_mask[cid]]
-            if vals.size < 2:
-                vals = phi_corners[cid]
-            start, width = _SphericalCellLookup._minimal_phi_interval(vals)
-            phi_start[cid] = start
-            phi_width[cid] = width
-        self._cell_phi_start = phi_start
-        self._cell_phi_width = phi_width
-
         required = (
-            "_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value", "_radial_edges",
-            "_node_child", "_root_node_ids", "_node_parent", "_cell_node_id",
-            "_node_r_min", "_node_r_max", "_node_theta_min", "_node_theta_max", "_node_phi_start", "_node_phi_width",
+            "_corners",
+            "_points",
+            "_cell_centers",
+            "_cell_r_min",
+            "_cell_r_max",
+            "_r_min",
+            "_r_max",
+            "_cell_theta_min",
+            "_cell_theta_max",
+            "_cell_phi_start",
+            "_cell_phi_width",
+            "_i0",
+            "_i1",
+            "_i2",
+            "_node_depth",
+            "_node_i0",
+            "_node_i1",
+            "_node_i2",
+            "_node_value",
+            "_radial_edges",
+            "_node_child",
+            "_root_node_ids",
+            "_node_parent",
+            "_cell_node_id",
+            "_node_r_min",
+            "_node_r_max",
+            "_node_theta_min",
+            "_node_theta_max",
+            "_node_phi_start",
+            "_node_phi_width",
         )
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
-            raise ValueError(f"Spherical lookup requires builder-provided octree state: missing {missing}.")
+            raise ValueError(f"Spherical lookup requires builder-provided geometry state: missing {missing}.")
+        self._corners = np.asarray(self._corners, dtype=np.int64)
+        self._points = np.asarray(self._points, dtype=np.float64)
+        self._cell_centers = np.asarray(self._cell_centers, dtype=np.float64)
+        self._cell_r_min = np.asarray(self._cell_r_min, dtype=np.float64)
+        self._cell_r_max = np.asarray(self._cell_r_max, dtype=np.float64)
+        self._cell_theta_min = np.asarray(self._cell_theta_min, dtype=np.float64)
+        self._cell_theta_max = np.asarray(self._cell_theta_max, dtype=np.float64)
+        self._cell_phi_start = np.asarray(self._cell_phi_start, dtype=np.float64)
+        self._cell_phi_width = np.asarray(self._cell_phi_width, dtype=np.float64)
+        self._r_min = float(self._r_min)
+        self._r_max = float(self._r_max)
+        n_cells = int(self._cell_centers.shape[0])
+        if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
+            raise ValueError("Spherical lookup requires exact builder-provided cell_levels.")
+        self._cell_level = np.array(self.cell_levels, dtype=np.int64)
         self._i0 = np.asarray(self._i0, dtype=np.int64)
         self._i1 = np.asarray(self._i1, dtype=np.int64)
         self._i2 = np.asarray(self._i2, dtype=np.int64)
@@ -298,42 +247,6 @@ class _SphericalCellLookup:
         self._node_phi_start = np.asarray(self._node_phi_start, dtype=np.float64)
         self._node_phi_width = np.asarray(self._node_phi_width, dtype=np.float64)
         self._radial_edges = np.asarray(self._radial_edges, dtype=np.float64)
-        n_bins = int(running_offset)
-        bin_lists: list[list[int]] = [[] for _ in range(n_bins)]
-        for cid in np.flatnonzero(valid):
-            level = int(self._cell_level[cid])
-            tt = int(self._i1[cid])
-            pp = int(self._i2[cid])
-            nphi = int(self._shape_table[level, 2])
-            key = int(self._bin_level_offset[level] + tt * nphi + pp)
-            bin_lists[key].append(int(cid))
-
-        bin_counts = np.zeros(n_bins, dtype=np.int64)
-        for key, ids in enumerate(bin_lists):
-            if not ids:
-                continue
-            arr = np.array(ids, dtype=np.int64)
-            order = np.argsort(self._i0[arr], kind="stable")
-            sorted_ids = arr[order]
-            bin_lists[key] = sorted_ids.tolist()
-            bin_counts[key] = int(sorted_ids.size)
-
-        bin_offsets = np.zeros(n_bins + 1, dtype=np.int64)
-        if n_bins > 0:
-            np.cumsum(bin_counts, out=bin_offsets[1:])
-        total_refs = int(bin_offsets[-1])
-        bin_cell_ids = np.empty(total_refs, dtype=np.int64)
-        for key in range(n_bins):
-            start = int(bin_offsets[key])
-            end = int(bin_offsets[key + 1])
-            if end <= start:
-                continue
-            ids = bin_lists[key]
-            bin_cell_ids[start:end] = np.array(ids, dtype=np.int64)
-
-        self._bin_counts = bin_counts
-        self._bin_offsets = bin_offsets
-        self._bin_cell_ids = bin_cell_ids
         self._lookup_state = SphericalLookupKernelState(
             cell_r_min=self._cell_r_min,
             cell_r_max=self._cell_r_max,
@@ -393,61 +306,6 @@ class _SphericalCellLookup:
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([self._r_min, 0.0, 0.0], dtype=float), np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
-
-    @staticmethod
-    def _minimal_phi_interval(values: np.ndarray) -> tuple[float, float]:
-        """Return the smallest wrapped azimuth interval covering the samples."""
-        vals = np.sort(np.mod(np.array(values, dtype=float), 2.0 * math.pi))
-        if vals.size == 0:
-            return 0.0, 2.0 * math.pi
-        if vals.size == 1:
-            return float(vals[0]), 0.0
-        wrapped = np.concatenate((vals, vals[:1] + 2.0 * math.pi))
-        gaps = np.diff(wrapped)
-        k = int(np.argmax(gaps))
-        start = float(wrapped[k + 1] % (2.0 * math.pi))
-        width = float((2.0 * math.pi) - gaps[k])
-        return start, width
-
-    def _candidate_ids(self, level: int, itheta: int, iphi: int, radius: int) -> np.ndarray:
-        """Return candidate cell ids from nearby angular bins."""
-        if level < 0 or level >= self._shape_table.shape[0]:
-            return np.array([], dtype=np.int64)
-        ntheta = int(self._shape_table[level, 1])
-        nphi = int(self._shape_table[level, 2])
-        if ntheta <= 0 or nphi <= 0:
-            return np.array([], dtype=np.int64)
-        level_offset = int(self._bin_level_offset[level])
-        if level_offset < 0:
-            return np.array([], dtype=np.int64)
-        total = 0
-        for dt in range(-radius, radius + 1):
-            tt = itheta + dt
-            if tt < 0 or tt >= ntheta:
-                continue
-            for dp in range(-radius, radius + 1):
-                pp = (iphi + dp) % nphi
-                key = int(level_offset + tt * nphi + pp)
-                total += int(self._bin_counts[key])
-        if total <= 0:
-            return np.array([], dtype=np.int64)
-        out = np.empty(total, dtype=np.int64)
-        cursor = 0
-        for dt in range(-radius, radius + 1):
-            tt = itheta + dt
-            if tt < 0 or tt >= ntheta:
-                continue
-            for dp in range(-radius, radius + 1):
-                pp = (iphi + dp) % nphi
-                key = int(level_offset + tt * nphi + pp)
-                count = int(self._bin_counts[key])
-                if count <= 0:
-                    continue
-                start = int(self._bin_offsets[key])
-                end = int(self._bin_offsets[key + 1])
-                out[cursor : cursor + count] = self._bin_cell_ids[start:end]
-                cursor += count
-        return out
 
     def _contains_rpa(
         self,
