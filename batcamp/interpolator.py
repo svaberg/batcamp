@@ -13,10 +13,9 @@ from numba import njit
 from numba import prange
 import numpy as np
 
+from .octree import LookupKernelState
 from .octree import Octree
-from .cartesian import CartesianLookupKernelState
 from .cartesian import _lookup_xyz_cell_id_kernel
-from .spherical import SphericalLookupKernelState
 from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 
@@ -191,7 +190,7 @@ def _interp_batch_xyz(
     queries_xyz: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
-    lookup_state: SphericalLookupKernelState,
+    lookup_state: LookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a batch of Cartesian queries and return values plus cell ids."""
     n_query = queries_xyz.shape[0]
@@ -249,7 +248,7 @@ def _interp_batch_rpa(
     queries_rpa: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
-    lookup_state: SphericalLookupKernelState,
+    lookup_state: LookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a batch of spherical queries and return values plus cell ids."""
     n_query = queries_rpa.shape[0]
@@ -296,7 +295,7 @@ def _interp_batch_xyz_cartesian(
     queries_xyz: np.ndarray,
     fill_values: np.ndarray,
     interp_state: CartesianInterpKernelState,
-    lookup_state: CartesianLookupKernelState,
+    lookup_state: LookupKernelState,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate Cartesian queries for Cartesian trees via compiled kernels.
 
@@ -477,18 +476,12 @@ class OctreeInterpolator:
         vt = self._node_theta[corners]
         vp = self._node_phi[corners]
         lookup_state = self._lookup_state
-        if not isinstance(lookup_state, SphericalLookupKernelState):
-            raise TypeError(
-                "Spherical interpolation requires SphericalLookupKernelState; "
-                f"got {type(lookup_state).__name__}."
-            )
-
-        self._cell_r0 = lookup_state.cell_r_min
-        self._cell_r1 = lookup_state.cell_r_max
-        self._cell_t0 = lookup_state.cell_theta_min
-        self._cell_t1 = lookup_state.cell_theta_max
-        self._cell_p_start = lookup_state.cell_phi_start
-        self._cell_p_width = lookup_state.cell_phi_width
+        self._cell_r0 = lookup_state.cell_axis0_start
+        self._cell_r1 = lookup_state.cell_axis0_start + lookup_state.cell_axis0_width
+        self._cell_t0 = lookup_state.cell_axis1_start
+        self._cell_t1 = lookup_state.cell_axis1_start + lookup_state.cell_axis1_width
+        self._cell_p_start = lookup_state.cell_axis2_start
+        self._cell_p_width = lookup_state.cell_axis2_width
 
         tiny = np.finfo(float).tiny
         self._cell_rden = np.maximum(self._cell_r1 - self._cell_r0, tiny)
@@ -541,21 +534,16 @@ class OctreeInterpolator:
         corners = self._corners
         pts = self._points
         lookup_state = self._lookup_state
-        if not isinstance(lookup_state, CartesianLookupKernelState):
-            raise TypeError(
-                "Cartesian interpolation requires CartesianLookupKernelState; "
-                f"got {type(lookup_state).__name__}."
-            )
         vx = pts[corners, 0]
         vy = pts[corners, 1]
         vz = pts[corners, 2]
 
-        self._cell_x0 = lookup_state.cell_x_min
-        self._cell_x1 = lookup_state.cell_x_max
-        self._cell_y0 = lookup_state.cell_y_min
-        self._cell_y1 = lookup_state.cell_y_max
-        self._cell_z0 = lookup_state.cell_z_min
-        self._cell_z1 = lookup_state.cell_z_max
+        self._cell_x0 = lookup_state.cell_axis0_start
+        self._cell_x1 = lookup_state.cell_axis0_start + lookup_state.cell_axis0_width
+        self._cell_y0 = lookup_state.cell_axis1_start
+        self._cell_y1 = lookup_state.cell_axis1_start + lookup_state.cell_axis1_width
+        self._cell_z0 = lookup_state.cell_axis2_start
+        self._cell_z1 = lookup_state.cell_axis2_start + lookup_state.cell_axis2_width
 
         tiny = np.finfo(float).tiny
         self._cell_xden = np.maximum(self._cell_x1 - self._cell_x0, tiny)
