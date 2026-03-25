@@ -8,6 +8,7 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
@@ -42,9 +43,9 @@ def _build_uniform_spherical_hex_dataset(
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "LinField": linear_field,
             "LinField2": linear_field2,
             "LinFieldConst": linear_const,

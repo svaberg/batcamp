@@ -5,6 +5,7 @@ import numpy as np
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 
@@ -31,9 +32,9 @@ def _build_uniform_cartesian_linear_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Scalar": _linear_scalar(x, y, z),
             "XCoord": np.asarray(x, dtype=float),
         },
@@ -87,9 +88,9 @@ def _build_adaptive_cartesian_linear_dataset() -> _FakeDataset:
         points=points,
         corners=np.array(corners, dtype=np.int64),
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Scalar": _linear_scalar(x, y, z),
             "XCoord": np.asarray(x, dtype=float),
         },
@@ -100,9 +101,9 @@ def _xyz_points(ds: _FakeDataset) -> np.ndarray:
     """Return dataset point coordinates as one dense `(n, 3)` array."""
     return np.column_stack(
         [
-            np.asarray(ds[Octree.X_VAR], dtype=float),
-            np.asarray(ds[Octree.Y_VAR], dtype=float),
-            np.asarray(ds[Octree.Z_VAR], dtype=float),
+            np.asarray(ds[XYZ_VARS[0]], dtype=float),
+            np.asarray(ds[XYZ_VARS[1]], dtype=float),
+            np.asarray(ds[XYZ_VARS[2]], dtype=float),
         ]
     )
 

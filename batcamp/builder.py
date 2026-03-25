@@ -11,6 +11,7 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
+from .constants import XYZ_VARS
 from .octree import TreeCoord
 from .octree import DEFAULT_TREE_COORD
 from .octree import GridShape
@@ -51,9 +52,9 @@ def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> T
     else:
         sample = corners_arr
 
-    x = np.asarray(ds[Octree.X_VAR], dtype=float)
-    y = np.asarray(ds[Octree.Y_VAR], dtype=float)
-    z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+    x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+    y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
+    z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
     xr = np.round(x[sample], 12)
     yr = np.round(y[sample], 12)
     zr = np.round(z[sample], 12)

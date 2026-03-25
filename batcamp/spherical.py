@@ -9,6 +9,7 @@ from typing import NamedTuple
 from numba import njit
 import numpy as np
 
+from .constants import XYZ_VARS
 from .octree import GridIndex
 from .octree import GridPath
 from .octree import LookupHit
@@ -197,9 +198,9 @@ class _SphericalCellLookup:
         # Cast once at the dataset->kernel boundary: corner ids must index cleanly
         # and spherical lookup kernels run on float64 coordinates.
         corners = np.asarray(self.ds.corners, dtype=np.int64)
-        x = np.asarray(self.ds[self.X_VAR], dtype=np.float64)
-        y = np.asarray(self.ds[self.Y_VAR], dtype=np.float64)
-        z = np.asarray(self.ds[self.Z_VAR], dtype=np.float64)
+        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64)
+        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64)
+        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64)
         n_cells = int(corners.shape[0])
         if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
             raise ValueError("Spherical lookup requires exact cell_levels.")
@@ -301,9 +302,9 @@ class _SphericalCellLookup:
         corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
         pts = np.column_stack(
             (
-                np.asarray(self.ds[self.X_VAR], dtype=float)[corners],
-                np.asarray(self.ds[self.Y_VAR], dtype=float)[corners],
-                np.asarray(self.ds[self.Z_VAR], dtype=float)[corners],
+                np.asarray(self.ds[XYZ_VARS[0]], dtype=float)[corners],
+                np.asarray(self.ds[XYZ_VARS[1]], dtype=float)[corners],
+                np.asarray(self.ds[XYZ_VARS[2]], dtype=float)[corners],
             )
         )
         return np.min(pts, axis=0), np.max(pts, axis=0)
@@ -327,9 +328,9 @@ class _SphericalCellLookup:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         pts = np.column_stack(
             (
-                np.asarray(self.ds[self.X_VAR], dtype=float),
-                np.asarray(self.ds[self.Y_VAR], dtype=float),
-                np.asarray(self.ds[self.Z_VAR], dtype=float),
+                np.asarray(self.ds[XYZ_VARS[0]], dtype=float),
+                np.asarray(self.ds[XYZ_VARS[1]], dtype=float),
+                np.asarray(self.ds[XYZ_VARS[2]], dtype=float),
             )
         )
         return np.min(pts, axis=0), np.max(pts, axis=0)

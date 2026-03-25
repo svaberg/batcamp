@@ -6,6 +6,7 @@ from __future__ import annotations
 import numpy as np
 from batread import Dataset
 
+from .constants import XYZ_VARS
 from .builder import LevelShapeStatsMap
 from .builder import DEFAULT_AXIS_RHO_TOL
 from .builder import _median_positive
@@ -113,10 +114,10 @@ class SphericalOctreeBuilder:
     def _axis_corner_mask(ds: Dataset, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
         """Mark corners near the polar axis where azimuth is singular."""
         names = set(ds.variables)
-        if not set(Octree.XY_VARS).issubset(names):
+        if not set(XYZ_VARS[:2]).issubset(names):
             return np.zeros(corners.shape, dtype=bool)
-        x = np.asarray(ds[Octree.X_VAR], dtype=float)
-        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
+        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
         rho = np.hypot(x, y)
         return rho[corners] <= float(axis_rho_tol)
 
@@ -133,9 +134,9 @@ class SphericalOctreeBuilder:
         if "phi [rad]" in variable_names:
             phi_rad = np.asarray(ds["phi [rad]"], dtype=float)
             return np.mod(phi_rad, 2.0 * np.pi)
-        if set(Octree.XY_VARS).issubset(variable_names):
-            x = np.asarray(ds[Octree.X_VAR], dtype=float)
-            y = np.asarray(ds[Octree.Y_VAR], dtype=float)
+        if set(XYZ_VARS[:2]).issubset(variable_names):
+            x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+            y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
             return np.mod(np.arctan2(y, x), 2.0 * np.pi)
         raise ValueError(
             "Could not determine phi. Need either (X [R], Y [R]) or Lon/phi fields. "
@@ -218,9 +219,9 @@ class SphericalOctreeBuilder:
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level angular counts/spacings from spherical mesh geometry."""
-        x = np.asarray(ds[Octree.X_VAR], dtype=float)
-        y = np.asarray(ds[Octree.Y_VAR], dtype=float)
-        z = np.asarray(ds[Octree.Z_VAR], dtype=float)
+        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
+        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
+        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
         r = np.sqrt(x * x + y * y + z * z)
         theta = np.arccos(np.clip(z / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
         delta_theta = np.ptp(theta[corners], axis=1)
@@ -341,9 +342,9 @@ class SphericalOctreeBuilder:
 
         points = np.column_stack(
             (
-                np.asarray(ds[Octree.X_VAR], dtype=float),
-                np.asarray(ds[Octree.Y_VAR], dtype=float),
-                np.asarray(ds[Octree.Z_VAR], dtype=float),
+                np.asarray(ds[XYZ_VARS[0]], dtype=float),
+                np.asarray(ds[XYZ_VARS[1]], dtype=float),
+                np.asarray(ds[XYZ_VARS[2]], dtype=float),
             )
         )
         corners_arr = np.asarray(corners, dtype=np.int64)

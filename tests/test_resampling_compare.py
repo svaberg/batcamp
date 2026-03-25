@@ -5,6 +5,7 @@ import numpy as np
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 
@@ -25,9 +26,9 @@ def _build_ring_pattern_dataset(*, nxy: int = 24) -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Pattern": ring,
         },
     )
@@ -48,9 +49,9 @@ def _build_checkerboard_pattern_dataset(*, nxy: int = 24) -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Pattern": board,
         },
     )
@@ -105,9 +106,9 @@ def _build_adaptive_ring_pattern_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Pattern": ring,
         },
     )
@@ -128,9 +129,9 @@ def _build_adaptive_checkerboard_pattern_dataset() -> _FakeDataset:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: x,
-            Octree.Y_VAR: y,
-            Octree.Z_VAR: z,
+            XYZ_VARS[0]: x,
+            XYZ_VARS[1]: y,
+            XYZ_VARS[2]: z,
             "Pattern": board,
         },
     )

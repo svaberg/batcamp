@@ -6,6 +6,7 @@ import pytest
 from batcamp import OCTREE_FILE_VERSION
 from batcamp import Octree
 from batcamp import OctreeBuilder
+from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 
@@ -24,9 +25,9 @@ def tree_dataset_pair() -> tuple[Octree, _FakeDataset]:
         points=points,
         corners=corners,
         variables={
-            Octree.X_VAR: points[:, 0],
-            Octree.Y_VAR: points[:, 1],
-            Octree.Z_VAR: points[:, 2],
+            XYZ_VARS[0]: points[:, 0],
+            XYZ_VARS[1]: points[:, 1],
+            XYZ_VARS[2]: points[:, 2],
         },
     )
     tree = OctreeBuilder().build(ds, tree_coord="rpa")

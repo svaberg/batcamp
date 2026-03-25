@@ -6,7 +6,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import ClassVar
 from typing import NamedTuple
 from typing import TYPE_CHECKING
 from typing import Literal
@@ -14,6 +13,8 @@ from typing import TypeAlias
 
 import numpy as np
 from batread import Dataset
+
+from .constants import XYZ_VARS
 
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
@@ -254,12 +255,6 @@ class Octree:
     `(level, leaf_count, fine_equivalent_count)`.
     """
 
-    X_VAR: ClassVar[str] = "X [R]"
-    Y_VAR: ClassVar[str] = "Y [R]"
-    Z_VAR: ClassVar[str] = "Z [R]"
-    XY_VARS: ClassVar[tuple[str, str]] = (X_VAR, Y_VAR)
-    XYZ_VARS: ClassVar[tuple[str, str, str]] = (X_VAR, Y_VAR, Z_VAR)
-
     def __init__(
         self,
         *,
@@ -332,7 +327,7 @@ class Octree:
         """Attach a dataset to this tree so lookup and ray methods can run."""
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")
-        if not set(self.XYZ_VARS).issubset(set(ds.variables)):
+        if not set(XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         self.ds = ds
 
@@ -446,9 +441,9 @@ class Octree:
         return LookupGeometryState(
             points=np.column_stack(
                 (
-                    np.asarray(self.ds[self.X_VAR], dtype=np.float64),
-                    np.asarray(self.ds[self.Y_VAR], dtype=np.float64),
-                    np.asarray(self.ds[self.Z_VAR], dtype=np.float64),
+                    np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64),
+                    np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64),
+                    np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64),
                 )
             ),
             corners=np.asarray(self.ds.corners, dtype=np.int64),
@@ -608,6 +603,7 @@ class Octree:
         tol: float = 1e-10,
     ) -> bool:
         """Return whether one point lies inside one cell."""
+        self._require_lookup()
         return self._lookup_backend(str(self.tree_coord)).contains_cell(
             self,
             cell_id,
