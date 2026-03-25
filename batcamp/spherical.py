@@ -23,23 +23,6 @@ _MISSING_NODE_VALUE = -1
 SphericalLookupKernelState = LookupKernelState
 
 
-@njit(cache=True)
-def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
-    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
-    r = math.sqrt(x * x + y * y + z * z)
-    if r == 0.0:
-        polar = 0.0
-    else:
-        zr = z / r
-        if zr < -1.0:
-            zr = -1.0
-        elif zr > 1.0:
-            zr = 1.0
-        polar = math.acos(zr)
-    azimuth = math.atan2(y, x) % _TWO_PI
-    return r, polar, azimuth
-
-
 @njit(cache=False)
 def _lookup_rpa_cell_id_kernel(
     r: float,
@@ -251,3 +234,20 @@ class _SphericalCoordSupport:
                 self._coord_state,
             )
         )
+
+
+@njit(cache=True)
+def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
+    """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
+    r = math.sqrt(x * x + y * y + z * z)
+    if r == 0.0:
+        polar = 0.0
+    else:
+        zr = z / r
+        if zr < -1.0:
+            zr = -1.0
+        elif zr > 1.0:
+            zr = 1.0
+        polar = math.acos(zr)
+    azimuth = math.atan2(y, x) % _TWO_PI
+    return r, polar, azimuth
