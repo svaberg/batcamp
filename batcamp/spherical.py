@@ -79,8 +79,6 @@ class _SphericalCoordSupport:
 
     def _bind_geometry(self) -> None:
         """Attach spherical bound geometry derived from exact leaf addresses."""
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
             "_i0",
             "_i1",
@@ -197,8 +195,6 @@ class _SphericalCoordSupport:
 
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
         corners = self.ds.corners[cid]
         pts = np.column_stack(
             (
@@ -224,8 +220,6 @@ class _SphericalCoordSupport:
         )
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
-        if self.ds is None:
-            raise ValueError("Lookup requires a bound octree with dataset.")
         pts = np.column_stack(
             (
                 self.ds[XYZ_VARS[0]],

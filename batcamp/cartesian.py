@@ -64,8 +64,6 @@ class _CartesianCoordSupport:
 
     def _bind_geometry(self) -> None:
         """Attach Cartesian bound geometry derived from exact leaf addresses."""
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
             "_i0",
             "_i1",
@@ -178,8 +176,6 @@ class _CartesianCoordSupport:
 
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
         corners = self.ds.corners[cid]
         x = self.ds[XYZ_VARS[0]][corners]
         y = self.ds[XYZ_VARS[1]][corners]
@@ -191,8 +187,6 @@ class _CartesianCoordSupport:
 
     def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Lookup requires a bound octree with dataset and corners.")
         corners = self.ds.corners[cid]
         x = self.ds[XYZ_VARS[0]][corners]
         y = self.ds[XYZ_VARS[1]][corners]
@@ -210,8 +204,6 @@ class _CartesianCoordSupport:
         return self._xyz_min, self._xyz_max
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
-        if self.ds is None:
-            raise ValueError("Lookup requires a bound octree with dataset.")
         pts = np.column_stack(
             (
                 self.ds[XYZ_VARS[0]],

@@ -688,12 +688,6 @@ class Octree:
     def lookup_geometry(self) -> BoundGeometryState:
         """Return bound dataset arrays plus packed coordinate geometry."""
         self._require_lookup()
-        required = ("_coord_state",)
-        missing = [name for name in required if not hasattr(self, name)]
-        if missing:
-            raise ValueError(f"Octree lookup geometry is incomplete: missing {missing}.")
-        if self.ds is None or self.ds.corners is None:
-            raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
         return BoundGeometryState(
             points=np.column_stack(
                 (
