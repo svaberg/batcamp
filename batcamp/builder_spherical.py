@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 from batread.dataset import Dataset
 
@@ -21,16 +19,16 @@ class SphericalOctreeBuilder:
     @staticmethod
     def _circular_span(cell_phi: np.ndarray) -> np.ndarray:
         """Compute minimal wrapped angular span for each row of azimuth samples."""
-        ordered = np.sort(np.mod(cell_phi, 2.0 * math.pi), axis=1)
-        wrapped = np.concatenate((ordered, ordered[:, :1] + 2.0 * math.pi), axis=1)
+        ordered = np.sort(np.mod(cell_phi, 2.0 * np.pi), axis=1)
+        wrapped = np.concatenate((ordered, ordered[:, :1] + 2.0 * np.pi), axis=1)
         gaps = np.diff(wrapped, axis=1)
-        return 2.0 * math.pi - np.max(gaps, axis=1)
+        return 2.0 * np.pi - np.max(gaps, axis=1)
 
     @staticmethod
     def _circular_mean(cell_phi: np.ndarray) -> np.ndarray:
         """Compute circular mean for each row of azimuth samples."""
         mean_complex = np.mean(np.exp(1j * cell_phi), axis=1)
-        return np.mod(np.angle(mean_complex), 2.0 * math.pi)
+        return np.mod(np.angle(mean_complex), 2.0 * np.pi)
 
     @staticmethod
     def _circular_span_and_mean(
@@ -101,16 +99,16 @@ class SphericalOctreeBuilder:
     @staticmethod
     def _minimal_phi_interval(values: np.ndarray) -> tuple[float, float]:
         """Return the smallest wrapped azimuth interval covering the samples."""
-        vals = np.sort(np.mod(np.asarray(values, dtype=float), 2.0 * math.pi))
+        vals = np.sort(np.mod(np.asarray(values, dtype=float), 2.0 * np.pi))
         if vals.size == 0:
-            return 0.0, 2.0 * math.pi
+            return 0.0, 2.0 * np.pi
         if vals.size == 1:
             return float(vals[0]), 0.0
-        wrapped = np.concatenate((vals, vals[:1] + 2.0 * math.pi))
+        wrapped = np.concatenate((vals, vals[:1] + 2.0 * np.pi))
         gaps = np.diff(wrapped)
         k = int(np.argmax(gaps))
-        start = float(wrapped[k + 1] % (2.0 * math.pi))
-        width = float((2.0 * math.pi) - gaps[k])
+        start = float(wrapped[k + 1] % (2.0 * np.pi))
+        width = float((2.0 * np.pi) - gaps[k])
         return start, width
 
     @staticmethod
@@ -133,14 +131,14 @@ class SphericalOctreeBuilder:
             return np.deg2rad(np.mod(lon_deg, 360.0))
         if "Lon [rad]" in variable_names:
             lon_rad = np.asarray(ds["Lon [rad]"], dtype=float)
-            return np.mod(lon_rad, 2.0 * math.pi)
+            return np.mod(lon_rad, 2.0 * np.pi)
         if "phi [rad]" in variable_names:
             phi_rad = np.asarray(ds["phi [rad]"], dtype=float)
-            return np.mod(phi_rad, 2.0 * math.pi)
+            return np.mod(phi_rad, 2.0 * np.pi)
         if set(Octree.XY_VARS).issubset(variable_names):
             x = np.asarray(ds[Octree.X_VAR], dtype=float)
             y = np.asarray(ds[Octree.Y_VAR], dtype=float)
-            return np.mod(np.arctan2(y, x), 2.0 * math.pi)
+            return np.mod(np.arctan2(y, x), 2.0 * np.pi)
         raise ValueError(
             "Could not determine phi. Need either (X [R], Y [R]) or Lon/phi fields. "
             f"Available variables are {list(ds.variables)}."
@@ -240,15 +238,15 @@ class SphericalOctreeBuilder:
             mask = cell_levels == level
             med_dphi = _median_positive(delta_phi[mask])
             med_dtheta = _median_positive(delta_theta[mask])
-            n_phi = int(round((2.0 * math.pi) / med_dphi))
-            n_theta = int(round(math.pi / med_dtheta))
+            n_phi = int(round((2.0 * np.pi) / med_dphi))
+            n_theta = int(round(np.pi / med_dtheta))
             if n_phi <= 0 or n_theta <= 0:
                 raise ValueError(
                     f"Invalid angular counts inferred at level {level}: n_theta={n_theta}, n_phi={n_phi}."
                 )
 
-            ref_dphi = (2.0 * math.pi) / n_phi
-            ref_dtheta = math.pi / n_theta
+            ref_dphi = (2.0 * np.pi) / n_phi
+            ref_dtheta = np.pi / n_theta
             # TODO: Infer the likeliest angular grid globally instead of relying
             # on these fixed validation thresholds for per-level medians.
             if not np.isclose(med_dphi, ref_dphi, rtol=2e-2, atol=1e-9):
@@ -370,7 +368,7 @@ class SphericalOctreeBuilder:
         )
         cell_theta_min = np.min(theta_points[corners_arr], axis=1)
         cell_theta_max = np.max(theta_points[corners_arr], axis=1)
-        phi_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
+        phi_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
         axis_mask = SphericalOctreeBuilder._axis_corner_mask(
             ds,
             corners_arr,
@@ -411,12 +409,12 @@ class SphericalOctreeBuilder:
             raise ValueError(f"Spherical cell {bad} depth exceeds tree_depth={tree_depth}.")
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
 
-        d_theta_f = math.pi / float(int(leaf_shape[1]))
-        d_phi_f = (2.0 * math.pi) / float(int(leaf_shape[2]))
+        d_theta_f = np.pi / float(int(leaf_shape[1]))
+        d_phi_f = (2.0 * np.pi) / float(int(leaf_shape[2]))
         # TODO: Replace these angular snap tolerances with explicit inferred
         # theta/phi edge sets so noisy data maps to the most probable octree.
-        theta_tol = max(1e-7 * math.pi, 2e-5 * d_theta_f)
-        phi_tol = max(1e-7 * 2.0 * math.pi, 2e-5 * d_phi_f)
+        theta_tol = max(1e-7 * np.pi, 2e-5 * d_theta_f)
+        phi_tol = max(1e-7 * 2.0 * np.pi, 2e-5 * d_phi_f)
         r0_search = np.searchsorted(radial_edges, cell_r_min[valid_ids], side="left").astype(np.int64)
         r1_search = np.searchsorted(radial_edges, cell_r_max[valid_ids], side="left").astype(np.int64)
         r0_next = np.clip(r0_search, 0, radial_edges.size - 1)
@@ -447,8 +445,8 @@ class SphericalOctreeBuilder:
             raise ValueError(f"Spherical cell {bad} r-max does not align with the inferred octree grid.")
 
         width_phi = np.asarray(phi_width[valid_ids], dtype=float)
-        if np.any(width_phi >= (2.0 * math.pi - phi_tol)):
-            bad = int(valid_ids[np.flatnonzero(width_phi >= (2.0 * math.pi - phi_tol))[0]])
+        if np.any(width_phi >= (2.0 * np.pi - phi_tol)):
+            bad = int(valid_ids[np.flatnonzero(width_phi >= (2.0 * np.pi - phi_tol))[0]])
             raise ValueError(f"Spherical cell {bad} spans the full azimuth and has no unique octree address.")
 
         i1_f = np.rint(cell_theta_min[valid_ids] / d_theta_f).astype(np.int64)
@@ -470,7 +468,7 @@ class SphericalOctreeBuilder:
         if np.any(~np.isclose(cell_theta_max[valid_ids], i1_hi * d_theta_f, rtol=0.0, atol=theta_tol)):
             bad = int(valid_ids[np.flatnonzero(~np.isclose(cell_theta_max[valid_ids], i1_hi * d_theta_f, rtol=0.0, atol=theta_tol))[0]])
             raise ValueError(f"Spherical cell {bad} theta-max does not align with the inferred octree grid.")
-        phi_delta = np.abs((phi_start[valid_ids] - (i2_f * d_phi_f) + math.pi) % (2.0 * math.pi) - math.pi)
+        phi_delta = np.abs((phi_start[valid_ids] - (i2_f * d_phi_f) + np.pi) % (2.0 * np.pi) - np.pi)
         if np.any(phi_delta > phi_tol):
             bad = int(valid_ids[np.flatnonzero(phi_delta > phi_tol)[0]])
             raise ValueError(f"Spherical cell {bad} phi-start does not align with the inferred octree grid.")
