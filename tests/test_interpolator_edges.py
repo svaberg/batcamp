@@ -291,7 +291,7 @@ def test_invalid_level_cells_treated_as_misses() -> None:
         cell_levels=levels,
         bind=False,
     )
-    tree.bind(ds)
+    tree._bind(ds)
 
     q_invalid = np.array([0.5, 0.0, 0.25], dtype=float)
     q_valid = np.array([1.5, 0.0, 0.25], dtype=float)

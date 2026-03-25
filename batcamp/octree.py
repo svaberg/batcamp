@@ -528,7 +528,7 @@ class Octree:
             max_level=self.max_level,
         )
         if ds is not None:
-            self.bind(ds)
+            self._bind(ds)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -549,7 +549,7 @@ class Octree:
         """
         return int(self.max_level)
 
-    def bind(self, ds: Dataset) -> None:
+    def _bind(self, ds: Dataset) -> None:
         """Attach a dataset to this tree so lookup and ray methods can run."""
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")

@@ -850,7 +850,7 @@ def test_build_bind_false_returns_unbound_until_bind() -> None:
     )
     with pytest.raises(ValueError, match="not bound to a dataset"):
         tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
-    tree.bind(ds)
+    tree._bind(ds)
     assert tree.ds is ds
 
 
