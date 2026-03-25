@@ -43,6 +43,7 @@
 - [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
 - [ ] Replace `OctreeLookup` private-attribute probing (`getattr(..., \"_lookup_state\"/\"_points\"/\"_cell_phi_*\")`) with explicit backend contracts.
 - [ ] Collapse `OctreeLookup` pass-through wrappers where they only forward to `Octree` without adding behavior.
+- [ ] Remove `Octree.lookup_geometry()` side-door bundling: interpolator/ray code should use octree lookup through one explicit octree-owned contract instead of grabbing `points`/`corners`/`lookup_state` as a parallel lookup path.
 - [x] Normalize public/private pair naming to `name` + `_name` (for example `build` + `_build`) and remove suffix-heavy internal names when no semantic distinction exists.
 - [x] Apply the same naming rule to dispatch slots/helpers (remove `_..._impl` naming when direct `name`/`_name` dispatch is sufficient).
 - [x] Run a repo-wide public-docstring audit and flag jargon/vague phrasing (for example "cache", "state", "kernel", "facade") when the term is not user-facing behavior.
