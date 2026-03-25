@@ -853,18 +853,6 @@ class Octree:
             tol=float(tol),
         )
 
-    def hit_from_cell_id(self, cell_id: int) -> "LookupHit":
-        """Return lookup metadata for a known cell id."""
-        cid = int(cell_id)
-        self._require_lookup()
-        n_cells = int(self.cell_levels.shape[0])
-        if cid < 0 or cid >= n_cells:
-            raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-        hit = self._hit_from_chosen(cid, allow_invalid_level=True)
-        if hit is None:
-            raise ValueError(f"Invalid cell_id {cid}; cannot materialize LookupHit.")
-        return hit
-
 @dataclass(frozen=True)
 class LookupHit:
     """Resolved lookup metadata for one query point."""

@@ -591,8 +591,10 @@ def test_build_materializes_exact_tree_state_before_lookup() -> None:
 def test_regular_spherical_lookup_materializes_exact_indices() -> None:
     """Regular spherical grids should expose exact root-relative cell indices."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
-    first = tree.hit_from_cell_id(0)
-    last = tree.hit_from_cell_id(int(tree.cell_count) - 1)
+    first = tree._hit_from_chosen(0, allow_invalid_level=True)
+    last = tree._hit_from_chosen(int(tree.cell_count) - 1, allow_invalid_level=True)
+    assert first is not None
+    assert last is not None
     assert (first.level, first.i0, first.i1, first.i2) == (1, 0, 0, 0)
     assert first.path == ((0, 0, 0), (0, 0, 0))
     assert (last.level, last.i0, last.i1, last.i2) == (1, 1, 3, 7)
