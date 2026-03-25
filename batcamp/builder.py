@@ -11,13 +11,13 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
+from .constants import DEFAULT_TREE_COORD
+from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
 from .octree import TreeCoord
-from .octree import DEFAULT_TREE_COORD
 from .octree import GridShape
 from .octree import LevelCountTable
 from .octree import Octree
-from .octree import SUPPORTED_TREE_COORDS
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""
