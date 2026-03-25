@@ -24,8 +24,8 @@ CartesianLookupKernelState = LookupKernelState
 class _CartesianCoordSupport:
     """Cartesian geometry support for octree lookup on axis-aligned slab cells."""
 
-    def _bind_geometry(self) -> None:
-        """Attach Cartesian bound geometry derived from exact leaf addresses."""
+    def _attach_coord_state(self) -> None:
+        """Derive and attach Cartesian runtime state from the bound dataset."""
         required = (
             "_i0",
             "_i1",

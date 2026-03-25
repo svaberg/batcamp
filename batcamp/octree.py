@@ -575,7 +575,7 @@ class Octree:
         if not set(XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         self.ds = ds
-        self._coord_support(str(self.tree_coord))._bind_geometry(self)
+        self._coord_support(str(self.tree_coord))._attach_coord_state(self)
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
