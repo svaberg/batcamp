@@ -331,22 +331,6 @@ class Octree:
             cache[int(face_neighbors.max_level)] = face_neighbors
         return face_neighbors
 
-    def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-        """Return one cell's Cartesian bounds for subclasses."""
-        return self._lookup_backend(str(self.tree_coord))._cell_bounds_xyz(self, cell_id)
-
-    def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-        """Return one cell's spherical bounds for subclasses."""
-        return self._lookup_backend(str(self.tree_coord))._cell_bounds_rpa(self, cell_id)
-
-    def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return global Cartesian bounds for subclasses."""
-        return self._lookup_backend(str(self.tree_coord))._domain_bounds_xyz(self)
-
-    def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return global spherical bounds for subclasses."""
-        return self._lookup_backend(str(self.tree_coord))._domain_bounds_rpa(self)
-
     def cell_bounds(
         self,
         cell_id: int,
@@ -366,9 +350,10 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
+        backend = self._lookup_backend(str(self.tree_coord))
         if resolved_coord == "xyz":
-            return self._cell_bounds_xyz(cid)
-        return self._cell_bounds_rpa(cid)
+            return backend._cell_bounds_xyz(self, cid)
+        return backend._cell_bounds_rpa(self, cid)
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
         """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
@@ -379,9 +364,10 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
+        backend = self._lookup_backend(str(self.tree_coord))
         if resolved_coord == "xyz":
-            return self._domain_bounds_xyz()
-        return self._domain_bounds_rpa()
+            return backend._domain_bounds_xyz(self)
+        return backend._domain_bounds_rpa(self)
 
     def lookup_cell_id(
         self,
