@@ -556,7 +556,7 @@ class Octree:
         if not set(XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         self.ds = ds
-        self._lookup_backend(str(self.tree_coord))._init_lookup_state(self)
+        self._coord_support(str(self.tree_coord))._init_lookup_state(self)
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -624,16 +624,16 @@ class Octree:
         )
 
     @staticmethod
-    def _lookup_backend(tree_coord: str) -> type:
-        """Return the geometry-specific lookup helper for one tree coordinate."""
+    def _coord_support(tree_coord: str) -> type:
+        """Return the geometry-specific support class for one tree coordinate."""
         if tree_coord == "xyz":
-            from .cartesian import _CartesianCellLookup
+            from .cartesian import _CartesianCoordSupport
 
-            return _CartesianCellLookup
+            return _CartesianCoordSupport
         if tree_coord == "rpa":
-            from .spherical import _SphericalCellLookup
+            from .spherical import _SphericalCoordSupport
 
-            return _SphericalCellLookup
+            return _SphericalCoordSupport
         raise ValueError(
             f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
         )
@@ -763,7 +763,7 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
-        backend = self._lookup_backend(str(self.tree_coord))
+        backend = self._coord_support(str(self.tree_coord))
         if resolved_coord == "xyz":
             return backend._cell_bounds_xyz(self, cid)
         return backend._cell_bounds_rpa(self, cid)
@@ -777,7 +777,7 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
-        backend = self._lookup_backend(str(self.tree_coord))
+        backend = self._coord_support(str(self.tree_coord))
         if resolved_coord == "xyz":
             return backend._domain_bounds_xyz(self)
         return backend._domain_bounds_rpa(self)
@@ -796,7 +796,7 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
         self._require_lookup()
-        backend = self._lookup_backend(str(self.tree_coord))
+        backend = self._coord_support(str(self.tree_coord))
         if str(self.tree_coord) == "xyz":
             if resolved_coord != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -819,7 +819,7 @@ class Octree:
         """Return whether one point lies inside one cell."""
         self._require_lookup()
         q = np.array(point, dtype=float).reshape(3)
-        backend = self._lookup_backend(str(self.tree_coord))
+        backend = self._coord_support(str(self.tree_coord))
         if str(self.tree_coord) == "xyz":
             if str(coord) != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
@@ -856,7 +856,7 @@ class Octree:
         n_cells = int(self.cell_levels.shape[0])
         if cid < 0 or cid >= n_cells:
             raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-        hit = self._lookup_backend(str(self.tree_coord)).hit_from_chosen(
+        hit = self._coord_support(str(self.tree_coord)).hit_from_chosen(
             self,
             cid,
             allow_invalid_level=True,

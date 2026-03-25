@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cartesian octree and Cartesian lookup implementation.
+"""Cartesian coordinate support for octree lookup.
 
 Important modeling assumption for ``tree_coord="xyz"``:
 leaf cells are treated as axis-aligned Cartesian slabs from
@@ -62,11 +62,8 @@ def _lookup_xyz_cell_id_kernel(
     )
 
 
-class _CartesianCellLookup:
-    """Leaf-cell lookup accelerator for Cartesian `(x, y, z)` octrees.
-
-    The accelerator stores each cell as an axis-aligned box in Cartesian space.
-    """
+class _CartesianCoordSupport:
+    """Cartesian geometry support for octree lookup on axis-aligned slab cells."""
 
     def _init_lookup_state(self) -> None:
         """Rebuild Cartesian lookup geometry from exact leaf addresses."""
@@ -296,5 +293,5 @@ class _CartesianCellLookup:
             i0=cell_i0,
             i1=cell_i1,
             i2=cell_i2,
-            path=_CartesianCellLookup._path(cell_i0, cell_i1, cell_i2, path_level),
+            path=_CartesianCoordSupport._path(cell_i0, cell_i1, cell_i2, path_level),
         )
