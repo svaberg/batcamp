@@ -15,7 +15,6 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
-DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
 _DEFAULT_BOUND_AXIS_RHO_TOL = 1e-12
