@@ -179,8 +179,6 @@ class _SphericalCellLookup:
         if self.ds is None or self.ds.corners is None:
             raise ValueError("Lookup requires a bound octree with dataset and corners.")
         required = (
-            "_corners",
-            "_points",
             "_i0",
             "_i1",
             "_i2",
@@ -197,10 +195,20 @@ class _SphericalCellLookup:
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Spherical lookup requires exact tree state: missing {missing}.")
-        self._corners = np.asarray(self._corners, dtype=np.int64)
-        self._points = np.asarray(self._points, dtype=np.float64)
-        cell_xyz = self._points[self._corners]
-        self._cell_centers = np.asarray(np.mean(cell_xyz, axis=1), dtype=np.float64)
+        corners = np.asarray(self.ds.corners, dtype=np.int64)
+        x = np.asarray(self.ds[self.X_VAR], dtype=np.float64)
+        y = np.asarray(self.ds[self.Y_VAR], dtype=np.float64)
+        z = np.asarray(self.ds[self.Z_VAR], dtype=np.float64)
+        cell_x = x[corners]
+        cell_y = y[corners]
+        cell_z = z[corners]
+        self._cell_centers = np.column_stack(
+            (
+                np.mean(cell_x, axis=1),
+                np.mean(cell_y, axis=1),
+                np.mean(cell_z, axis=1),
+            )
+        )
         n_cells = int(self._cell_centers.shape[0])
         if self.cell_levels is None or int(self.cell_levels.shape[0]) != n_cells:
             raise ValueError("Spherical lookup requires exact cell_levels.")
@@ -225,9 +233,9 @@ class _SphericalCellLookup:
         n_r_edges = int(self.leaf_shape[0]) + 1
         radial_sum = np.zeros(n_r_edges, dtype=np.float64)
         radial_count = np.zeros(n_r_edges, dtype=np.int64)
-        point_r = np.linalg.norm(self._points, axis=1)
-        cell_r_lo_obs = np.min(point_r[self._corners], axis=1)
-        cell_r_hi_obs = np.max(point_r[self._corners], axis=1)
+        point_r = np.sqrt(x * x + y * y + z * z)
+        cell_r_lo_obs = np.min(point_r[corners], axis=1)
+        cell_r_hi_obs = np.max(point_r[corners], axis=1)
         for row, edge_idx in enumerate(r0_f):
             radial_sum[int(edge_idx)] += float(cell_r_lo_obs[valid_ids[row]])
             radial_count[int(edge_idx)] += 1
@@ -310,8 +318,16 @@ class _SphericalCellLookup:
 
     def _cell_bounds_xyz(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
         cid = int(cell_id)
-        corners = np.asarray(self._corners[cid], dtype=np.int64)
-        pts = np.asarray(self._points[corners], dtype=float)
+        if self.ds is None or self.ds.corners is None:
+            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+        corners = np.asarray(self.ds.corners[cid], dtype=np.int64)
+        pts = np.column_stack(
+            (
+                np.asarray(self.ds[self.X_VAR], dtype=float)[corners],
+                np.asarray(self.ds[self.Y_VAR], dtype=float)[corners],
+                np.asarray(self.ds[self.Z_VAR], dtype=float)[corners],
+            )
+        )
         return np.min(pts, axis=0), np.max(pts, axis=0)
 
     def _cell_bounds_rpa(self, cell_id: int) -> tuple[np.ndarray, np.ndarray]:
@@ -329,7 +345,15 @@ class _SphericalCellLookup:
         )
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
-        pts = np.asarray(self._points, dtype=float)
+        if self.ds is None:
+            raise ValueError("Lookup requires a bound octree with dataset and corners.")
+        pts = np.column_stack(
+            (
+                np.asarray(self.ds[self.X_VAR], dtype=float),
+                np.asarray(self.ds[self.Y_VAR], dtype=float),
+                np.asarray(self.ds[self.Z_VAR], dtype=float),
+            )
+        )
         return np.min(pts, axis=0), np.max(pts, axis=0)
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:

@@ -225,14 +225,6 @@ class Octree:
 
         self.ds = ds
         self.axis_rho_tol = next_axis_rho_tol
-        self._corners = np.asarray(ds.corners, dtype=np.int64)
-        self._points = np.column_stack(
-            (
-                np.asarray(ds[self.X_VAR], dtype=float),
-                np.asarray(ds[self.Y_VAR], dtype=float),
-                np.asarray(ds[self.Z_VAR], dtype=float),
-            )
-        )
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -346,13 +338,21 @@ class Octree:
     def lookup_geometry(self) -> LookupGeometryState:
         """Return bound point/cell arrays plus packed lookup state."""
         self._require_lookup()
-        required = ("_points", "_corners", "_cell_centers", "_lookup_state")
+        required = ("_cell_centers", "_lookup_state")
         missing = [name for name in required if not hasattr(self, name)]
         if missing:
             raise ValueError(f"Octree lookup geometry is incomplete: missing {missing}.")
+        if self.ds is None or self.ds.corners is None:
+            raise ValueError("Octree is not bound to a dataset. Build and bind it before lookup.")
         return LookupGeometryState(
-            points=np.asarray(self._points, dtype=np.float64),
-            corners=np.asarray(self._corners, dtype=np.int64),
+            points=np.column_stack(
+                (
+                    np.asarray(self.ds[self.X_VAR], dtype=np.float64),
+                    np.asarray(self.ds[self.Y_VAR], dtype=np.float64),
+                    np.asarray(self.ds[self.Z_VAR], dtype=np.float64),
+                )
+            ),
+            corners=np.asarray(self.ds.corners, dtype=np.int64),
             cell_centers=np.asarray(self._cell_centers, dtype=np.float64),
             lookup_state=self._lookup_state,
         )
