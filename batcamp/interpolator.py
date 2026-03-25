@@ -366,13 +366,11 @@ class OctreeInterpolator:
             logger.error("Octree is not bound to a dataset; cannot build interpolator.")
             raise ValueError("Octree is not bound to a dataset with corners.")
         self.tree = tree
-        self.tree._require_lookup()
+        lookup_geometry = self.tree._lookup_geometry()
         self._ds = tree.ds
-        if not hasattr(self.tree, "_corners") or not hasattr(self.tree, "_points") or not hasattr(self.tree, "_lookup_state"):
-            raise ValueError("Octree lookup geometry is unavailable after lookup initialization.")
-        self._corners = np.asarray(self.tree._corners, dtype=np.int64)
-        self._points = np.asarray(self.tree._points, dtype=np.float64)
-        self._lookup_state = self.tree._lookup_state
+        self._corners = lookup_geometry.corners
+        self._points = lookup_geometry.points
+        self._lookup_state = lookup_geometry.lookup_state
         self.fill_value = fill_value
 
         logger.debug(
