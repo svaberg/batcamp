@@ -11,7 +11,6 @@ import numpy as np
 from .octree import GridShape
 from .octree import OCTREE_FILE_VERSION
 from .octree import Octree
-from .octree import SUPPORTED_TREE_COORDS
 from .octree import TreeCoord
 
 _REQUIRED_TREE_ATTRS = ("_i0", "_i1", "_i2")
@@ -46,13 +45,8 @@ class OctreeState:
         missing = [name for name in _REQUIRED_TREE_ATTRS if not hasattr(tree, name)]
         if missing:
             raise ValueError(f"Cannot persist octree without exact leaf addresses: missing {missing}.")
-        tree_coord = str(tree.tree_coord)
-        if tree_coord not in SUPPORTED_TREE_COORDS:
-            raise ValueError(
-                f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-            )
         return cls(
-            tree_coord=tree_coord,
+            tree_coord=str(tree.tree_coord),
             root_shape=tuple(int(v) for v in tree.root_shape),
             cell_levels=np.asarray(tree.cell_levels, dtype=np.int64),
             cell_i0=np.asarray(tree._i0, dtype=np.int64),
@@ -89,15 +83,8 @@ class OctreeState:
                     f"Unsupported octree file version {version}; expected {OCTREE_FILE_VERSION}."
                 )
 
-            tree_coord = str(data["tree_coord"])
-            if tree_coord not in SUPPORTED_TREE_COORDS:
-                raise ValueError(
-                    f"Unsupported tree_coord '{tree_coord}' in octree file; "
-                    f"expected one of {SUPPORTED_TREE_COORDS}."
-                )
-
             return cls(
-                tree_coord=tree_coord,
+                tree_coord=str(data["tree_coord"]),
                 root_shape=tuple(int(v) for v in np.asarray(data["root_shape"], dtype=np.int64).tolist()),
                 cell_levels=np.asarray(data["cell_levels"], dtype=np.int64),
                 cell_i0=np.asarray(data["cell_i0"], dtype=np.int64),
