@@ -160,17 +160,46 @@ class Octree:
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
-        from .persistence import OctreeArrayState
-        from .persistence import OctreePersistenceState
+        from .persistence import OctreeState
 
-        state = OctreePersistenceState.from_octree(self)
-        arrays = OctreeArrayState.from_tree(self)
+        state = OctreeState.from_tree(self)
         out_path = Path(path)
-        state.save_npz(
-            out_path,
-            arrays=arrays,
-        )
+        state.save_npz(out_path)
         logger.info("Saved octree to %s", str(out_path))
+
+    @classmethod
+    def from_state(
+        cls,
+        state: "OctreeState",
+        *,
+        ds: Dataset | None = None,
+        axis_rho_tol: float | None = None,
+        bind: bool = True,
+    ) -> "Octree":
+        """Instantiate one tree from exact saved state."""
+        if bind and ds is None:
+            raise ValueError("Octree.from_state requires ds when bind=True.")
+        resolved_axis_rho_tol = float(state.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
+        tree = cls(
+            leaf_shape=state.leaf_shape,
+            root_shape=state.root_shape,
+            is_full=state.is_full,
+            level_counts=state.level_counts,
+            min_level=state.min_level,
+            max_level=state.max_level,
+            tree_coord=state.tree_coord,
+            cell_levels=np.asarray(state.cell_levels, dtype=np.int64),
+            axis_rho_tol=resolved_axis_rho_tol,
+        )
+        for field_name, attr_name, dtype, _shape in state.ARRAY_SPECS:
+            if attr_name == "cell_levels":
+                continue
+            setattr(tree, attr_name, np.asarray(getattr(state, field_name), dtype=dtype))
+        for field_name, attr_name, _default in state.FLOAT_SCALAR_SPECS:
+            setattr(tree, attr_name, float(getattr(state, field_name)))
+        if bind:
+            tree.bind(ds, axis_rho_tol=resolved_axis_rho_tol)
+        return tree
 
     @classmethod
     def load(
@@ -181,14 +210,11 @@ class Octree:
         axis_rho_tol: float | None = None,
     ) -> "Octree":
         """Load a tree from `.npz` and bind it to the given dataset."""
-        from .persistence import OctreePersistenceState
+        from .persistence import OctreeState
 
         in_path = Path(path)
-        state, array_state = OctreePersistenceState.load_npz(in_path)
-        tree = state.instantiate_tree(Octree, arrays=array_state)
-        tree.bind(ds, axis_rho_tol=axis_rho_tol)
-        if axis_rho_tol is not None:
-            tree.axis_rho_tol = float(axis_rho_tol)
+        state = OctreeState.load_npz(in_path)
+        tree = cls.from_state(state, ds=ds, axis_rho_tol=axis_rho_tol, bind=True)
         logger.info("Loaded octree from %s", str(in_path))
         return tree
 

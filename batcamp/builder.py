@@ -354,6 +354,8 @@ class OctreeBuilder:
         bind: bool = True,
     ) -> Octree:
         """Internal build path with optional level and bind overrides."""
+        from .persistence import OctreeState
+
         if tree_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
                 f"Unsupported tree_coord '{tree_coord}'; "
@@ -418,6 +420,10 @@ class OctreeBuilder:
             self._rpa_builder.populate_tree_state(tree, ds, corners_arr)
         else:
             self._xyz_builder.populate_tree_state(tree, ds, corners_arr)
-        if bind:
-            tree.bind(ds, axis_rho_tol=axis_rho_tol)
-        return tree
+        state = OctreeState.from_tree(tree)
+        return Octree.from_state(
+            state,
+            ds=ds if bind else None,
+            axis_rho_tol=axis_rho_tol,
+            bind=bind,
+        )
