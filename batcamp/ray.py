@@ -2232,6 +2232,11 @@ class OctreeRayTracer:
                 self._cell_lookup_state = self._seed_lookup_state
                 self._cell_plane_state = None
             elif self._tree_coord == "rpa":
+                if not isinstance(self._seed_lookup_state, SphericalLookupKernelState):
+                    raise TypeError(
+                        "Spherical ray tracing requires SphericalLookupKernelState; "
+                        f"got {type(self._seed_lookup_state).__name__}."
+                    )
                 self._seed_cell_plane_state = _build_cell_plane_kernel_state(tree)
                 self._cell_lookup_state = None
                 self._cell_plane_state = self._seed_cell_plane_state
@@ -2266,6 +2271,34 @@ class OctreeRayTracer:
             self._cell_plane_state = geometry.plane_state
         else:
             raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
+
+        if self._tree_coord == "xyz":
+            if not isinstance(self._seed_lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState; "
+                    f"got {type(self._seed_lookup_state).__name__}."
+                )
+            if not isinstance(self._cell_lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
+                    f"got {type(self._cell_lookup_state).__name__}."
+                )
+            return
+        if not isinstance(self._seed_lookup_state, SphericalLookupKernelState):
+            raise TypeError(
+                "Spherical ray tracing requires SphericalLookupKernelState; "
+                f"got {type(self._seed_lookup_state).__name__}."
+            )
+        if not isinstance(self._seed_cell_plane_state, CellPlaneKernelState):
+            raise TypeError(
+                "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
+                f"got {type(self._seed_cell_plane_state).__name__}."
+            )
+        if not isinstance(self._cell_plane_state, CellPlaneKernelState):
+            raise TypeError(
+                "Spherical ray tracing requires CellPlaneKernelState for active cells; "
+                f"got {type(self._cell_plane_state).__name__}."
+            )
 
     def trace(
         self,
@@ -2361,18 +2394,6 @@ class OctreeRayTracer:
 
         face_state = self._face_neighbor_state
         if self._tree_coord == "xyz":
-            seed_lookup_state = self._seed_lookup_state
-            cell_lookup_state = self._cell_lookup_state
-            if not isinstance(seed_lookup_state, CartesianLookupKernelState):
-                raise TypeError(
-                    "Cartesian ray tracing requires CartesianLookupKernelState; "
-                    f"got {type(seed_lookup_state).__name__}."
-                )
-            if not isinstance(cell_lookup_state, CartesianLookupKernelState):
-                raise TypeError(
-                    "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
-                    f"got {type(cell_lookup_state).__name__}."
-                )
             n_seg, cids, enters, exits = _trace_segments_xyz_neighbors_kernel(
                 o,
                 d,
@@ -2380,29 +2401,11 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                seed_lookup_state,
-                cell_lookup_state,
+                self._seed_lookup_state,
+                self._cell_lookup_state,
                 face_state,
             )
         elif self._tree_coord == "rpa":
-            seed_lookup_state = self._seed_lookup_state
-            seed_plane_state = self._seed_cell_plane_state
-            plane_state = self._cell_plane_state
-            if not isinstance(seed_lookup_state, SphericalLookupKernelState):
-                raise TypeError(
-                    "Spherical ray tracing requires SphericalLookupKernelState; "
-                    f"got {type(seed_lookup_state).__name__}."
-                )
-            if not isinstance(seed_plane_state, CellPlaneKernelState):
-                raise TypeError(
-                    "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
-                    f"got {type(seed_plane_state).__name__}."
-                )
-            if not isinstance(plane_state, CellPlaneKernelState):
-                raise TypeError(
-                    "Spherical ray tracing requires CellPlaneKernelState for active cells; "
-                    f"got {type(plane_state).__name__}."
-                )
             n_seg, cids, enters, exits = _trace_segments_rpa_neighbors_kernel(
                 o,
                 d,
@@ -2410,10 +2413,10 @@ class OctreeRayTracer:
                 t1,
                 int(max_steps),
                 float(boundary_tol),
-                seed_lookup_state,
+                self._seed_lookup_state,
                 face_state,
-                seed_plane_state,
-                plane_state,
+                self._seed_cell_plane_state,
+                self._cell_plane_state,
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{self._tree_coord}'.")
@@ -2444,23 +2447,11 @@ class OctreeRayTracer:
         max_steps = _coerce_positive_int("max_steps", max_steps)
 
         counts = np.zeros(origins.shape[0], dtype=np.int64)
+        face_state = self._face_neighbor_state
         for start in range(0, int(origins.shape[0]), chunk):
             stop = min(int(origins.shape[0]), start + chunk)
             sub = origins[start:stop]
-            face_state = self._face_neighbor_state
             if self._tree_coord == "xyz":
-                seed_lookup_state = self._seed_lookup_state
-                cell_lookup_state = self._cell_lookup_state
-                if not isinstance(seed_lookup_state, CartesianLookupKernelState):
-                    raise TypeError(
-                        "Cartesian ray tracing requires CartesianLookupKernelState; "
-                        f"got {type(seed_lookup_state).__name__}."
-                    )
-                if not isinstance(cell_lookup_state, CartesianLookupKernelState):
-                    raise TypeError(
-                        "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
-                        f"got {type(cell_lookup_state).__name__}."
-                    )
                 counts[start:stop] = _segment_counts_xyz_neighbors_kernel(
                     sub,
                     directions[start:stop],
@@ -2468,27 +2459,11 @@ class OctreeRayTracer:
                     t1,
                     int(max_steps),
                     float(boundary_tol),
-                    seed_lookup_state,
-                    cell_lookup_state,
+                    self._seed_lookup_state,
+                    self._cell_lookup_state,
                     face_state,
                 )
             elif self._tree_coord == "rpa":
-                seed_lookup_state = self._seed_lookup_state
-                if not isinstance(seed_lookup_state, SphericalLookupKernelState):
-                    raise TypeError(
-                        "Spherical ray tracing requires SphericalLookupKernelState; "
-                        f"got {type(seed_lookup_state).__name__}."
-                    )
-                if not isinstance(self._seed_cell_plane_state, CellPlaneKernelState):
-                    raise TypeError(
-                        "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
-                        f"got {type(self._seed_cell_plane_state).__name__}."
-                    )
-                if not isinstance(self._cell_plane_state, CellPlaneKernelState):
-                    raise TypeError(
-                        "Spherical ray tracing requires CellPlaneKernelState for active cells; "
-                        f"got {type(self._cell_plane_state).__name__}."
-                    )
                 counts[start:stop] = _segment_counts_rpa_neighbors_kernel(
                     sub,
                     directions[start:stop],
@@ -2496,7 +2471,7 @@ class OctreeRayTracer:
                     t1,
                     int(max_steps),
                     float(boundary_tol),
-                    seed_lookup_state,
+                    self._seed_lookup_state,
                     face_state,
                     self._seed_cell_plane_state,
                     self._cell_plane_state,
@@ -2526,6 +2501,11 @@ class OctreeRayInterpolator:
         self.tree = interpolator.tree
         self.max_level = _resolve_ray_max_level(self.tree, max_level)
         self.ray_tracer = OctreeRayTracer(self.tree, max_level=max_level)
+        self._face_neighbor_state = self.ray_tracer._face_neighbor_state
+        self._seed_lookup_state = self.ray_tracer._seed_lookup_state
+        self._cell_lookup_state = self.ray_tracer._cell_lookup_state
+        self._seed_cell_plane_state = self.ray_tracer._seed_cell_plane_state
+        self._cell_plane_state = self.ray_tracer._cell_plane_state
         tree_coord = str(self.tree.tree_coord)
         if int(self.max_level) >= int(self.tree.max_level):
             if tree_coord == "xyz":
@@ -2537,6 +2517,44 @@ class OctreeRayInterpolator:
         else:
             geometry = _ray_cell_geometry_for_max_level(self.tree, int(self.max_level))
             self._interp_state = _interp_state_from_ray_geometry(_point_values_2d(interpolator), geometry)
+
+        if tree_coord == "xyz":
+            if not isinstance(self._seed_lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState; "
+                    f"got {type(self._seed_lookup_state).__name__}."
+                )
+            if not isinstance(self._cell_lookup_state, CartesianLookupKernelState):
+                raise TypeError(
+                    "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
+                    f"got {type(self._cell_lookup_state).__name__}."
+                )
+            if not isinstance(self._interp_state, CartesianInterpKernelState):
+                raise TypeError(
+                    "Cartesian ray interpolation requires CartesianInterpKernelState; "
+                    f"got {type(self._interp_state).__name__}."
+                )
+            return
+        if not isinstance(self._seed_lookup_state, SphericalLookupKernelState):
+            raise TypeError(
+                "Spherical ray tracing requires SphericalLookupKernelState; "
+                f"got {type(self._seed_lookup_state).__name__}."
+            )
+        if not isinstance(self._seed_cell_plane_state, CellPlaneKernelState):
+            raise TypeError(
+                "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
+                f"got {type(self._seed_cell_plane_state).__name__}."
+            )
+        if not isinstance(self._cell_plane_state, CellPlaneKernelState):
+            raise TypeError(
+                "Spherical ray tracing requires CellPlaneKernelState for active cells; "
+                f"got {type(self._cell_plane_state).__name__}."
+            )
+        if not isinstance(self._interp_state, SphericalInterpKernelState):
+            raise TypeError(
+                "Spherical ray interpolation requires SphericalInterpKernelState; "
+                f"got {type(self._interp_state).__name__}."
+            )
 
     def integrate_field_along_rays(
         self,
@@ -2562,31 +2580,10 @@ class OctreeRayInterpolator:
         out = np.full((n_rays, ncomp), np.nan, dtype=float)
 
         tree_coord = str(self.tree.tree_coord)
-        # TODO: OctreeRayInterpolator still reaches into OctreeRayTracer private
-        # kernel state instead of consuming one explicit tracer state object.
-        face_state = self.ray_tracer._face_neighbor_state
         for start in range(0, n_rays, chunk):
             stop = min(n_rays, start + chunk)
             sub = origins[start:stop]
             if tree_coord == "xyz":
-                seed_lookup_state = self.ray_tracer._seed_lookup_state
-                cell_lookup_state = self.ray_tracer._cell_lookup_state
-                if not isinstance(seed_lookup_state, CartesianLookupKernelState):
-                    raise TypeError(
-                        "Cartesian ray tracing requires CartesianLookupKernelState; "
-                        f"got {type(seed_lookup_state).__name__}."
-                    )
-                if not isinstance(cell_lookup_state, CartesianLookupKernelState):
-                    raise TypeError(
-                        "Cartesian ray tracing requires CartesianLookupKernelState for active cells; "
-                        f"got {type(cell_lookup_state).__name__}."
-                    )
-                interp_state = self._interp_state
-                if not isinstance(interp_state, CartesianInterpKernelState):
-                    raise TypeError(
-                        "Cartesian ray interpolation requires CartesianInterpKernelState; "
-                        f"got {type(interp_state).__name__}."
-                    )
                 out[start:stop] = _integrate_rays_xyz_neighbors_kernel(
                     sub,
                     directions[start:stop],
@@ -2595,36 +2592,12 @@ class OctreeRayInterpolator:
                     int(max_steps),
                     float(boundary_tol),
                     float(scale),
-                    seed_lookup_state,
-                    cell_lookup_state,
-                    face_state,
-                    interp_state,
+                    self._seed_lookup_state,
+                    self._cell_lookup_state,
+                    self._face_neighbor_state,
+                    self._interp_state,
                 )
             elif tree_coord == "rpa":
-                seed_lookup_state = self.ray_tracer._seed_lookup_state
-                seed_plane_state = self.ray_tracer._seed_cell_plane_state
-                plane_state = self.ray_tracer._cell_plane_state
-                if not isinstance(seed_lookup_state, SphericalLookupKernelState):
-                    raise TypeError(
-                        "Spherical ray tracing requires SphericalLookupKernelState; "
-                        f"got {type(seed_lookup_state).__name__}."
-                    )
-                if not isinstance(seed_plane_state, CellPlaneKernelState):
-                    raise TypeError(
-                        "Spherical ray tracing requires CellPlaneKernelState for seed cells; "
-                        f"got {type(seed_plane_state).__name__}."
-                    )
-                if not isinstance(plane_state, CellPlaneKernelState):
-                    raise TypeError(
-                        "Spherical ray tracing requires CellPlaneKernelState for active cells; "
-                        f"got {type(plane_state).__name__}."
-                    )
-                interp_state = self._interp_state
-                if not isinstance(interp_state, SphericalInterpKernelState):
-                    raise TypeError(
-                        "Spherical ray interpolation requires SphericalInterpKernelState; "
-                        f"got {type(interp_state).__name__}."
-                    )
                 out[start:stop] = _integrate_rays_rpa_neighbors_kernel(
                     sub,
                     directions[start:stop],
@@ -2633,11 +2606,11 @@ class OctreeRayInterpolator:
                     int(max_steps),
                     float(boundary_tol),
                     float(scale),
-                    seed_lookup_state,
-                    face_state,
-                    seed_plane_state,
-                    plane_state,
-                    interp_state,
+                    self._seed_lookup_state,
+                    self._face_neighbor_state,
+                    self._seed_cell_plane_state,
+                    self._cell_plane_state,
+                    self._interp_state,
                 )
             else:
                 raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
