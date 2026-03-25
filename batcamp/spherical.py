@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spherical octree and spherical lookup implementation."""
+"""Spherical coordinate support for octree lookup."""
 
 from __future__ import annotations
 
@@ -77,8 +77,8 @@ def _lookup_rpa_cell_id_kernel(
         _LOOKUP_CONTAIN_TOL,
     )
 
-class _SphericalCellLookup:
-    """Cell lookup helper for spherical trees."""
+class _SphericalCoordSupport:
+    """Spherical geometry support for octree lookup."""
 
     def _init_lookup_state(self) -> None:
         """Rebuild spherical lookup geometry from exact leaf addresses."""
@@ -282,7 +282,7 @@ class _SphericalCellLookup:
         else:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return _SphericalCellLookup._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
+        return _SphericalCoordSupport._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
 
     def _lookup_xyz_cell_id(self, x: float, y: float, z: float) -> int:
         """Return the containing cell id for `(x, y, z)`, or `-1`."""
@@ -294,7 +294,7 @@ class _SphericalCellLookup:
         else:
             polar = float(math.acos(max(-1.0, min(1.0, z / r))))
         azimuth = float(math.atan2(y, x) % (2.0 * math.pi))
-        return _SphericalCellLookup._lookup_rpa_cell_id(self, r, polar, azimuth)
+        return _SphericalCoordSupport._lookup_rpa_cell_id(self, r, polar, azimuth)
 
     def hit_from_chosen(self, chosen: int, *, allow_invalid_level: bool = False) -> LookupHit | None:
         """Build a `LookupHit` from an internal cell id."""
@@ -318,5 +318,5 @@ class _SphericalCellLookup:
             i0=cell_i0,
             i1=cell_i1,
             i2=cell_i2,
-            path=_SphericalCellLookup._path(cell_i0, cell_i1, cell_i2, path_level),
+            path=_SphericalCoordSupport._path(cell_i0, cell_i1, cell_i2, path_level),
         )
