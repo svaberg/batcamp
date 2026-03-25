@@ -48,7 +48,172 @@ class LookupGeometryState(NamedTuple):
 
     points: np.ndarray
     corners: np.ndarray
-    lookup_state: object
+    lookup_state: "LookupKernelState"
+
+
+class LookupKernelState(NamedTuple):
+    """Shared packed lookup arrays for compiled tree descent and containment."""
+
+    cell_axis0_start: np.ndarray
+    cell_axis0_width: np.ndarray
+    cell_axis1_start: np.ndarray
+    cell_axis1_width: np.ndarray
+    cell_axis2_start: np.ndarray
+    cell_axis2_width: np.ndarray
+    cell_valid: np.ndarray
+    domain_axis0_start: float
+    domain_axis0_width: float
+    domain_axis1_start: float
+    domain_axis1_width: float
+    domain_axis2_start: float
+    domain_axis2_width: float
+    axis2_period: float
+    axis2_periodic: bool
+    node_value: np.ndarray
+    node_child: np.ndarray
+    root_node_ids: np.ndarray
+    node_parent: np.ndarray
+    cell_node_id: np.ndarray
+    node_axis0_start: np.ndarray
+    node_axis0_width: np.ndarray
+    node_axis1_start: np.ndarray
+    node_axis1_width: np.ndarray
+    node_axis2_start: np.ndarray
+    node_axis2_width: np.ndarray
+
+
+@njit(cache=True)
+def _contains_lookup_interval(
+    value: float,
+    start: float,
+    width: float,
+    periodic: bool,
+    period: float,
+    tol: float,
+) -> bool:
+    """Return whether one coordinate lies inside one start/width interval."""
+    if periodic:
+        if width >= (period - tol):
+            return True
+        delta = (value - start) % period
+        return delta <= (width + tol)
+    return value >= (start - tol) and value <= (start + width + tol)
+
+
+@njit(cache=True)
+def _contains_lookup_cell(
+    cid: int,
+    q0: float,
+    q1: float,
+    q2: float,
+    lookup_state: LookupKernelState,
+    tol: float,
+) -> bool:
+    """Return whether one query lies inside one leaf cell geometry."""
+    if not lookup_state.cell_valid[cid]:
+        return False
+    if not _contains_lookup_interval(
+        q0,
+        float(lookup_state.cell_axis0_start[cid]),
+        float(lookup_state.cell_axis0_width[cid]),
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    if not _contains_lookup_interval(
+        q1,
+        float(lookup_state.cell_axis1_start[cid]),
+        float(lookup_state.cell_axis1_width[cid]),
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    return _contains_lookup_interval(
+        q2,
+        float(lookup_state.cell_axis2_start[cid]),
+        float(lookup_state.cell_axis2_width[cid]),
+        periodic=bool(lookup_state.axis2_periodic),
+        period=float(lookup_state.axis2_period),
+        tol=tol,
+    )
+
+
+@njit(cache=True)
+def _contains_lookup_node(
+    node_id: int,
+    q0: float,
+    q1: float,
+    q2: float,
+    lookup_state: LookupKernelState,
+    tol: float,
+) -> bool:
+    """Return whether one query lies inside one occupied node geometry."""
+    nid = int(node_id)
+    if not _contains_lookup_interval(
+        q0,
+        float(lookup_state.node_axis0_start[nid]),
+        float(lookup_state.node_axis0_width[nid]),
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    if not _contains_lookup_interval(
+        q1,
+        float(lookup_state.node_axis1_start[nid]),
+        float(lookup_state.node_axis1_width[nid]),
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    return _contains_lookup_interval(
+        q2,
+        float(lookup_state.node_axis2_start[nid]),
+        float(lookup_state.node_axis2_width[nid]),
+        periodic=bool(lookup_state.axis2_periodic),
+        period=float(lookup_state.axis2_period),
+        tol=tol,
+    )
+
+
+@njit(cache=True)
+def _contains_lookup_domain(
+    q0: float,
+    q1: float,
+    q2: float,
+    lookup_state: LookupKernelState,
+    tol: float = 0.0,
+) -> bool:
+    """Return whether one query lies inside the global lookup domain."""
+    if not _contains_lookup_interval(
+        q0,
+        float(lookup_state.domain_axis0_start),
+        float(lookup_state.domain_axis0_width),
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    if not _contains_lookup_interval(
+        q1,
+        float(lookup_state.domain_axis1_start),
+        float(lookup_state.domain_axis1_width),
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    return _contains_lookup_interval(
+        q2,
+        float(lookup_state.domain_axis2_start),
+        float(lookup_state.domain_axis2_width),
+        periodic=bool(lookup_state.axis2_periodic),
+        period=float(lookup_state.axis2_period),
+        tol=tol,
+    )
 
 
 @njit(cache=True)
@@ -57,19 +222,17 @@ def _lookup_hint_node(
     q0: float,
     q1: float,
     q2: float,
-    cell_node_id: np.ndarray,
-    node_parent: np.ndarray,
-    lookup_state: object,
-    contains_node,
+    lookup_state: LookupKernelState,
+    tol: float,
 ) -> int:
     """Return the nearest ancestor hint node containing one query, or `-1`."""
     if prev_cid < 0:
         return -1
-    current = int(cell_node_id[int(prev_cid)])
+    current = int(lookup_state.cell_node_id[int(prev_cid)])
     while current >= 0:
-        if contains_node(current, q0, q1, q2, lookup_state):
+        if _contains_lookup_node(current, q0, q1, q2, lookup_state, tol):
             return current
-        current = int(node_parent[current])
+        current = int(lookup_state.node_parent[current])
     return -1
 
 
@@ -79,38 +242,34 @@ def _lookup_descend_to_leaf(
     q1: float,
     q2: float,
     start_node_id: int,
-    root_node_ids: np.ndarray,
-    node_value: np.ndarray,
-    node_child: np.ndarray,
-    lookup_state: object,
-    contains_cell,
-    contains_node,
+    lookup_state: LookupKernelState,
+    tol: float,
 ) -> int:
     """Descend one sparse tree from a containing node hint, or from the roots."""
     current = int(start_node_id)
     if current < 0:
-        for root_pos in range(int(root_node_ids.shape[0])):
-            node_id = int(root_node_ids[root_pos])
-            if contains_node(node_id, q0, q1, q2, lookup_state):
+        for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
+            node_id = int(lookup_state.root_node_ids[root_pos])
+            if _contains_lookup_node(node_id, q0, q1, q2, lookup_state, tol):
                 current = node_id
                 break
     if current < 0:
         return -1
 
     while True:
-        value = int(node_value[current])
+        value = int(lookup_state.node_value[current])
         if value >= 0:
             cid = int(value)
-            if contains_cell(cid, q0, q1, q2, lookup_state):
+            if _contains_lookup_cell(cid, q0, q1, q2, lookup_state, tol):
                 return cid
             return -1
 
         found_child = False
         for child_ord in range(8):
-            child_id = int(node_child[current, child_ord])
+            child_id = int(lookup_state.node_child[current, child_ord])
             if child_id < 0:
                 continue
-            if contains_node(child_id, q0, q1, q2, lookup_state):
+            if _contains_lookup_node(child_id, q0, q1, q2, lookup_state, tol):
                 current = child_id
                 found_child = True
                 break

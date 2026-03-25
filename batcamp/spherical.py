@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import math
-from typing import NamedTuple
 
 from numba import njit
 import numpy as np
@@ -13,13 +12,18 @@ from .constants import XYZ_VARS
 from .octree import GridIndex
 from .octree import GridPath
 from .octree import LookupHit
+from .octree import LookupKernelState
 from .octree import Octree
+from .octree import _contains_lookup_cell
+from .octree import _contains_lookup_domain
 from .octree import _lookup_descend_to_leaf
 from .octree import _lookup_hint_node
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
 _MISSING_NODE_VALUE = -1
+
+SphericalLookupKernelState = LookupKernelState
 
 
 @njit(cache=True)
@@ -39,102 +43,21 @@ def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, 
     return r, polar, azimuth
 
 
-class SphericalLookupKernelState(NamedTuple):
-    """Arrays used by compiled spherical lookup code."""
-
-    cell_r_min: np.ndarray
-    cell_r_max: np.ndarray
-    cell_theta_min: np.ndarray
-    cell_theta_max: np.ndarray
-    cell_phi_start: np.ndarray
-    cell_phi_width: np.ndarray
-    cell_valid: np.ndarray
-    r_min: float
-    r_max: float
-    node_value: np.ndarray
-    node_child: np.ndarray
-    root_node_ids: np.ndarray
-    node_parent: np.ndarray
-    cell_node_id: np.ndarray
-    node_r_min: np.ndarray
-    node_r_max: np.ndarray
-    node_theta_min: np.ndarray
-    node_theta_max: np.ndarray
-    node_phi_start: np.ndarray
-    node_phi_width: np.ndarray
-
-@njit(cache=True)
-def _contains_rpa_cell(
-    cid: int,
-    r: float,
-    polar: float,
-    azimuth: float,
-    lookup_state: SphericalLookupKernelState,
-) -> bool:
-    """Return whether one spherical point lies inside one cell."""
-    if not lookup_state.cell_valid[cid]:
-        return False
-    tol = _LOOKUP_CONTAIN_TOL
-    if r < (lookup_state.cell_r_min[cid] - tol) or r > (lookup_state.cell_r_max[cid] + tol):
-        return False
-    if polar < (lookup_state.cell_theta_min[cid] - tol) or polar > (lookup_state.cell_theta_max[cid] + tol):
-        return False
-    if abs(r * math.sin(polar)) <= tol:
-        return True
-    width = lookup_state.cell_phi_width[cid]
-    dphi = (azimuth - lookup_state.cell_phi_start[cid]) % _TWO_PI
-    if width >= (_TWO_PI - tol):
-        return True
-    return dphi <= (width + tol)
-
-
-@njit(cache=True)
-def _contains_rpa_node(
-    node_id: int,
-    r: float,
-    polar: float,
-    azimuth: float,
-    lookup_state: SphericalLookupKernelState,
-) -> bool:
-    """Return whether one spherical point lies inside one occupied node."""
-    nid = int(node_id)
-    tol = _LOOKUP_CONTAIN_TOL
-    if r < (lookup_state.node_r_min[nid] - tol) or r > (lookup_state.node_r_max[nid] + tol):
-        return False
-    if polar < (lookup_state.node_theta_min[nid] - tol) or polar > (lookup_state.node_theta_max[nid] + tol):
-        return False
-    if abs(r * math.sin(polar)) <= tol:
-        return True
-    width = lookup_state.node_phi_width[nid]
-    dphi = (azimuth - lookup_state.node_phi_start[nid]) % _TWO_PI
-    if width >= (_TWO_PI - tol):
-        return True
-    return dphi <= (width + tol)
-
-
 @njit(cache=False)
 def _lookup_rpa_cell_id_kernel(
     r: float,
     polar: float,
     azimuth: float,
-    lookup_state: SphericalLookupKernelState,
+    lookup_state: LookupKernelState,
     prev_cid: int = -1,
 ) -> int:
     """Return the containing spherical cell id, or `-1` when not found."""
     if not (math.isfinite(r) and math.isfinite(polar) and math.isfinite(azimuth)):
         return -1
-    if polar < 0.0 or polar > math.pi:
-        return -1
     azimuth = azimuth % _TWO_PI
-    if r < lookup_state.r_min or r > lookup_state.r_max:
+    if not _contains_lookup_domain(r, polar, azimuth, lookup_state):
         return -1
-    if prev_cid >= 0 and _contains_rpa_cell(
-        int(prev_cid),
-        r,
-        polar,
-        azimuth,
-        lookup_state,
-    ):
+    if prev_cid >= 0 and _contains_lookup_cell(int(prev_cid), r, polar, azimuth, lookup_state, _LOOKUP_CONTAIN_TOL):
         return int(prev_cid)
 
     current = _lookup_hint_node(
@@ -142,22 +65,16 @@ def _lookup_rpa_cell_id_kernel(
         r,
         polar,
         azimuth,
-        lookup_state.cell_node_id,
-        lookup_state.node_parent,
         lookup_state,
-        _contains_rpa_node,
+        _LOOKUP_CONTAIN_TOL,
     )
     return _lookup_descend_to_leaf(
         r,
         polar,
         azimuth,
         current,
-        lookup_state.root_node_ids,
-        lookup_state.node_value,
-        lookup_state.node_child,
         lookup_state,
-        _contains_rpa_cell,
-        _contains_rpa_node,
+        _LOOKUP_CONTAIN_TOL,
     )
 
 class _SphericalCellLookup:
@@ -252,27 +169,33 @@ class _SphericalCellLookup:
         self._node_theta_max = node_t1_f * d_theta_f
         self._node_phi_start = np.mod(node_p0_f * d_phi_f, 2.0 * math.pi)
         self._node_phi_width = node_width * d_phi_f
-        self._lookup_state = SphericalLookupKernelState(
-            cell_r_min=self._cell_r_min,
-            cell_r_max=self._cell_r_max,
-            cell_theta_min=self._cell_theta_min,
-            cell_theta_max=self._cell_theta_max,
-            cell_phi_start=self._cell_phi_start,
-            cell_phi_width=self._cell_phi_width,
+        self._lookup_state = LookupKernelState(
+            cell_axis0_start=self._cell_r_min,
+            cell_axis0_width=self._cell_r_max - self._cell_r_min,
+            cell_axis1_start=self._cell_theta_min,
+            cell_axis1_width=self._cell_theta_max - self._cell_theta_min,
+            cell_axis2_start=self._cell_phi_start,
+            cell_axis2_width=self._cell_phi_width,
             cell_valid=(self._cell_level >= 0),
-            r_min=float(self._r_min),
-            r_max=float(self._r_max),
+            domain_axis0_start=float(self._r_min),
+            domain_axis0_width=float(self._r_max - self._r_min),
+            domain_axis1_start=0.0,
+            domain_axis1_width=float(math.pi),
+            domain_axis2_start=0.0,
+            domain_axis2_width=float(_TWO_PI),
+            axis2_period=float(_TWO_PI),
+            axis2_periodic=True,
             node_value=self._node_value,
             node_child=self._node_child,
             root_node_ids=self._root_node_ids,
             node_parent=self._node_parent,
             cell_node_id=self._cell_node_id,
-            node_r_min=self._node_r_min,
-            node_r_max=self._node_r_max,
-            node_theta_min=self._node_theta_min,
-            node_theta_max=self._node_theta_max,
-            node_phi_start=self._node_phi_start,
-            node_phi_width=self._node_phi_width,
+            node_axis0_start=self._node_r_min,
+            node_axis0_width=self._node_r_max - self._node_r_min,
+            node_axis1_start=self._node_theta_min,
+            node_axis1_width=self._node_theta_max - self._node_theta_min,
+            node_axis2_start=self._node_phi_start,
+            node_axis2_width=self._node_phi_width,
         )
 
     @staticmethod
@@ -407,23 +330,16 @@ class _SphericalCellLookup:
 
     def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
         """Return whether one spherical point lies inside one cell."""
-        cid = int(cell_id)
-        rr = float(r)
-        pp = float(polar)
-        aa = float(azimuth)
-        t = float(tol)
-        if rr < (float(self._cell_r_min[cid]) - t) or rr > (float(self._cell_r_max[cid]) + t):
-            return False
-        if pp < (float(self._cell_theta_min[cid]) - t) or pp > (float(self._cell_theta_max[cid]) + t):
-            return False
-        if abs(rr * math.sin(pp)) <= t:
-            return True
-        start = float(self._cell_phi_start[cid])
-        width = float(self._cell_phi_width[cid])
-        dphi = float((aa - start) % (2.0 * math.pi))
-        if width >= (2.0 * math.pi - t):
-            return True
-        return dphi <= (width + t)
+        return bool(
+            _contains_lookup_cell(
+                int(cell_id),
+                float(r),
+                float(polar),
+                float(azimuth) % _TWO_PI,
+                self._lookup_state,
+                float(tol),
+            )
+        )
 
     def _contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
         """Return whether one Cartesian point lies inside one cell."""

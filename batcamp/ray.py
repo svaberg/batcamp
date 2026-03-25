@@ -12,20 +12,22 @@ from numba import njit
 from numba import prange
 import numpy as np
 
-from .cartesian import CartesianLookupKernelState
 from .cartesian import _lookup_xyz_cell_id_kernel
 from .interpolator import CartesianInterpKernelState
 from .interpolator import SphericalInterpKernelState
 from .interpolator import _trilinear_from_cell
 from .interpolator import _trilinear_from_cell_rpa
+from .octree import LookupKernelState
 from .octree import Octree
-from .spherical import SphericalLookupKernelState
 from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 from .face_neighbors import FaceNeighborKernelState
 
 if TYPE_CHECKING:
     from .interpolator import OctreeInterpolator
+
+CartesianLookupKernelState = LookupKernelState
+SphericalLookupKernelState = LookupKernelState
 
 
 _TRACE_CONTAIN_TOL = 1e-8
@@ -54,7 +56,7 @@ class CartesianRayCellGeometry(NamedTuple):
     """Truncated Cartesian ray-cell geometry at one depth cutoff."""
 
     face_neighbor_state: FaceNeighborKernelState
-    lookup_state: CartesianLookupKernelState
+    lookup_state: LookupKernelState
     corners: np.ndarray
     bin_to_corner: np.ndarray
     cell_x0: np.ndarray
@@ -498,20 +500,15 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     tree_coord = str(tree.tree_coord)
 
     if tree_coord == "rpa":
-        if not isinstance(lookup_state, SphericalLookupKernelState):
-            raise TypeError(
-                "Spherical cell-plane construction requires SphericalLookupKernelState; "
-                f"got {type(lookup_state).__name__}."
-            )
         ordered_corners = _ordered_spherical_corners_from_targets_kernel(
             points,
             corners,
-            np.asarray(lookup_state.cell_r_min, dtype=np.float64),
-            np.asarray(lookup_state.cell_r_max, dtype=np.float64),
-            np.asarray(lookup_state.cell_theta_min, dtype=np.float64),
-            np.asarray(lookup_state.cell_theta_max, dtype=np.float64),
-            np.asarray(lookup_state.cell_phi_start, dtype=np.float64),
-            np.asarray(lookup_state.cell_phi_width, dtype=np.float64),
+            np.asarray(lookup_state.cell_axis0_start, dtype=np.float64),
+            np.asarray(lookup_state.cell_axis0_start + lookup_state.cell_axis0_width, dtype=np.float64),
+            np.asarray(lookup_state.cell_axis1_start, dtype=np.float64),
+            np.asarray(lookup_state.cell_axis1_start + lookup_state.cell_axis1_width, dtype=np.float64),
+            np.asarray(lookup_state.cell_axis2_start, dtype=np.float64),
+            np.asarray(lookup_state.cell_axis2_width, dtype=np.float64),
         )
         return _build_plane_state_from_ordered_corners(points, ordered_corners, centers)
 
@@ -527,24 +524,25 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
         cell_pts = np.asarray(points[corners[cid]], dtype=float)
         center = np.asarray(centers[cid], dtype=float)
         if tree_coord == "xyz":
-            if not isinstance(lookup_state, CartesianLookupKernelState):
-                raise TypeError(
-                    "Cartesian cell-plane construction requires CartesianLookupKernelState; "
-                    f"got {type(lookup_state).__name__}."
-                )
             cx = cell_pts[:, 0]
             cy = cell_pts[:, 1]
             cz = cell_pts[:, 2]
-            tx = max(1e-10, 1e-8 * float(lookup_state.cell_x_max[cid] - lookup_state.cell_x_min[cid]))
-            ty = max(1e-10, 1e-8 * float(lookup_state.cell_y_max[cid] - lookup_state.cell_y_min[cid]))
-            tz = max(1e-10, 1e-8 * float(lookup_state.cell_z_max[cid] - lookup_state.cell_z_min[cid]))
+            x0 = float(lookup_state.cell_axis0_start[cid])
+            x1 = float(lookup_state.cell_axis0_start[cid] + lookup_state.cell_axis0_width[cid])
+            y0 = float(lookup_state.cell_axis1_start[cid])
+            y1 = float(lookup_state.cell_axis1_start[cid] + lookup_state.cell_axis1_width[cid])
+            z0 = float(lookup_state.cell_axis2_start[cid])
+            z1 = float(lookup_state.cell_axis2_start[cid] + lookup_state.cell_axis2_width[cid])
+            tx = max(1e-10, 1e-8 * (x1 - x0))
+            ty = max(1e-10, 1e-8 * (y1 - y0))
+            tz = max(1e-10, 1e-8 * (z1 - z0))
             face_corner_sets = (
-                _closest_four(cx, float(lookup_state.cell_x_min[cid]), tx),
-                _closest_four(cx, float(lookup_state.cell_x_max[cid]), tx),
-                _closest_four(cy, float(lookup_state.cell_y_min[cid]), ty),
-                _closest_four(cy, float(lookup_state.cell_y_max[cid]), ty),
-                _closest_four(cz, float(lookup_state.cell_z_min[cid]), tz),
-                _closest_four(cz, float(lookup_state.cell_z_max[cid]), tz),
+                _closest_four(cx, x0, tx),
+                _closest_four(cx, x1, tx),
+                _closest_four(cy, y0, ty),
+                _closest_four(cy, y1, ty),
+                _closest_four(cz, z0, tz),
+                _closest_four(cz, z1, tz),
             )
         else:
             raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
@@ -630,32 +628,33 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
         cell_zden[node_id] = dz
 
     seed_lookup = lookup_geometry.lookup_state
-    if not isinstance(seed_lookup, CartesianLookupKernelState):
-        raise TypeError(
-            "Cartesian truncated ray geometry requires CartesianLookupKernelState; "
-            f"got {type(seed_lookup).__name__}."
-        )
-    lookup_state = CartesianLookupKernelState(
-        cell_x_min=cell_x0,
-        cell_x_max=cell_x1,
-        cell_y_min=cell_y0,
-        cell_y_max=cell_y1,
-        cell_z_min=cell_z0,
-        cell_z_max=cell_z1,
+    lookup_state = LookupKernelState(
+        cell_axis0_start=cell_x0,
+        cell_axis0_width=cell_xden,
+        cell_axis1_start=cell_y0,
+        cell_axis1_width=cell_yden,
+        cell_axis2_start=cell_z0,
+        cell_axis2_width=cell_zden,
         cell_valid=np.ones(n_cells, dtype=np.bool_),
-        xyz_min=np.asarray(seed_lookup.xyz_min, dtype=np.float64),
-        xyz_max=np.asarray(seed_lookup.xyz_max, dtype=np.float64),
+        domain_axis0_start=float(seed_lookup.domain_axis0_start),
+        domain_axis0_width=float(seed_lookup.domain_axis0_width),
+        domain_axis1_start=float(seed_lookup.domain_axis1_start),
+        domain_axis1_width=float(seed_lookup.domain_axis1_width),
+        domain_axis2_start=float(seed_lookup.domain_axis2_start),
+        domain_axis2_width=float(seed_lookup.domain_axis2_width),
+        axis2_period=float(seed_lookup.axis2_period),
+        axis2_periodic=bool(seed_lookup.axis2_periodic),
         node_value=np.arange(n_cells, dtype=np.int64),
         node_child=np.full((n_cells, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_cells, dtype=np.int64),
         node_parent=np.full(n_cells, -1, dtype=np.int64),
         cell_node_id=np.arange(n_cells, dtype=np.int64),
-        node_x_min=cell_x0,
-        node_x_max=cell_x1,
-        node_y_min=cell_y0,
-        node_y_max=cell_y1,
-        node_z_min=cell_z0,
-        node_z_max=cell_z1,
+        node_axis0_start=cell_x0,
+        node_axis0_width=cell_xden,
+        node_axis1_start=cell_y0,
+        node_axis1_width=cell_yden,
+        node_axis2_start=cell_z0,
+        node_axis2_width=cell_zden,
     )
     return CartesianRayCellGeometry(
         face_neighbor_state=_face_neighbor_state_for_node_cells(face_neighbors),
@@ -787,7 +786,7 @@ def _build_sparse_spherical_seed_lookup_state(
     tree: Octree,
     face_neighbors,
     geometry: SphericalRayCellGeometry,
-) -> SphericalLookupKernelState:
+) -> LookupKernelState:
     """Build one sparse coarse spherical lookup state keyed by representative leaf ids."""
     lookup_geometry = tree.lookup_geometry()
     n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
@@ -810,37 +809,37 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_phi_width[cid] = float(geometry.cell_p_width[node_id])
         cell_valid[cid] = True
 
-    if not isinstance(lookup_geometry.lookup_state, SphericalLookupKernelState):
-        raise TypeError(
-            "Spherical truncated ray geometry requires SphericalLookupKernelState; "
-            f"got {type(lookup_geometry.lookup_state).__name__}."
-        )
-
     cell_node_id = np.full(n_leaf_cells, -1, dtype=np.int64)
     for node_id, rep_cid in enumerate(rep_cell_ids):
         cell_node_id[int(rep_cid)] = int(node_id)
 
-    return SphericalLookupKernelState(
-        cell_r_min=cell_r_min,
-        cell_r_max=cell_r_max,
-        cell_theta_min=cell_theta_min,
-        cell_theta_max=cell_theta_max,
-        cell_phi_start=cell_phi_start,
-        cell_phi_width=cell_phi_width,
+    return LookupKernelState(
+        cell_axis0_start=cell_r_min,
+        cell_axis0_width=cell_r_max - cell_r_min,
+        cell_axis1_start=cell_theta_min,
+        cell_axis1_width=cell_theta_max - cell_theta_min,
+        cell_axis2_start=cell_phi_start,
+        cell_axis2_width=cell_phi_width,
         cell_valid=cell_valid,
-        r_min=float(np.min(geometry.cell_r0)),
-        r_max=float(np.max(geometry.cell_r0 + geometry.cell_rden)),
+        domain_axis0_start=float(np.min(geometry.cell_r0)),
+        domain_axis0_width=float(np.max(geometry.cell_r0 + geometry.cell_rden) - np.min(geometry.cell_r0)),
+        domain_axis1_start=0.0,
+        domain_axis1_width=float(math.pi),
+        domain_axis2_start=0.0,
+        domain_axis2_width=float(2.0 * math.pi),
+        axis2_period=float(2.0 * math.pi),
+        axis2_periodic=True,
         node_value=np.asarray(rep_cell_ids, dtype=np.int64),
         node_child=np.full((n_nodes, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_nodes, dtype=np.int64),
         node_parent=np.full(n_nodes, -1, dtype=np.int64),
         cell_node_id=cell_node_id,
-        node_r_min=np.asarray(geometry.cell_r0, dtype=np.float64),
-        node_r_max=np.asarray(geometry.cell_r0 + geometry.cell_rden, dtype=np.float64),
-        node_theta_min=np.asarray(geometry.cell_t0, dtype=np.float64),
-        node_theta_max=np.asarray(geometry.cell_t0 + geometry.cell_tden, dtype=np.float64),
-        node_phi_start=np.asarray(geometry.cell_p_start, dtype=np.float64),
-        node_phi_width=np.asarray(geometry.cell_p_width, dtype=np.float64),
+        node_axis0_start=np.asarray(geometry.cell_r0, dtype=np.float64),
+        node_axis0_width=np.asarray(geometry.cell_rden, dtype=np.float64),
+        node_axis1_start=np.asarray(geometry.cell_t0, dtype=np.float64),
+        node_axis1_width=np.asarray(geometry.cell_tden, dtype=np.float64),
+        node_axis2_start=np.asarray(geometry.cell_p_start, dtype=np.float64),
+        node_axis2_width=np.asarray(geometry.cell_p_width, dtype=np.float64),
     )
 
 
@@ -903,11 +902,17 @@ def _contains_xyz_from_state(
     tol: float = _TRACE_CONTAIN_TOL,
 ) -> bool:
     """Return whether one Cartesian point lies inside one cell."""
-    if x < (lookup_state.cell_x_min[cid] - tol) or x > (lookup_state.cell_x_max[cid] + tol):
+    x0 = lookup_state.cell_axis0_start[cid]
+    x1 = lookup_state.cell_axis0_start[cid] + lookup_state.cell_axis0_width[cid]
+    y0 = lookup_state.cell_axis1_start[cid]
+    y1 = lookup_state.cell_axis1_start[cid] + lookup_state.cell_axis1_width[cid]
+    z0 = lookup_state.cell_axis2_start[cid]
+    z1 = lookup_state.cell_axis2_start[cid] + lookup_state.cell_axis2_width[cid]
+    if x < (x0 - tol) or x > (x1 + tol):
         return False
-    if y < (lookup_state.cell_y_min[cid] - tol) or y > (lookup_state.cell_y_max[cid] + tol):
+    if y < (y0 - tol) or y > (y1 + tol):
         return False
-    if z < (lookup_state.cell_z_min[cid] - tol) or z > (lookup_state.cell_z_max[cid] + tol):
+    if z < (z0 - tol) or z > (z1 + tol):
         return False
     return True
 
@@ -1460,8 +1465,8 @@ def _approx_front_boundary_segments_rpa(
         direction_xyz_unit,
         t_start,
         t_end,
-        float(lookup_state.r_min),
-        float(lookup_state.r_max),
+        float(lookup_state.domain_axis0_start),
+        float(lookup_state.domain_axis0_start + lookup_state.domain_axis0_width),
     )
     if not hit or t1 <= t0:
         return 0, cell_ids, enters, exits
@@ -1534,8 +1539,22 @@ def _trace_segments_xyz_neighbors_kernel(
         direction_xyz_unit,
         t_start,
         t_end,
-        seed_lookup_state.xyz_min,
-        seed_lookup_state.xyz_max,
+        np.array(
+            [
+                seed_lookup_state.domain_axis0_start,
+                seed_lookup_state.domain_axis1_start,
+                seed_lookup_state.domain_axis2_start,
+            ],
+            dtype=np.float64,
+        ),
+        np.array(
+            [
+                seed_lookup_state.domain_axis0_start + seed_lookup_state.domain_axis0_width,
+                seed_lookup_state.domain_axis1_start + seed_lookup_state.domain_axis1_width,
+                seed_lookup_state.domain_axis2_start + seed_lookup_state.domain_axis2_width,
+            ],
+            dtype=np.float64,
+        ),
         boundary_tol,
     )
     if not clipped or t1_clip <= t0_clip:
@@ -1584,24 +1603,24 @@ def _trace_segments_xyz_neighbors_kernel(
         tx = _forward_face_exit_dt(
             x,
             d0,
-            cell_lookup_state.cell_x_min[cid],
-            cell_lookup_state.cell_x_max[cid],
+            cell_lookup_state.cell_axis0_start[cid],
+            cell_lookup_state.cell_axis0_start[cid] + cell_lookup_state.cell_axis0_width[cid],
             abs_eps,
             dir_eps,
         )
         ty = _forward_face_exit_dt(
             y,
             d1,
-            cell_lookup_state.cell_y_min[cid],
-            cell_lookup_state.cell_y_max[cid],
+            cell_lookup_state.cell_axis1_start[cid],
+            cell_lookup_state.cell_axis1_start[cid] + cell_lookup_state.cell_axis1_width[cid],
             abs_eps,
             dir_eps,
         )
         tz = _forward_face_exit_dt(
             z,
             d2,
-            cell_lookup_state.cell_z_min[cid],
-            cell_lookup_state.cell_z_max[cid],
+            cell_lookup_state.cell_axis2_start[cid],
+            cell_lookup_state.cell_axis2_start[cid] + cell_lookup_state.cell_axis2_width[cid],
             abs_eps,
             dir_eps,
         )

@@ -9,8 +9,6 @@ Cartesian backend are exact under this axis-aligned representation.
 
 from __future__ import annotations
 
-from typing import NamedTuple
-
 import math
 from numba import njit
 import numpy as np
@@ -19,100 +17,31 @@ from .constants import XYZ_VARS
 from .octree import GridIndex
 from .octree import GridPath
 from .octree import LookupHit
+from .octree import LookupKernelState
 from .octree import Octree
+from .octree import _contains_lookup_cell
+from .octree import _contains_lookup_domain
 from .octree import _lookup_descend_to_leaf
 from .octree import _lookup_hint_node
 
 _LOOKUP_CONTAIN_TOL = 1e-10
 _MISSING_NODE_VALUE = -1
 
-
-class CartesianLookupKernelState(NamedTuple):
-    """Arrays used by compiled Cartesian lookup code under a slab cell model."""
-
-    cell_x_min: np.ndarray
-    cell_x_max: np.ndarray
-    cell_y_min: np.ndarray
-    cell_y_max: np.ndarray
-    cell_z_min: np.ndarray
-    cell_z_max: np.ndarray
-    cell_valid: np.ndarray
-    xyz_min: np.ndarray
-    xyz_max: np.ndarray
-    node_value: np.ndarray
-    node_child: np.ndarray
-    root_node_ids: np.ndarray
-    node_parent: np.ndarray
-    cell_node_id: np.ndarray
-    node_x_min: np.ndarray
-    node_x_max: np.ndarray
-    node_y_min: np.ndarray
-    node_y_max: np.ndarray
-    node_z_min: np.ndarray
-    node_z_max: np.ndarray
-
-
-@njit(cache=True)
-def _contains_xyz_cell(
-    cid: int,
-    x: float,
-    y: float,
-    z: float,
-    lookup_state: CartesianLookupKernelState,
-    tol: float = _LOOKUP_CONTAIN_TOL,
-) -> bool:
-    """Check one Cartesian query against one cell slab bounds."""
-    if not lookup_state.cell_valid[cid]:
-        return False
-    if x < (lookup_state.cell_x_min[cid] - tol) or x > (lookup_state.cell_x_max[cid] + tol):
-        return False
-    if y < (lookup_state.cell_y_min[cid] - tol) or y > (lookup_state.cell_y_max[cid] + tol):
-        return False
-    if z < (lookup_state.cell_z_min[cid] - tol) or z > (lookup_state.cell_z_max[cid] + tol):
-        return False
-    return True
-
-@njit(cache=True)
-def _contains_xyz_node(
-    node_id: int,
-    x: float,
-    y: float,
-    z: float,
-    lookup_state: CartesianLookupKernelState,
-    tol: float = _LOOKUP_CONTAIN_TOL,
-) -> bool:
-    """Check one Cartesian query against one occupied node bounds."""
-    nid = int(node_id)
-    if x < (lookup_state.node_x_min[nid] - tol) or x > (lookup_state.node_x_max[nid] + tol):
-        return False
-    if y < (lookup_state.node_y_min[nid] - tol) or y > (lookup_state.node_y_max[nid] + tol):
-        return False
-    if z < (lookup_state.node_z_min[nid] - tol) or z > (lookup_state.node_z_max[nid] + tol):
-        return False
-    return True
+CartesianLookupKernelState = LookupKernelState
 @njit(cache=False)
 def _lookup_xyz_cell_id_kernel(
     x: float,
     y: float,
     z: float,
-    lookup_state: CartesianLookupKernelState,
+    lookup_state: LookupKernelState,
     prev_cid: int = -1,
 ) -> int:
     """Resolve one Cartesian query to a cell id by descending sparse child containment."""
     if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
         return -1
-    if prev_cid >= 0 and _contains_xyz_cell(int(prev_cid), x, y, z, lookup_state):
+    if prev_cid >= 0 and _contains_lookup_cell(int(prev_cid), x, y, z, lookup_state, _LOOKUP_CONTAIN_TOL):
         return int(prev_cid)
-
-    inside_bbox = bool(
-        (x >= lookup_state.xyz_min[0])
-        and (x <= lookup_state.xyz_max[0])
-        and (y >= lookup_state.xyz_min[1])
-        and (y <= lookup_state.xyz_max[1])
-        and (z >= lookup_state.xyz_min[2])
-        and (z <= lookup_state.xyz_max[2])
-    )
-    if not inside_bbox:
+    if not _contains_lookup_domain(x, y, z, lookup_state):
         return -1
 
     current = _lookup_hint_node(
@@ -120,22 +49,16 @@ def _lookup_xyz_cell_id_kernel(
         x,
         y,
         z,
-        lookup_state.cell_node_id,
-        lookup_state.node_parent,
         lookup_state,
-        _contains_xyz_node,
+        _LOOKUP_CONTAIN_TOL,
     )
     return _lookup_descend_to_leaf(
         x,
         y,
         z,
         current,
-        lookup_state.root_node_ids,
-        lookup_state.node_value,
-        lookup_state.node_child,
         lookup_state,
-        _contains_xyz_cell,
-        _contains_xyz_node,
+        _LOOKUP_CONTAIN_TOL,
     )
 
 
@@ -230,27 +153,33 @@ class _CartesianCellLookup:
             ],
             dtype=np.float64,
         )
-        self._lookup_state = CartesianLookupKernelState(
-            cell_x_min=self._cell_x_min,
-            cell_x_max=self._cell_x_max,
-            cell_y_min=self._cell_y_min,
-            cell_y_max=self._cell_y_max,
-            cell_z_min=self._cell_z_min,
-            cell_z_max=self._cell_z_max,
+        self._lookup_state = LookupKernelState(
+            cell_axis0_start=self._cell_x_min,
+            cell_axis0_width=self._cell_x_max - self._cell_x_min,
+            cell_axis1_start=self._cell_y_min,
+            cell_axis1_width=self._cell_y_max - self._cell_y_min,
+            cell_axis2_start=self._cell_z_min,
+            cell_axis2_width=self._cell_z_max - self._cell_z_min,
             cell_valid=self._cell_valid,
-            xyz_min=self._xyz_min,
-            xyz_max=self._xyz_max,
+            domain_axis0_start=float(self._xyz_min[0]),
+            domain_axis0_width=float(self._xyz_max[0] - self._xyz_min[0]),
+            domain_axis1_start=float(self._xyz_min[1]),
+            domain_axis1_width=float(self._xyz_max[1] - self._xyz_min[1]),
+            domain_axis2_start=float(self._xyz_min[2]),
+            domain_axis2_width=float(self._xyz_max[2] - self._xyz_min[2]),
+            axis2_period=0.0,
+            axis2_periodic=False,
             node_value=self._node_value,
             node_child=self._node_child,
             root_node_ids=self._root_node_ids,
             node_parent=self._node_parent,
             cell_node_id=self._cell_node_id,
-            node_x_min=self._node_x_min,
-            node_x_max=self._node_x_max,
-            node_y_min=self._node_y_min,
-            node_y_max=self._node_y_max,
-            node_z_min=self._node_z_min,
-            node_z_max=self._node_z_max,
+            node_axis0_start=self._node_x_min,
+            node_axis0_width=self._node_x_max - self._node_x_min,
+            node_axis1_start=self._node_y_min,
+            node_axis1_width=self._node_y_max - self._node_y_min,
+            node_axis2_start=self._node_z_min,
+            node_axis2_width=self._node_z_max - self._node_z_min,
         )
 
     @staticmethod
@@ -359,7 +288,7 @@ class _CartesianCellLookup:
     ) -> bool:
         """Return whether one `(x, y, z)` point lies inside one cell."""
         return bool(
-            _contains_xyz_cell(
+            _contains_lookup_cell(
                 int(cell_id),
                 float(x),
                 float(y),
