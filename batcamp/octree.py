@@ -8,6 +8,7 @@ from dataclasses import field
 import logging
 from pathlib import Path
 from typing import ClassVar
+from typing import NamedTuple
 from typing import TYPE_CHECKING
 from typing import Literal
 from typing import TypeAlias
@@ -43,6 +44,15 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .face_neighbors import OctreeFaceNeighbors
+
+
+class LookupGeometryState(NamedTuple):
+    """Bound point/cell arrays and packed lookup state owned by one octree."""
+
+    points: np.ndarray
+    corners: np.ndarray
+    cell_centers: np.ndarray
+    lookup_state: object
 
 
 def infer_tree_coord_from_geometry(ds: Dataset, *, sample_size: int = 2048) -> TreeCoord:
@@ -239,6 +249,20 @@ class Octree:
         """Return leaf-cell centers in Cartesian coordinates."""
         self._require_lookup()
         return np.asarray(self._cell_centers, dtype=float)
+
+    def _lookup_geometry(self) -> LookupGeometryState:
+        """Return bound point/cell arrays plus packed lookup state."""
+        self._require_lookup()
+        required = ("_points", "_corners", "_cell_centers", "_lookup_state")
+        missing = [name for name in required if not hasattr(self, name)]
+        if missing:
+            raise ValueError(f"Octree lookup geometry is incomplete: missing {missing}.")
+        return LookupGeometryState(
+            points=np.asarray(self._points, dtype=np.float64),
+            corners=np.asarray(self._corners, dtype=np.int64),
+            cell_centers=np.asarray(self._cell_centers, dtype=np.float64),
+            lookup_state=self._lookup_state,
+        )
 
     def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:
         """Return unique frontier nodes by truncating leaves to one level cutoff."""
