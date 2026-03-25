@@ -17,10 +17,9 @@ from batread import Dataset
 
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
-_DEFAULT_BOUND_AXIS_RHO_TOL = 1e-12
 
 TreeCoord: TypeAlias = Literal["rpa", "xyz"]
-"""Coordinate-system tag used by octree builder/lookup dispatch."""
+"""Coordinate-system tag for octree state and lookup."""
 
 GridShape: TypeAlias = tuple[int, int, int]
 """Grid extents `(n_axis0, n_axis1, n_axis2)`."""
@@ -79,6 +78,131 @@ def _level_metadata_from_leaves(
     return leaf_shape, bool(is_full), level_counts, min_level, max_level
 
 
+def _build_node_arrays(
+    depths: np.ndarray,
+    i0: np.ndarray,
+    i1: np.ndarray,
+    i2: np.ndarray,
+    leaf_value: np.ndarray,
+    *,
+    tree_depth: int,
+    label: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build sorted occupied-node arrays from exact leaf addresses."""
+    leaf_depth = np.asarray(depths, dtype=np.int64)
+    leaf_i0 = np.asarray(i0, dtype=np.int64)
+    leaf_i1 = np.asarray(i1, dtype=np.int64)
+    leaf_i2 = np.asarray(i2, dtype=np.int64)
+    leaf_value_arr = np.asarray(leaf_value, dtype=np.int64)
+
+    leaf_order = np.lexsort((leaf_i2, leaf_i1, leaf_i0, leaf_depth))
+    leaf_depth = leaf_depth[leaf_order]
+    leaf_i0 = leaf_i0[leaf_order]
+    leaf_i1 = leaf_i1[leaf_order]
+    leaf_i2 = leaf_i2[leaf_order]
+    leaf_value_arr = leaf_value_arr[leaf_order]
+
+    same_leaf = (
+        (leaf_depth[1:] == leaf_depth[:-1])
+        & (leaf_i0[1:] == leaf_i0[:-1])
+        & (leaf_i1[1:] == leaf_i1[:-1])
+        & (leaf_i2[1:] == leaf_i2[:-1])
+    )
+    if np.any(same_leaf):
+        dup = int(np.flatnonzero(same_leaf)[0])
+        raise ValueError(
+            f"{label} cells overlap at octree address "
+            f"{(int(leaf_depth[dup]), int(leaf_i0[dup]), int(leaf_i1[dup]), int(leaf_i2[dup]))}."
+        )
+
+    node_depth_parts = [leaf_depth]
+    node_i0_parts = [leaf_i0]
+    node_i1_parts = [leaf_i1]
+    node_i2_parts = [leaf_i2]
+    node_value_parts = [leaf_value_arr]
+    for parent_depth in range(int(tree_depth)):
+        mask = depths > int(parent_depth)
+        if not np.any(mask):
+            continue
+        up = np.asarray(depths[mask] - int(parent_depth), dtype=np.int64)
+        parent_nodes = np.column_stack(
+            (
+                np.full(int(np.count_nonzero(mask)), int(parent_depth), dtype=np.int64),
+                np.right_shift(i0[mask], up),
+                np.right_shift(i1[mask], up),
+                np.right_shift(i2[mask], up),
+            )
+        )
+        parent_nodes = np.unique(parent_nodes, axis=0)
+        node_depth_parts.append(parent_nodes[:, 0].astype(np.int64, copy=False))
+        node_i0_parts.append(parent_nodes[:, 1].astype(np.int64, copy=False))
+        node_i1_parts.append(parent_nodes[:, 2].astype(np.int64, copy=False))
+        node_i2_parts.append(parent_nodes[:, 3].astype(np.int64, copy=False))
+        node_value_parts.append(np.full(parent_nodes.shape[0], -2, dtype=np.int64))
+
+    node_depth = np.concatenate(node_depth_parts)
+    node_i0 = np.concatenate(node_i0_parts)
+    node_i1 = np.concatenate(node_i1_parts)
+    node_i2 = np.concatenate(node_i2_parts)
+    node_value = np.concatenate(node_value_parts)
+    node_order = np.lexsort((node_i2, node_i1, node_i0, node_depth))
+    node_depth = node_depth[node_order]
+    node_i0 = node_i0[node_order]
+    node_i1 = node_i1[node_order]
+    node_i2 = node_i2[node_order]
+    node_value = node_value[node_order]
+
+    same_node = (
+        (node_depth[1:] == node_depth[:-1])
+        & (node_i0[1:] == node_i0[:-1])
+        & (node_i1[1:] == node_i1[:-1])
+        & (node_i2[1:] == node_i2[:-1])
+    )
+    if np.any(same_node):
+        dup = int(np.flatnonzero(same_node)[0])
+        raise ValueError(
+            f"{label} cells overlap across parent/child addresses at "
+            f"({int(node_depth[dup])}, {int(node_i0[dup])}, {int(node_i1[dup])}, {int(node_i2[dup])})."
+        )
+
+    return node_depth, node_i0, node_i1, node_i2, node_value
+
+
+def _build_child_table(
+    node_depth: np.ndarray,
+    node_i0: np.ndarray,
+    node_i1: np.ndarray,
+    node_i2: np.ndarray,
+    node_value: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build sparse 8-child references for occupied nodes."""
+    n_nodes = int(np.asarray(node_depth, dtype=np.int64).shape[0])
+    node_child = np.full((n_nodes, 8), -1, dtype=np.int64)
+    node_parent = np.full(n_nodes, -1, dtype=np.int64)
+    key_to_node = {
+        (int(node_depth[idx]), int(node_i0[idx]), int(node_i1[idx]), int(node_i2[idx])): int(idx)
+        for idx in range(n_nodes)
+    }
+    for idx in range(n_nodes):
+        if int(node_value[idx]) >= 0:
+            continue
+        depth = int(node_depth[idx])
+        i0 = int(node_i0[idx])
+        i1 = int(node_i1[idx])
+        i2 = int(node_i2[idx])
+        for child_ord in range(8):
+            b0 = (child_ord >> 2) & 1
+            b1 = (child_ord >> 1) & 1
+            b2 = child_ord & 1
+            child_key = (depth + 1, 2 * i0 + b0, 2 * i1 + b1, 2 * i2 + b2)
+            child_idx = key_to_node.get(child_key)
+            if child_idx is not None:
+                node_child[idx, child_ord] = int(child_idx)
+                node_parent[int(child_idx)] = int(idx)
+    root_node_ids = np.flatnonzero(np.asarray(node_depth, dtype=np.int64) == 0).astype(np.int64)
+    return node_child, root_node_ids, node_parent
+
+
 def _node_state_from_leaves(
     cell_levels: np.ndarray,
     cell_i0: np.ndarray,
@@ -88,8 +212,6 @@ def _node_state_from_leaves(
     max_level: int,
 ) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied nonleaves and leaf-node maps from leaf addresses."""
-    from .builder import _build_child_table
-    from .builder import _build_node_arrays
 
     levels = np.asarray(cell_levels, dtype=np.int64)
     i0_all = np.asarray(cell_i0, dtype=np.int64)
@@ -149,7 +271,6 @@ class Octree:
         cell_i1: np.ndarray,
         cell_i2: np.ndarray,
         ds: Dataset | None = None,
-        axis_rho_tol: float = _DEFAULT_BOUND_AXIS_RHO_TOL,
     ) -> None:
         """Build one octree directly from exact leaf addresses."""
         resolved_tree_coord = str(tree_coord)
@@ -160,7 +281,6 @@ class Octree:
         self.root_shape = tuple(int(v) for v in root_shape)
         self.tree_coord = resolved_tree_coord
         self.cell_levels = np.asarray(cell_levels, dtype=np.int64)
-        self.axis_rho_tol = float(axis_rho_tol)
         self.ds = None
 
         self.leaf_shape, self.is_full, self.level_counts, self.min_level, self.max_level = _level_metadata_from_leaves(
@@ -188,7 +308,7 @@ class Octree:
             max_level=self.max_level,
         )
         if ds is not None:
-            self.bind(ds, axis_rho_tol=self.axis_rho_tol)
+            self.bind(ds)
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -209,21 +329,13 @@ class Octree:
         """
         return int(self.max_level)
 
-    def bind(
-        self,
-        ds: Dataset,
-        *,
-        axis_rho_tol: float | None = None,
-    ) -> None:
+    def bind(self, ds: Dataset) -> None:
         """Attach a dataset to this tree so lookup and ray methods can run."""
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot bind octree lookup.")
         if not set(self.XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
-        next_axis_rho_tol = float(self.axis_rho_tol) if axis_rho_tol is None else float(axis_rho_tol)
-
         self.ds = ds
-        self.axis_rho_tol = next_axis_rho_tol
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -240,7 +352,6 @@ class Octree:
         state: "OctreeState",
         *,
         ds: Dataset | None = None,
-        axis_rho_tol: float | None = None,
         bind: bool = True,
     ) -> "Octree":
         """Instantiate one tree from exact saved state."""
@@ -250,7 +361,6 @@ class Octree:
             raise ValueError(
                 f"Unsupported tree_coord '{state.tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
-        resolved_axis_rho_tol = float(_DEFAULT_BOUND_AXIS_RHO_TOL) if axis_rho_tol is None else float(axis_rho_tol)
         return cls(
             root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
@@ -259,7 +369,6 @@ class Octree:
             cell_i1=state.cell_i1,
             cell_i2=state.cell_i2,
             ds=ds if bind else None,
-            axis_rho_tol=resolved_axis_rho_tol,
         )
 
     @classmethod
@@ -268,14 +377,13 @@ class Octree:
         path: str | Path,
         *,
         ds: Dataset,
-        axis_rho_tol: float | None = None,
     ) -> "Octree":
         """Load a tree from `.npz` and bind it to the given dataset."""
         from .persistence import OctreeState
 
         in_path = Path(path)
         state = OctreeState.load_npz(in_path)
-        tree = cls.from_state(state, ds=ds, axis_rho_tol=axis_rho_tol, bind=True)
+        tree = cls.from_state(state, ds=ds, bind=True)
         logger.info("Loaded octree from %s", str(in_path))
         return tree
 
