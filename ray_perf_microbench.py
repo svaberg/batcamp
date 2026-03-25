@@ -11,7 +11,6 @@ from batread.dataset import Dataset
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayInterpolator
-from batcamp.ray import _has_xyz_lookup_kernel
 
 
 _URL = "https://zenodo.org/records/7110555/files/run-Sun-G2211.tar.gz"
@@ -86,18 +85,14 @@ def time_hot_call(fn) -> float:
 
 
 def path_diagnostics(interp: OctreeInterpolator, *, axis_aligned: bool = True) -> str:
-    has_xyz_lookup = bool(_has_xyz_lookup_kernel(interp.tree))
-    has_xyz_interp = bool(interp.xyz_interp_state is not None)
-    scalar = bool(int(interp.n_value_components) == 1)
-    can_xyz_scalar = bool(has_xyz_lookup and has_xyz_interp and scalar)
     if str(interp.tree.tree_coord) == "rpa":
         mode = "rpa"
-    elif can_xyz_scalar and axis_aligned:
+    elif interp.xyz_interp_state is not None and int(interp.n_value_components) == 1 and axis_aligned:
         mode = "xyz_axis_kernel"
-    elif can_xyz_scalar:
+    elif interp.xyz_interp_state is not None and int(interp.n_value_components) == 1:
         mode = "xyz_general_kernel"
     else:
-        mode = "fallback"
+        mode = "xyz"
     return mode
 
 
