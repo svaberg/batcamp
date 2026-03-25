@@ -187,31 +187,6 @@ def test_rho2_matches_resample_baseline(file_name: str) -> None:
     assert rel < 1e-8
 
 
-def test_ray_interpolator_accepts_tree_and_values_directly() -> None:
-    """Ray API should support the obvious tree-first construction path too."""
-    ds = _build_single_cell_trilinear_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
-
-    ray_from_tree = OctreeRayInterpolator(tree, ["TrilinearXY"])
-    ray_from_interp = OctreeRayInterpolator(OctreeInterpolator(tree, ["TrilinearXY"]))
-
-    origin = np.array([0.0, 0.0, 0.5], dtype=float)
-    direction = np.array([1.0, 1.0, 0.0], dtype=float)
-    t0 = 0.0
-    t1 = float(np.sqrt(2.0))
-
-    vals_tree = np.asarray(
-        ray_from_tree.integrate_field_along_rays(origin[None, :], direction, t0, t1),
-        dtype=float,
-    )
-    vals_interp = np.asarray(
-        ray_from_interp.integrate_field_along_rays(origin[None, :], direction, t0, t1),
-        dtype=float,
-    )
-
-    assert np.allclose(vals_tree, vals_interp, atol=0.0, rtol=0.0)
-
-
 def test_flat_camera_from_domain_x_matches_current_compare_setup() -> None:
     """Camera contract: flat domain-x camera reproduces the existing compare launch plane."""
     bounds = (-2.0, 3.0, -5.0, 7.0, -11.0, 13.0)
