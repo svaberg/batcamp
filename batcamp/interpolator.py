@@ -13,10 +13,9 @@ from numba import njit
 from numba import prange
 import numpy as np
 
+from .octree import _lookup_cell_id_kernel
 from .octree import LookupKernelState
 from .octree import Octree
-from .cartesian import _lookup_xyz_cell_id_kernel
-from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 
 logger = logging.getLogger(__name__)
@@ -220,13 +219,7 @@ def _interp_batch_xyz(
                     zr = 1.0
                 polar = math.acos(zr)
             azimuth = math.atan2(y, x) % _TWO_PI
-            cid = _lookup_rpa_cell_id_kernel(
-                r,
-                polar,
-                azimuth,
-                lookup_state,
-                hint_cid,
-            )
+            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
             if cid < 0:
                 hint_cid = -1
                 continue
@@ -267,13 +260,7 @@ def _interp_batch_rpa(
             r = queries_rpa[i, 0]
             polar = queries_rpa[i, 1]
             azimuth = queries_rpa[i, 2] % _TWO_PI
-            cid = _lookup_rpa_cell_id_kernel(
-                r,
-                polar,
-                azimuth,
-                lookup_state,
-                hint_cid,
-            )
+            cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, hint_cid)
             if cid < 0:
                 hint_cid = -1
                 continue
@@ -317,7 +304,7 @@ def _interp_batch_xyz_cartesian(
             x = queries_xyz[i, 0]
             y = queries_xyz[i, 1]
             z = queries_xyz[i, 2]
-            cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, hint_cid)
+            cid = _lookup_cell_id_kernel(x, y, z, lookup_state, hint_cid)
             if cid < 0:
                 hint_cid = -1
                 continue

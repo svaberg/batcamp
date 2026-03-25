@@ -9,8 +9,7 @@ from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
-from batcamp.cartesian import _lookup_xyz_cell_id_kernel
-from batcamp.spherical import _lookup_rpa_cell_id_kernel
+from batcamp.octree import _lookup_cell_id_kernel
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -173,7 +172,7 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
     assert int(hit0.cell_id) != int(hit1.cell_id)
 
     state_no_roots = lookup_state._replace(root_node_ids=np.empty((0,), dtype=np.int64))
-    cid = _lookup_xyz_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
+    cid = _lookup_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
     assert int(cid) == int(hit1.cell_id)
 
 def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
@@ -202,7 +201,7 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     assert int(hit0.cell_id) != int(hit1.cell_id)
 
     state_no_roots = lookup_state._replace(root_node_ids=np.empty((0,), dtype=np.int64))
-    cid = _lookup_rpa_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
+    cid = _lookup_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
     assert int(cid) == int(hit1.cell_id)
 
 def test_call_rejects_invalid_query_coord() -> None:

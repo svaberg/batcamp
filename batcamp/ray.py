@@ -12,14 +12,13 @@ from numba import njit
 from numba import prange
 import numpy as np
 
-from .cartesian import _lookup_xyz_cell_id_kernel
 from .interpolator import CartesianInterpKernelState
 from .interpolator import SphericalInterpKernelState
 from .interpolator import _trilinear_from_cell
 from .interpolator import _trilinear_from_cell_rpa
+from .octree import _lookup_cell_id_kernel
 from .octree import LookupKernelState
 from .octree import Octree
-from .spherical import _lookup_rpa_cell_id_kernel
 from .spherical import _xyz_to_rpa_components
 from .face_neighbors import FaceNeighborKernelState
 
@@ -1238,7 +1237,7 @@ def _seek_first_cell_xyz(
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
-    cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, -1)
+    cid = _lookup_cell_id_kernel(x, y, z, lookup_state, -1)
     if cid >= 0:
         return True, t, cid, x, y, z
 
@@ -1253,7 +1252,7 @@ def _seek_first_cell_xyz(
         xh = origin_xyz[0] + hi * direction_xyz_unit[0]
         yh = origin_xyz[1] + hi * direction_xyz_unit[1]
         zh = origin_xyz[2] + hi * direction_xyz_unit[2]
-        cid_hi = _lookup_xyz_cell_id_kernel(xh, yh, zh, lookup_state, -1)
+        cid_hi = _lookup_cell_id_kernel(xh, yh, zh, lookup_state, -1)
         if cid_hi >= 0:
             break
         if hi >= t_end:
@@ -1270,7 +1269,7 @@ def _seek_first_cell_xyz(
         xm = origin_xyz[0] + mid * direction_xyz_unit[0]
         ym = origin_xyz[1] + mid * direction_xyz_unit[1]
         zm = origin_xyz[2] + mid * direction_xyz_unit[2]
-        cid_mid = _lookup_xyz_cell_id_kernel(xm, ym, zm, lookup_state, cid_in)
+        cid_mid = _lookup_cell_id_kernel(xm, ym, zm, lookup_state, cid_in)
         if cid_mid >= 0:
             hi_in = mid
             cid_in = cid_mid
@@ -1287,13 +1286,13 @@ def _seek_first_cell_xyz(
     x = origin_xyz[0] + t * direction_xyz_unit[0]
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
-    cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid_in)
+    cid = _lookup_cell_id_kernel(x, y, z, lookup_state, cid_in)
     if cid < 0:
         t = hi_in
         x = origin_xyz[0] + t * direction_xyz_unit[0]
         y = origin_xyz[1] + t * direction_xyz_unit[1]
         z = origin_xyz[2] + t * direction_xyz_unit[2]
-        cid = _lookup_xyz_cell_id_kernel(x, y, z, lookup_state, cid_in)
+        cid = _lookup_cell_id_kernel(x, y, z, lookup_state, cid_in)
     if cid < 0:
         return False, t_start, -1, x, y, z
     return True, t, cid, x, y, z
@@ -1315,7 +1314,7 @@ def _seek_first_cell_rpa(
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
+    cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
     if cid >= 0 and _contains_cell_from_xyz(cid, x, y, z, plane_state):
         return True, t, cid, x, y, z, r, polar, azimuth
 
@@ -1331,7 +1330,7 @@ def _seek_first_cell_rpa(
         yh = origin_xyz[1] + hi * direction_xyz_unit[1]
         zh = origin_xyz[2] + hi * direction_xyz_unit[2]
         r_hi, polar_hi, azimuth_hi = _xyz_to_rpa_components(xh, yh, zh)
-        cid_hi = _lookup_rpa_cell_id_kernel(r_hi, polar_hi, azimuth_hi, lookup_state, -1)
+        cid_hi = _lookup_cell_id_kernel(r_hi, polar_hi, azimuth_hi, lookup_state, -1)
         if cid_hi >= 0 and _contains_cell_from_xyz(cid_hi, xh, yh, zh, plane_state):
             break
         if hi >= t_end:
@@ -1349,7 +1348,7 @@ def _seek_first_cell_rpa(
         ym = origin_xyz[1] + mid * direction_xyz_unit[1]
         zm = origin_xyz[2] + mid * direction_xyz_unit[2]
         r_mid, polar_mid, azimuth_mid = _xyz_to_rpa_components(xm, ym, zm)
-        cid_mid = _lookup_rpa_cell_id_kernel(r_mid, polar_mid, azimuth_mid, lookup_state, cid_in)
+        cid_mid = _lookup_cell_id_kernel(r_mid, polar_mid, azimuth_mid, lookup_state, cid_in)
         if cid_mid >= 0 and _contains_cell_from_xyz(cid_mid, xm, ym, zm, plane_state):
             hi_in = mid
             cid_in = cid_mid
@@ -1367,14 +1366,14 @@ def _seek_first_cell_rpa(
     y = origin_xyz[1] + t * direction_xyz_unit[1]
     z = origin_xyz[2] + t * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
+    cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
     if cid < 0 or not _contains_cell_from_xyz(cid, x, y, z, plane_state):
         t = hi_in
         x = origin_xyz[0] + t * direction_xyz_unit[0]
         y = origin_xyz[1] + t * direction_xyz_unit[1]
         z = origin_xyz[2] + t * direction_xyz_unit[2]
         r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-        cid = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
+        cid = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, cid_in)
     if cid < 0 or not _contains_cell_from_xyz(cid, x, y, z, plane_state):
         return False, t_start, -1, x, y, z, r, polar, azimuth
     return True, t, cid, x, y, z, r, polar, azimuth
@@ -1479,19 +1478,19 @@ def _approx_front_boundary_segments_rpa(
     y = origin_xyz[1] + tq0 * direction_xyz_unit[1]
     z = origin_xyz[2] + tq0 * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cid0 = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
+    cid0 = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
 
     x = origin_xyz[0] + tm * direction_xyz_unit[0]
     y = origin_xyz[1] + tm * direction_xyz_unit[1]
     z = origin_xyz[2] + tm * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cidm = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
+    cidm = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
 
     x = origin_xyz[0] + tq1 * direction_xyz_unit[0]
     y = origin_xyz[1] + tq1 * direction_xyz_unit[1]
     z = origin_xyz[2] + tq1 * direction_xyz_unit[2]
     r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-    cid1 = _lookup_rpa_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
+    cid1 = _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, -1)
 
     left_cid = cid0 if cid0 >= 0 else cidm
     right_cid = cid1 if cid1 >= 0 else cidm

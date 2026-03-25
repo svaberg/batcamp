@@ -16,21 +16,8 @@ from .octree import _lookup_cell_id_kernel
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
-_MISSING_NODE_VALUE = -1
 
 SphericalLookupKernelState = LookupKernelState
-
-
-@njit(cache=False)
-def _lookup_rpa_cell_id_kernel(
-    r: float,
-    polar: float,
-    azimuth: float,
-    lookup_state: LookupKernelState,
-    prev_cid: int = -1,
-) -> int:
-    """Return the containing spherical cell id, or `-1` when not found."""
-    return _lookup_cell_id_kernel(r, polar, azimuth, lookup_state, prev_cid, _LOOKUP_CONTAIN_TOL)
 
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
@@ -202,11 +189,12 @@ class _SphericalCoordSupport:
     def _lookup_rpa_cell_id(self, r: float, polar: float, azimuth: float) -> int:
         """Return the containing spherical cell id, or `-1` when not found."""
         return int(
-            _lookup_rpa_cell_id_kernel(
+            _lookup_cell_id_kernel(
                 float(r),
                 float(polar),
                 float(azimuth),
                 self._coord_state,
+                -1,
             )
         )
 
