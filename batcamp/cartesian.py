@@ -8,8 +8,6 @@ Cartesian backend are exact under this axis-aligned representation.
 """
 
 from __future__ import annotations
-
-import math
 from numba import njit
 import numpy as np
 
@@ -17,14 +15,14 @@ from .constants import XYZ_VARS
 from .octree import LookupKernelState
 from .octree import Octree
 from .octree import _contains_lookup_cell
-from .octree import _contains_lookup_domain
-from .octree import _lookup_descend_to_leaf
-from .octree import _lookup_hint_node
+from .octree import _lookup_cell_id_kernel
 
 _LOOKUP_CONTAIN_TOL = 1e-10
 _MISSING_NODE_VALUE = -1
 
 CartesianLookupKernelState = LookupKernelState
+
+
 @njit(cache=False)
 def _lookup_xyz_cell_id_kernel(
     x: float,
@@ -34,29 +32,7 @@ def _lookup_xyz_cell_id_kernel(
     prev_cid: int = -1,
 ) -> int:
     """Resolve one Cartesian query to a cell id by descending sparse child containment."""
-    if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
-        return -1
-    if prev_cid >= 0 and _contains_lookup_cell(int(prev_cid), x, y, z, lookup_state, _LOOKUP_CONTAIN_TOL):
-        return int(prev_cid)
-    if not _contains_lookup_domain(x, y, z, lookup_state):
-        return -1
-
-    current = _lookup_hint_node(
-        int(prev_cid),
-        x,
-        y,
-        z,
-        lookup_state,
-        _LOOKUP_CONTAIN_TOL,
-    )
-    return _lookup_descend_to_leaf(
-        x,
-        y,
-        z,
-        current,
-        lookup_state,
-        _LOOKUP_CONTAIN_TOL,
-    )
+    return _lookup_cell_id_kernel(x, y, z, lookup_state, prev_cid, _LOOKUP_CONTAIN_TOL)
 
 
 class _CartesianCoordSupport:

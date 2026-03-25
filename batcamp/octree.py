@@ -262,6 +262,40 @@ def _lookup_descend_to_leaf(
             return -1
 
 
+@njit(cache=True)
+def _lookup_cell_id_kernel(
+    q0: float,
+    q1: float,
+    q2: float,
+    lookup_state: LookupKernelState,
+    prev_cid: int = -1,
+    tol: float = 1.0e-10,
+) -> int:
+    """Resolve one query to a cell id by sparse-tree descent."""
+    if not (np.isfinite(q0) and np.isfinite(q1) and np.isfinite(q2)):
+        return -1
+    if prev_cid >= 0 and _contains_lookup_cell(int(prev_cid), q0, q1, q2, lookup_state, tol):
+        return int(prev_cid)
+    if not _contains_lookup_domain(q0, q1, q2, lookup_state):
+        return -1
+    current = _lookup_hint_node(
+        int(prev_cid),
+        q0,
+        q1,
+        q2,
+        lookup_state,
+        tol,
+    )
+    return _lookup_descend_to_leaf(
+        q0,
+        q1,
+        q2,
+        current,
+        lookup_state,
+        tol,
+    )
+
+
 def _level_metadata_from_leaves(
     root_shape: GridShape,
     cell_levels: np.ndarray,
