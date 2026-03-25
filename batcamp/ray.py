@@ -2247,7 +2247,7 @@ class OctreeRayTracer:
                     "Cartesian ray tracing requires CartesianRayCellGeometry; "
                     f"got {type(geometry).__name__}."
                 )
-            self._cell_lookup_state = geometry.coord_state
+            self._cell_lookup_state = geometry.lookup_state
             self._cell_plane_state = None
         elif self._tree_coord == "rpa":
             if not isinstance(geometry, SphericalRayCellGeometry):
