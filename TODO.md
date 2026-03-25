@@ -61,6 +61,7 @@
 - [x] Consolidate repeated infer-flow scaffolding between Cartesian and spherical builders where behavior is genuinely shared.
 - [x] Centralize `X [R]` / `Y [R]` / `Z [R]` names in `Octree` constants only and reference those constants everywhere else.
 - [x] Replace dynamic attribute probing in `Octree.cell_bounds/domain_bounds` with explicit subclass hooks.
+- [ ] Move `Octree.domain_bounds(...)` behind ray/camera-specific setup; it is only justified today by `batcamp/ray.py`, not by core octree lookup.
 - [x] Replace `Octree.lookup -> self` pattern in `batcamp/octree.py` with an explicit lookup-interface object/protocol.
 - [x] Make coordinate conversion/interpolation APIs NumPy-first for bulk arrays; keep scalar conversion helpers private and limited to kernel internals.
 - [x] Rename `spherical.xyz_to_rpa_components` to private `_xyz_to_rpa_components` and keep it kernel-internal.
