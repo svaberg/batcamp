@@ -221,12 +221,15 @@ class CartesianOctreeBuilder:
 
     @staticmethod
     def populate_tree_state(
-        tree: Octree,
+        *,
+        leaf_shape: tuple[int, int, int],
+        max_level: int,
+        cell_levels: np.ndarray | None,
         ds: Dataset,
         corners: np.ndarray,
-    ) -> None:
-        """Attach exact Cartesian octree addresses to one built tree."""
-        if tree.cell_levels is None:
+    ) -> dict[str, object]:
+        """Return exact Cartesian octree state for one built tree."""
+        if cell_levels is None:
             raise ValueError("Cartesian tree state requires cell_levels.")
 
         points = np.column_stack(
@@ -263,8 +266,8 @@ class CartesianOctreeBuilder:
             dtype=float,
         )
         xyz_span = np.maximum(xyz_max - xyz_min, np.finfo(float).tiny)
-        leaf_shape = np.asarray(tree.leaf_shape, dtype=np.int64)
-        fine_step = xyz_span / np.asarray(leaf_shape, dtype=float)
+        leaf_shape_arr = np.asarray(leaf_shape, dtype=np.int64)
+        fine_step = xyz_span / np.asarray(leaf_shape_arr, dtype=float)
         float32_eps = float(np.finfo(np.float32).eps)
         axis_tol = np.empty(3, dtype=float)
         for k in range(3):
@@ -276,13 +279,13 @@ class CartesianOctreeBuilder:
                 max(8.0 * float32_eps * coord_scale, 1e-9 * max(float(xyz_span[k]), 1.0)),
             )
 
-        levels = np.asarray(tree.cell_levels, dtype=np.int64)
+        levels = np.asarray(cell_levels, dtype=np.int64)
         valid_ids = np.flatnonzero(levels >= 0).astype(np.int64)
         if valid_ids.size == 0:
             raise ValueError("Cartesian tree state requires at least one valid cell level.")
 
         depths = np.asarray(levels[valid_ids], dtype=np.int64)
-        tree_depth = int(tree.max_level)
+        tree_depth = int(max_level)
         shifts = np.asarray(tree_depth - depths, dtype=np.int64)
         if np.any(shifts < 0):
             bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
@@ -296,9 +299,9 @@ class CartesianOctreeBuilder:
         z0_f = np.rint((cell_z_min[valid_ids] - float(xyz_min[2])) / float(fine_step[2])).astype(np.int64)
         z1_f = np.rint((cell_z_max[valid_ids] - float(xyz_min[2])) / float(fine_step[2])).astype(np.int64)
 
-        fine_n0 = int(leaf_shape[0])
-        fine_n1 = int(leaf_shape[1])
-        fine_n2 = int(leaf_shape[2])
+        fine_n0 = int(leaf_shape_arr[0])
+        fine_n1 = int(leaf_shape_arr[1])
+        fine_n2 = int(leaf_shape_arr[2])
         in_bounds = (
             (x0_f >= 0) & (x1_f <= fine_n0)
             & (y0_f >= 0) & (y1_f <= fine_n1)
@@ -387,33 +390,48 @@ class CartesianOctreeBuilder:
         node_y_max = float(xyz_min[1]) + node_y1_f.astype(float) * float(fine_step[1])
         node_z_min = float(xyz_min[2]) + node_z0_f.astype(float) * float(fine_step[2])
         node_z_max = float(xyz_min[2]) + node_z1_f.astype(float) * float(fine_step[2])
-        tree._corners = np.asarray(corners_arr, dtype=np.int64)
-        tree._points = np.asarray(points, dtype=np.float64)
-        tree._cell_centers = np.asarray(cell_centers, dtype=np.float64)
-        tree._cell_x_min = np.asarray(cell_x_min, dtype=np.float64)
-        tree._cell_x_max = np.asarray(cell_x_max, dtype=np.float64)
-        tree._cell_y_min = np.asarray(cell_y_min, dtype=np.float64)
-        tree._cell_y_max = np.asarray(cell_y_max, dtype=np.float64)
-        tree._cell_z_min = np.asarray(cell_z_min, dtype=np.float64)
-        tree._cell_z_max = np.asarray(cell_z_max, dtype=np.float64)
-        tree._xyz_min = np.asarray(xyz_min, dtype=np.float64)
-        tree._xyz_max = np.asarray(xyz_max, dtype=np.float64)
-        tree._i0 = cell_i0
-        tree._i1 = cell_i1
-        tree._i2 = cell_i2
-        tree._node_depth = node_depth
-        tree._node_i0 = node_i0
-        tree._node_i1 = node_i1
-        tree._node_i2 = node_i2
-        tree._node_value = node_value
-        tree._node_child = node_child
-        tree._root_node_ids = root_node_ids
-        tree._node_parent = node_parent
-        tree._cell_node_id = cell_node_id
-        tree._node_x_min = np.asarray(node_x_min, dtype=np.float64)
-        tree._node_x_max = np.asarray(node_x_max, dtype=np.float64)
-        tree._node_y_min = np.asarray(node_y_min, dtype=np.float64)
-        tree._node_y_max = np.asarray(node_y_max, dtype=np.float64)
-        tree._node_z_min = np.asarray(node_z_min, dtype=np.float64)
-        tree._node_z_max = np.asarray(node_z_max, dtype=np.float64)
-        tree._radial_edges = np.empty((0,), dtype=np.float64)
+        return {
+            "cell_levels": np.asarray(cell_levels, dtype=np.int64),
+            "cell_i0": np.asarray(cell_i0, dtype=np.int64),
+            "cell_i1": np.asarray(cell_i1, dtype=np.int64),
+            "cell_i2": np.asarray(cell_i2, dtype=np.int64),
+            "cell_centers": np.asarray(cell_centers, dtype=np.float64),
+            "cell_x_min": np.asarray(cell_x_min, dtype=np.float64),
+            "cell_x_max": np.asarray(cell_x_max, dtype=np.float64),
+            "cell_y_min": np.asarray(cell_y_min, dtype=np.float64),
+            "cell_y_max": np.asarray(cell_y_max, dtype=np.float64),
+            "cell_z_min": np.asarray(cell_z_min, dtype=np.float64),
+            "cell_z_max": np.asarray(cell_z_max, dtype=np.float64),
+            "xyz_min": np.asarray(xyz_min, dtype=np.float64),
+            "xyz_max": np.asarray(xyz_max, dtype=np.float64),
+            "cell_r_min": np.empty((0,), dtype=np.float64),
+            "cell_r_max": np.empty((0,), dtype=np.float64),
+            "cell_theta_min": np.empty((0,), dtype=np.float64),
+            "cell_theta_max": np.empty((0,), dtype=np.float64),
+            "cell_phi_start": np.empty((0,), dtype=np.float64),
+            "cell_phi_width": np.empty((0,), dtype=np.float64),
+            "node_depth": np.asarray(node_depth, dtype=np.int64),
+            "node_i0": np.asarray(node_i0, dtype=np.int64),
+            "node_i1": np.asarray(node_i1, dtype=np.int64),
+            "node_i2": np.asarray(node_i2, dtype=np.int64),
+            "node_value": np.asarray(node_value, dtype=np.int64),
+            "node_child": np.asarray(node_child, dtype=np.int64),
+            "root_node_ids": np.asarray(root_node_ids, dtype=np.int64),
+            "node_parent": np.asarray(node_parent, dtype=np.int64),
+            "cell_node_id": np.asarray(cell_node_id, dtype=np.int64),
+            "node_x_min": np.asarray(node_x_min, dtype=np.float64),
+            "node_x_max": np.asarray(node_x_max, dtype=np.float64),
+            "node_y_min": np.asarray(node_y_min, dtype=np.float64),
+            "node_y_max": np.asarray(node_y_max, dtype=np.float64),
+            "node_z_min": np.asarray(node_z_min, dtype=np.float64),
+            "node_z_max": np.asarray(node_z_max, dtype=np.float64),
+            "node_r_min": np.empty((0,), dtype=np.float64),
+            "node_r_max": np.empty((0,), dtype=np.float64),
+            "node_theta_min": np.empty((0,), dtype=np.float64),
+            "node_theta_max": np.empty((0,), dtype=np.float64),
+            "node_phi_start": np.empty((0,), dtype=np.float64),
+            "node_phi_width": np.empty((0,), dtype=np.float64),
+            "radial_edges": np.empty((0,), dtype=np.float64),
+            "r_min": np.nan,
+            "r_max": np.nan,
+        }
