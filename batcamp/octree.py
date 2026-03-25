@@ -66,11 +66,7 @@ class LookupKernelState(NamedTuple):
     node_axis2_start: np.ndarray
     node_axis2_width: np.ndarray
 
-def _coord_state_inputs(
-    tree: "Octree",
-    *,
-    coord_name: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _coord_state_inputs(tree: "Octree") -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return the bound dataset arrays and exact leaf levels needed for coordinate state."""
     missing = [
         name
@@ -91,12 +87,12 @@ def _coord_state_inputs(
         if not hasattr(tree, name)
     ]
     if missing:
-        raise ValueError(f"{coord_name} lookup requires exact tree state: missing {missing}.")
+        raise ValueError(f"Lookup requires exact tree state: missing {missing}.")
     corners = np.asarray(tree.ds.corners, dtype=np.int64)
     x, y, z = (np.asarray(tree.ds[name], dtype=np.float64) for name in XYZ_VARS)
     cell_levels = tree.cell_levels
     if cell_levels is None or int(cell_levels.shape[0]) != int(corners.shape[0]):
-        raise ValueError(f"{coord_name} lookup requires exact cell_levels.")
+        raise ValueError("Lookup requires exact cell_levels.")
     return corners, x, y, z, cell_levels
 
 

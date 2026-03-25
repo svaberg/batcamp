@@ -24,7 +24,7 @@ class _CartesianCoordSupport:
 
     def _attach_coord_state(self) -> None:
         """Derive and attach Cartesian runtime state from the bound dataset."""
-        corners, x, y, z, cell_levels = _coord_state_inputs(self, coord_name="Cartesian")
+        corners, x, y, z, cell_levels = _coord_state_inputs(self)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
