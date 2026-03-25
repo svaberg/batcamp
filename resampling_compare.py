@@ -322,7 +322,7 @@ def _ray_segment_counts(
     chunk_size: int,
 ) -> np.ndarray:
     """Return per-pixel segment counts from adaptive-midpoint ray offsets."""
-    counts = ray.segment_counts(
+    counts = ray.ray_tracer.segment_counts(
         origins,
         direction,
         0.0,
