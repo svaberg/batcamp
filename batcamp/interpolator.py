@@ -15,7 +15,7 @@ import numpy as np
 
 from .constants import XYZ_VARS
 from .octree import Octree
-from .octree import _xyz_to_rpa_components
+from .spherical import _xyz_to_rpa_components
 
 logger = logging.getLogger(__name__)
 
