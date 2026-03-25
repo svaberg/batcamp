@@ -697,12 +697,12 @@ class Octree:
         return BoundGeometryState(
             points=np.column_stack(
                 (
-                    np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64),
-                    np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64),
-                    np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64),
+                    self.ds[XYZ_VARS[0]],
+                    self.ds[XYZ_VARS[1]],
+                    self.ds[XYZ_VARS[2]],
                 )
             ),
-            corners=np.asarray(self.ds.corners, dtype=np.int64),
+            corners=self.ds.corners,
             coord_state=self._coord_state,
         )
 
