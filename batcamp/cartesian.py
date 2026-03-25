@@ -11,14 +11,12 @@ from __future__ import annotations
 import numpy as np
 
 from .constants import XYZ_VARS
-from .octree import LookupKernelState
-from .octree import Octree
+from .octree import _coord_state_inputs
+from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
 from .octree import _lookup_cell_id_kernel
 
 _LOOKUP_CONTAIN_TOL = 1e-10
-
-CartesianLookupKernelState = LookupKernelState
 
 
 class _CartesianCoordSupport:
@@ -26,29 +24,7 @@ class _CartesianCoordSupport:
 
     def _attach_coord_state(self) -> None:
         """Derive and attach Cartesian runtime state from the bound dataset."""
-        required = (
-            "_i0",
-            "_i1",
-            "_i2",
-            "_node_depth",
-            "_node_i0",
-            "_node_i1",
-            "_node_i2",
-            "_node_value",
-            "_node_child",
-            "_root_node_ids",
-            "_node_parent",
-            "_cell_node_id",
-        )
-        missing = [name for name in required if not hasattr(self, name)]
-        if missing:
-            raise ValueError(f"Cartesian lookup requires exact tree state: missing {missing}.")
-        # Cast once at the dataset->kernel boundary: corner ids must index cleanly
-        # and coordinate arrays feed float64 lookup kernels.
-        corners = np.asarray(self.ds.corners, dtype=np.int64)
-        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64)
-        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64)
-        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64)
+        corners, x, y, z, cell_levels = _coord_state_inputs(self, coord_name="Cartesian")
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -59,11 +35,7 @@ class _CartesianCoordSupport:
         self._cell_z_min = np.min(cell_z, axis=1)
         self._cell_z_max = np.max(cell_z, axis=1)
 
-        n_cells = int(corners.shape[0])
-        if self.cell_levels is None or self.cell_levels.shape[0] != n_cells:
-            raise ValueError("Cartesian lookup requires exact cell_levels.")
-        self._cell_level = self.cell_levels
-        self._cell_valid = self._cell_level >= 0
+        cell_valid = cell_levels >= 0
         n_nodes = int(self._node_value.shape[0])
         self._node_x_min = np.full(n_nodes, np.inf, dtype=np.float64)
         self._node_x_max = np.full(n_nodes, -np.inf, dtype=np.float64)
@@ -107,14 +79,15 @@ class _CartesianCoordSupport:
             ],
             dtype=np.float64,
         )
-        self._coord_state = LookupKernelState(
+        self._coord_state = _pack_coord_state(
+            self,
             cell_axis0_start=self._cell_x_min,
             cell_axis0_width=self._cell_x_max - self._cell_x_min,
             cell_axis1_start=self._cell_y_min,
             cell_axis1_width=self._cell_y_max - self._cell_y_min,
             cell_axis2_start=self._cell_z_min,
             cell_axis2_width=self._cell_z_max - self._cell_z_min,
-            cell_valid=self._cell_valid,
+            cell_valid=cell_valid,
             domain_axis0_start=float(self._xyz_min[0]),
             domain_axis0_width=float(self._xyz_max[0] - self._xyz_min[0]),
             domain_axis1_start=float(self._xyz_min[1]),
@@ -123,11 +96,6 @@ class _CartesianCoordSupport:
             domain_axis2_width=float(self._xyz_max[2] - self._xyz_min[2]),
             axis2_period=0.0,
             axis2_periodic=False,
-            node_value=self._node_value,
-            node_child=self._node_child,
-            root_node_ids=self._root_node_ids,
-            node_parent=self._node_parent,
-            cell_node_id=self._cell_node_id,
             node_axis0_start=self._node_x_min,
             node_axis0_width=self._node_x_max - self._node_x_min,
             node_axis1_start=self._node_y_min,
