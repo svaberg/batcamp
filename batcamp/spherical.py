@@ -22,7 +22,7 @@ class _SphericalCoordSupport:
 
     def _attach_coord_state(self) -> None:
         """Derive and attach spherical runtime state from the bound dataset."""
-        corners, x, y, z, cell_levels = _coord_state_inputs(self, coord_name="Spherical")
+        corners, x, y, z, cell_levels = _coord_state_inputs(self)
         n_cells = int(corners.shape[0])
         cell_valid = cell_levels >= 0
         valid_ids = np.flatnonzero(cell_valid)
