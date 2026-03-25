@@ -15,6 +15,107 @@ from .octree import OCTREE_FILE_VERSION
 from .octree import Octree
 from .octree import SUPPORTED_TREE_COORDS
 
+_REQUIRED_TREE_ATTRS = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
+
+_ARRAY_SPECS = (
+    ("cell_levels", "cell_levels", np.int64, (0,)),
+    ("cell_i0", "_i0", np.int64, (0,)),
+    ("cell_i1", "_i1", np.int64, (0,)),
+    ("cell_i2", "_i2", np.int64, (0,)),
+    ("cell_centers", "_cell_centers", np.float64, (0, 3)),
+    ("cell_x_min", "_cell_x_min", np.float64, (0,)),
+    ("cell_x_max", "_cell_x_max", np.float64, (0,)),
+    ("cell_y_min", "_cell_y_min", np.float64, (0,)),
+    ("cell_y_max", "_cell_y_max", np.float64, (0,)),
+    ("cell_z_min", "_cell_z_min", np.float64, (0,)),
+    ("cell_z_max", "_cell_z_max", np.float64, (0,)),
+    ("xyz_min", "_xyz_min", np.float64, (0,)),
+    ("xyz_max", "_xyz_max", np.float64, (0,)),
+    ("cell_r_min", "_cell_r_min", np.float64, (0,)),
+    ("cell_r_max", "_cell_r_max", np.float64, (0,)),
+    ("cell_theta_min", "_cell_theta_min", np.float64, (0,)),
+    ("cell_theta_max", "_cell_theta_max", np.float64, (0,)),
+    ("cell_phi_start", "_cell_phi_start", np.float64, (0,)),
+    ("cell_phi_width", "_cell_phi_width", np.float64, (0,)),
+    ("node_depth", "_node_depth", np.int64, (0,)),
+    ("node_i0", "_node_i0", np.int64, (0,)),
+    ("node_i1", "_node_i1", np.int64, (0,)),
+    ("node_i2", "_node_i2", np.int64, (0,)),
+    ("node_value", "_node_value", np.int64, (0,)),
+    ("node_child", "_node_child", np.int64, (0, 8)),
+    ("root_node_ids", "_root_node_ids", np.int64, (0,)),
+    ("node_parent", "_node_parent", np.int64, (0,)),
+    ("cell_node_id", "_cell_node_id", np.int64, (0,)),
+    ("node_x_min", "_node_x_min", np.float64, (0,)),
+    ("node_x_max", "_node_x_max", np.float64, (0,)),
+    ("node_y_min", "_node_y_min", np.float64, (0,)),
+    ("node_y_max", "_node_y_max", np.float64, (0,)),
+    ("node_z_min", "_node_z_min", np.float64, (0,)),
+    ("node_z_max", "_node_z_max", np.float64, (0,)),
+    ("node_r_min", "_node_r_min", np.float64, (0,)),
+    ("node_r_max", "_node_r_max", np.float64, (0,)),
+    ("node_theta_min", "_node_theta_min", np.float64, (0,)),
+    ("node_theta_max", "_node_theta_max", np.float64, (0,)),
+    ("node_phi_start", "_node_phi_start", np.float64, (0,)),
+    ("node_phi_width", "_node_phi_width", np.float64, (0,)),
+    ("radial_edges", "_radial_edges", np.float64, (0,)),
+)
+
+_FLOAT_SCALAR_SPECS = (
+    ("r_min", "_r_min", np.nan),
+    ("r_max", "_r_max", np.nan),
+)
+
+_REQUIRED_FILE_KEYS = (
+    "version",
+    "tree_coord",
+    "leaf_shape",
+    "root_shape",
+    "is_full",
+    "level_counts",
+    "min_level",
+    "max_level",
+    "axis_rho_tol",
+) + tuple(name for name, _attr, _dtype, _shape in _ARRAY_SPECS) + tuple(
+    name for name, _attr, _default in _FLOAT_SCALAR_SPECS
+)
+
+
+def _empty_array(shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+    """Return one empty array matching the persisted field shape/dtype."""
+    return np.empty(shape, dtype=dtype)
+
+
+def _array_state_from_tree(tree: Octree) -> dict[str, object]:
+    """Collect persisted array/scalar payload from one in-memory tree."""
+    payload: dict[str, object] = {}
+    for field_name, attr_name, dtype, shape in _ARRAY_SPECS:
+        default = _empty_array(shape, dtype)
+        payload[field_name] = np.asarray(getattr(tree, attr_name, default), dtype=dtype)
+    for field_name, attr_name, default in _FLOAT_SCALAR_SPECS:
+        payload[field_name] = float(getattr(tree, attr_name, default))
+    return payload
+
+
+def _array_state_from_npz(data: np.lib.npyio.NpzFile) -> dict[str, object]:
+    """Collect persisted array/scalar payload from one `.npz` archive."""
+    payload: dict[str, object] = {}
+    for field_name, _attr_name, dtype, _shape in _ARRAY_SPECS:
+        payload[field_name] = np.asarray(data[field_name], dtype=dtype)
+    for field_name, _attr_name, _default in _FLOAT_SCALAR_SPECS:
+        payload[field_name] = float(data[field_name])
+    return payload
+
+
+def _array_state_npz_payload(arrays: "OctreeArrayState") -> dict[str, object]:
+    """Convert one array-state dataclass to `np.savez_compressed` payload."""
+    payload: dict[str, object] = {}
+    for field_name, _attr_name, dtype, _shape in _ARRAY_SPECS:
+        payload[field_name] = np.asarray(getattr(arrays, field_name), dtype=dtype)
+    for field_name, _attr_name, _default in _FLOAT_SCALAR_SPECS:
+        payload[field_name] = float(getattr(arrays, field_name))
+    return payload
+
 
 @dataclass(frozen=True)
 class OctreeArrayState:
@@ -69,55 +170,10 @@ class OctreeArrayState:
         """Capture array payload from one in-memory tree."""
         if tree.cell_levels is None:
             raise ValueError("Cannot persist octree without cell_levels.")
-        required = ("_i0", "_i1", "_i2", "_node_depth", "_node_i0", "_node_i1", "_node_i2", "_node_value")
-        missing = [name for name in required if not hasattr(tree, name)]
+        missing = [name for name in _REQUIRED_TREE_ATTRS if not hasattr(tree, name)]
         if missing:
             raise ValueError(f"Cannot persist octree without exact tree state: missing {missing}.")
-        return cls(
-            cell_levels=np.asarray(tree.cell_levels, dtype=np.int64),
-            cell_i0=np.asarray(tree._i0, dtype=np.int64),
-            cell_i1=np.asarray(tree._i1, dtype=np.int64),
-            cell_i2=np.asarray(tree._i2, dtype=np.int64),
-            cell_centers=np.asarray(getattr(tree, "_cell_centers", np.empty((0, 3), dtype=np.float64)), dtype=np.float64),
-            cell_x_min=np.asarray(getattr(tree, "_cell_x_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_x_max=np.asarray(getattr(tree, "_cell_x_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_y_min=np.asarray(getattr(tree, "_cell_y_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_y_max=np.asarray(getattr(tree, "_cell_y_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_z_min=np.asarray(getattr(tree, "_cell_z_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_z_max=np.asarray(getattr(tree, "_cell_z_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            xyz_min=np.asarray(getattr(tree, "_xyz_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            xyz_max=np.asarray(getattr(tree, "_xyz_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_r_min=np.asarray(getattr(tree, "_cell_r_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_r_max=np.asarray(getattr(tree, "_cell_r_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            r_min=float(getattr(tree, "_r_min", np.nan)),
-            r_max=float(getattr(tree, "_r_max", np.nan)),
-            cell_theta_min=np.asarray(getattr(tree, "_cell_theta_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_theta_max=np.asarray(getattr(tree, "_cell_theta_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_phi_start=np.asarray(getattr(tree, "_cell_phi_start", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            cell_phi_width=np.asarray(getattr(tree, "_cell_phi_width", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_depth=np.asarray(tree._node_depth, dtype=np.int64),
-            node_i0=np.asarray(tree._node_i0, dtype=np.int64),
-            node_i1=np.asarray(tree._node_i1, dtype=np.int64),
-            node_i2=np.asarray(tree._node_i2, dtype=np.int64),
-            node_value=np.asarray(tree._node_value, dtype=np.int64),
-            node_child=np.asarray(getattr(tree, "_node_child", np.empty((0, 8), dtype=np.int64)), dtype=np.int64),
-            root_node_ids=np.asarray(getattr(tree, "_root_node_ids", np.empty((0,), dtype=np.int64)), dtype=np.int64),
-            node_parent=np.asarray(getattr(tree, "_node_parent", np.empty((0,), dtype=np.int64)), dtype=np.int64),
-            cell_node_id=np.asarray(getattr(tree, "_cell_node_id", np.empty((0,), dtype=np.int64)), dtype=np.int64),
-            node_x_min=np.asarray(getattr(tree, "_node_x_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_x_max=np.asarray(getattr(tree, "_node_x_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_y_min=np.asarray(getattr(tree, "_node_y_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_y_max=np.asarray(getattr(tree, "_node_y_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_z_min=np.asarray(getattr(tree, "_node_z_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_z_max=np.asarray(getattr(tree, "_node_z_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_r_min=np.asarray(getattr(tree, "_node_r_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_r_max=np.asarray(getattr(tree, "_node_r_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_theta_min=np.asarray(getattr(tree, "_node_theta_min", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_theta_max=np.asarray(getattr(tree, "_node_theta_max", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_phi_start=np.asarray(getattr(tree, "_node_phi_start", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            node_phi_width=np.asarray(getattr(tree, "_node_phi_width", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-            radial_edges=np.asarray(getattr(tree, "_radial_edges", np.empty((0,), dtype=np.float64)), dtype=np.float64),
-        )
+        return cls(**_array_state_from_tree(tree))
 
 
 @dataclass(frozen=True)
@@ -166,110 +222,14 @@ class OctreePersistenceState:
             min_level=int(self.min_level),
             max_level=int(self.max_level),
             axis_rho_tol=float(self.axis_rho_tol),
-            cell_levels=np.asarray(arrays.cell_levels, dtype=np.int64),
-            cell_i0=np.asarray(arrays.cell_i0, dtype=np.int64),
-            cell_i1=np.asarray(arrays.cell_i1, dtype=np.int64),
-            cell_i2=np.asarray(arrays.cell_i2, dtype=np.int64),
-            cell_centers=np.asarray(arrays.cell_centers, dtype=np.float64),
-            cell_x_min=np.asarray(arrays.cell_x_min, dtype=np.float64),
-            cell_x_max=np.asarray(arrays.cell_x_max, dtype=np.float64),
-            cell_y_min=np.asarray(arrays.cell_y_min, dtype=np.float64),
-            cell_y_max=np.asarray(arrays.cell_y_max, dtype=np.float64),
-            cell_z_min=np.asarray(arrays.cell_z_min, dtype=np.float64),
-            cell_z_max=np.asarray(arrays.cell_z_max, dtype=np.float64),
-            xyz_min=np.asarray(arrays.xyz_min, dtype=np.float64),
-            xyz_max=np.asarray(arrays.xyz_max, dtype=np.float64),
-            cell_r_min=np.asarray(arrays.cell_r_min, dtype=np.float64),
-            cell_r_max=np.asarray(arrays.cell_r_max, dtype=np.float64),
-            r_min=float(arrays.r_min),
-            r_max=float(arrays.r_max),
-            cell_theta_min=np.asarray(arrays.cell_theta_min, dtype=np.float64),
-            cell_theta_max=np.asarray(arrays.cell_theta_max, dtype=np.float64),
-            cell_phi_start=np.asarray(arrays.cell_phi_start, dtype=np.float64),
-            cell_phi_width=np.asarray(arrays.cell_phi_width, dtype=np.float64),
-            node_depth=np.asarray(arrays.node_depth, dtype=np.int64),
-            node_i0=np.asarray(arrays.node_i0, dtype=np.int64),
-            node_i1=np.asarray(arrays.node_i1, dtype=np.int64),
-            node_i2=np.asarray(arrays.node_i2, dtype=np.int64),
-            node_value=np.asarray(arrays.node_value, dtype=np.int64),
-            node_child=np.asarray(arrays.node_child, dtype=np.int64),
-            root_node_ids=np.asarray(arrays.root_node_ids, dtype=np.int64),
-            node_parent=np.asarray(arrays.node_parent, dtype=np.int64),
-            cell_node_id=np.asarray(arrays.cell_node_id, dtype=np.int64),
-            node_x_min=np.asarray(arrays.node_x_min, dtype=np.float64),
-            node_x_max=np.asarray(arrays.node_x_max, dtype=np.float64),
-            node_y_min=np.asarray(arrays.node_y_min, dtype=np.float64),
-            node_y_max=np.asarray(arrays.node_y_max, dtype=np.float64),
-            node_z_min=np.asarray(arrays.node_z_min, dtype=np.float64),
-            node_z_max=np.asarray(arrays.node_z_max, dtype=np.float64),
-            node_r_min=np.asarray(arrays.node_r_min, dtype=np.float64),
-            node_r_max=np.asarray(arrays.node_r_max, dtype=np.float64),
-            node_theta_min=np.asarray(arrays.node_theta_min, dtype=np.float64),
-            node_theta_max=np.asarray(arrays.node_theta_max, dtype=np.float64),
-            node_phi_start=np.asarray(arrays.node_phi_start, dtype=np.float64),
-            node_phi_width=np.asarray(arrays.node_phi_width, dtype=np.float64),
-            radial_edges=np.asarray(arrays.radial_edges, dtype=np.float64),
+            **_array_state_npz_payload(arrays),
         )
 
     @classmethod
     def load_npz(cls, path: Path) -> tuple["OctreePersistenceState", OctreeArrayState]:
         """Load one persisted octree snapshot and array payload."""
-        required = (
-            "version",
-            "tree_coord",
-            "leaf_shape",
-            "root_shape",
-            "is_full",
-            "level_counts",
-            "min_level",
-            "max_level",
-            "axis_rho_tol",
-            "cell_levels",
-            "cell_i0",
-            "cell_i1",
-            "cell_i2",
-            "cell_centers",
-            "cell_x_min",
-            "cell_x_max",
-            "cell_y_min",
-            "cell_y_max",
-            "cell_z_min",
-            "cell_z_max",
-            "xyz_min",
-            "xyz_max",
-            "cell_r_min",
-            "cell_r_max",
-            "r_min",
-            "r_max",
-            "cell_theta_min",
-            "cell_theta_max",
-            "cell_phi_start",
-            "cell_phi_width",
-            "node_depth",
-            "node_i0",
-            "node_i1",
-            "node_i2",
-            "node_value",
-            "node_child",
-            "root_node_ids",
-            "node_parent",
-            "cell_node_id",
-            "node_x_min",
-            "node_x_max",
-            "node_y_min",
-            "node_y_max",
-            "node_z_min",
-            "node_z_max",
-            "node_r_min",
-            "node_r_max",
-            "node_theta_min",
-            "node_theta_max",
-            "node_phi_start",
-            "node_phi_width",
-            "radial_edges",
-        )
         with np.load(path, allow_pickle=False) as data:
-            missing = [key for key in required if key not in data]
+            missing = [key for key in _REQUIRED_FILE_KEYS if key not in data]
             if missing:
                 raise ValueError(f"Missing required octree fields: {missing}.")
 
@@ -299,51 +259,7 @@ class OctreePersistenceState:
                 tree_coord=tree_coord,
                 axis_rho_tol=float(data["axis_rho_tol"]),
             )
-            arrays = OctreeArrayState(
-                cell_levels=np.asarray(data["cell_levels"], dtype=np.int64),
-                cell_i0=np.asarray(data["cell_i0"], dtype=np.int64),
-                cell_i1=np.asarray(data["cell_i1"], dtype=np.int64),
-                cell_i2=np.asarray(data["cell_i2"], dtype=np.int64),
-                cell_centers=np.asarray(data["cell_centers"], dtype=np.float64),
-                cell_x_min=np.asarray(data["cell_x_min"], dtype=np.float64),
-                cell_x_max=np.asarray(data["cell_x_max"], dtype=np.float64),
-                cell_y_min=np.asarray(data["cell_y_min"], dtype=np.float64),
-                cell_y_max=np.asarray(data["cell_y_max"], dtype=np.float64),
-                cell_z_min=np.asarray(data["cell_z_min"], dtype=np.float64),
-                cell_z_max=np.asarray(data["cell_z_max"], dtype=np.float64),
-                xyz_min=np.asarray(data["xyz_min"], dtype=np.float64),
-                xyz_max=np.asarray(data["xyz_max"], dtype=np.float64),
-                cell_r_min=np.asarray(data["cell_r_min"], dtype=np.float64),
-                cell_r_max=np.asarray(data["cell_r_max"], dtype=np.float64),
-                r_min=float(data["r_min"]),
-                r_max=float(data["r_max"]),
-                cell_theta_min=np.asarray(data["cell_theta_min"], dtype=np.float64),
-                cell_theta_max=np.asarray(data["cell_theta_max"], dtype=np.float64),
-                cell_phi_start=np.asarray(data["cell_phi_start"], dtype=np.float64),
-                cell_phi_width=np.asarray(data["cell_phi_width"], dtype=np.float64),
-                node_depth=np.asarray(data["node_depth"], dtype=np.int64),
-                node_i0=np.asarray(data["node_i0"], dtype=np.int64),
-                node_i1=np.asarray(data["node_i1"], dtype=np.int64),
-                node_i2=np.asarray(data["node_i2"], dtype=np.int64),
-                node_value=np.asarray(data["node_value"], dtype=np.int64),
-                node_child=np.asarray(data["node_child"], dtype=np.int64),
-                root_node_ids=np.asarray(data["root_node_ids"], dtype=np.int64),
-                node_parent=np.asarray(data["node_parent"], dtype=np.int64),
-                cell_node_id=np.asarray(data["cell_node_id"], dtype=np.int64),
-                node_x_min=np.asarray(data["node_x_min"], dtype=np.float64),
-                node_x_max=np.asarray(data["node_x_max"], dtype=np.float64),
-                node_y_min=np.asarray(data["node_y_min"], dtype=np.float64),
-                node_y_max=np.asarray(data["node_y_max"], dtype=np.float64),
-                node_z_min=np.asarray(data["node_z_min"], dtype=np.float64),
-                node_z_max=np.asarray(data["node_z_max"], dtype=np.float64),
-                node_r_min=np.asarray(data["node_r_min"], dtype=np.float64),
-                node_r_max=np.asarray(data["node_r_max"], dtype=np.float64),
-                node_theta_min=np.asarray(data["node_theta_min"], dtype=np.float64),
-                node_theta_max=np.asarray(data["node_theta_max"], dtype=np.float64),
-                node_phi_start=np.asarray(data["node_phi_start"], dtype=np.float64),
-                node_phi_width=np.asarray(data["node_phi_width"], dtype=np.float64),
-                radial_edges=np.asarray(data["radial_edges"], dtype=np.float64),
-            )
+            arrays = OctreeArrayState(**_array_state_from_npz(data))
             return state, arrays
 
     def instantiate_tree(
@@ -364,46 +280,10 @@ class OctreePersistenceState:
             cell_levels=arrays.cell_levels,
             axis_rho_tol=self.axis_rho_tol,
         )
-        tree._i0 = np.asarray(arrays.cell_i0, dtype=np.int64)
-        tree._i1 = np.asarray(arrays.cell_i1, dtype=np.int64)
-        tree._i2 = np.asarray(arrays.cell_i2, dtype=np.int64)
-        tree._cell_centers = np.asarray(arrays.cell_centers, dtype=np.float64)
-        tree._cell_x_min = np.asarray(arrays.cell_x_min, dtype=np.float64)
-        tree._cell_x_max = np.asarray(arrays.cell_x_max, dtype=np.float64)
-        tree._cell_y_min = np.asarray(arrays.cell_y_min, dtype=np.float64)
-        tree._cell_y_max = np.asarray(arrays.cell_y_max, dtype=np.float64)
-        tree._cell_z_min = np.asarray(arrays.cell_z_min, dtype=np.float64)
-        tree._cell_z_max = np.asarray(arrays.cell_z_max, dtype=np.float64)
-        tree._xyz_min = np.asarray(arrays.xyz_min, dtype=np.float64)
-        tree._xyz_max = np.asarray(arrays.xyz_max, dtype=np.float64)
-        tree._cell_r_min = np.asarray(arrays.cell_r_min, dtype=np.float64)
-        tree._cell_r_max = np.asarray(arrays.cell_r_max, dtype=np.float64)
-        tree._r_min = float(arrays.r_min)
-        tree._r_max = float(arrays.r_max)
-        tree._cell_theta_min = np.asarray(arrays.cell_theta_min, dtype=np.float64)
-        tree._cell_theta_max = np.asarray(arrays.cell_theta_max, dtype=np.float64)
-        tree._cell_phi_start = np.asarray(arrays.cell_phi_start, dtype=np.float64)
-        tree._cell_phi_width = np.asarray(arrays.cell_phi_width, dtype=np.float64)
-        tree._node_depth = np.asarray(arrays.node_depth, dtype=np.int64)
-        tree._node_i0 = np.asarray(arrays.node_i0, dtype=np.int64)
-        tree._node_i1 = np.asarray(arrays.node_i1, dtype=np.int64)
-        tree._node_i2 = np.asarray(arrays.node_i2, dtype=np.int64)
-        tree._node_value = np.asarray(arrays.node_value, dtype=np.int64)
-        tree._node_child = np.asarray(arrays.node_child, dtype=np.int64)
-        tree._root_node_ids = np.asarray(arrays.root_node_ids, dtype=np.int64)
-        tree._node_parent = np.asarray(arrays.node_parent, dtype=np.int64)
-        tree._cell_node_id = np.asarray(arrays.cell_node_id, dtype=np.int64)
-        tree._node_x_min = np.asarray(arrays.node_x_min, dtype=np.float64)
-        tree._node_x_max = np.asarray(arrays.node_x_max, dtype=np.float64)
-        tree._node_y_min = np.asarray(arrays.node_y_min, dtype=np.float64)
-        tree._node_y_max = np.asarray(arrays.node_y_max, dtype=np.float64)
-        tree._node_z_min = np.asarray(arrays.node_z_min, dtype=np.float64)
-        tree._node_z_max = np.asarray(arrays.node_z_max, dtype=np.float64)
-        tree._node_r_min = np.asarray(arrays.node_r_min, dtype=np.float64)
-        tree._node_r_max = np.asarray(arrays.node_r_max, dtype=np.float64)
-        tree._node_theta_min = np.asarray(arrays.node_theta_min, dtype=np.float64)
-        tree._node_theta_max = np.asarray(arrays.node_theta_max, dtype=np.float64)
-        tree._node_phi_start = np.asarray(arrays.node_phi_start, dtype=np.float64)
-        tree._node_phi_width = np.asarray(arrays.node_phi_width, dtype=np.float64)
-        tree._radial_edges = np.asarray(arrays.radial_edges, dtype=np.float64)
+        for field_name, attr_name, dtype, _shape in _ARRAY_SPECS:
+            if attr_name == "cell_levels":
+                continue
+            setattr(tree, attr_name, np.asarray(getattr(arrays, field_name), dtype=dtype))
+        for field_name, attr_name, _default in _FLOAT_SCALAR_SPECS:
+            setattr(tree, attr_name, float(getattr(arrays, field_name)))
         return tree
