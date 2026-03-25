@@ -9,9 +9,10 @@ from pathlib import Path
 import numpy as np
 
 from .octree import GridShape
-from .octree import OCTREE_FILE_VERSION
 from .octree import Octree
 from .octree import TreeCoord
+
+OCTREE_FILE_VERSION = 5
 
 _REQUIRED_TREE_ATTRS = ("_i0", "_i1", "_i2")
 
