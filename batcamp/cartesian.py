@@ -20,6 +20,8 @@ from .octree import GridIndex
 from .octree import GridPath
 from .octree import LookupHit
 from .octree import Octree
+from .octree import _lookup_descend_to_leaf
+from .octree import _lookup_hint_node
 
 _LOOKUP_CONTAIN_TOL = 1e-10
 _MISSING_NODE_VALUE = -1
@@ -88,7 +90,7 @@ def _contains_xyz_node(
     if z < (lookup_state.node_z_min[nid] - tol) or z > (lookup_state.node_z_max[nid] + tol):
         return False
     return True
-@njit(cache=True)
+@njit(cache=False)
 def _lookup_xyz_cell_id_kernel(
     x: float,
     y: float,
@@ -102,14 +104,6 @@ def _lookup_xyz_cell_id_kernel(
     if prev_cid >= 0 and _contains_xyz_cell(int(prev_cid), x, y, z, lookup_state):
         return int(prev_cid)
 
-    current = -1
-    if prev_cid >= 0:
-        current = int(lookup_state.cell_node_id[int(prev_cid)])
-        while current >= 0:
-            if _contains_xyz_node(current, x, y, z, lookup_state):
-                break
-            current = int(lookup_state.node_parent[current])
-
     inside_bbox = bool(
         (x >= lookup_state.xyz_min[0])
         and (x <= lookup_state.xyz_max[0])
@@ -121,34 +115,28 @@ def _lookup_xyz_cell_id_kernel(
     if not inside_bbox:
         return -1
 
-    if current < 0:
-        for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
-            node_id = int(lookup_state.root_node_ids[root_pos])
-            if _contains_xyz_node(node_id, x, y, z, lookup_state):
-                current = node_id
-                break
-    if current < 0:
-        return -1
-
-    while True:
-        node_value = int(lookup_state.node_value[current])
-        if node_value >= 0:
-            cid = int(node_value)
-            if _contains_xyz_cell(cid, x, y, z, lookup_state):
-                return cid
-            return -1
-
-        found_child = False
-        for child_ord in range(8):
-            child_id = int(lookup_state.node_child[current, child_ord])
-            if child_id < 0:
-                continue
-            if _contains_xyz_node(child_id, x, y, z, lookup_state):
-                current = child_id
-                found_child = True
-                break
-        if not found_child:
-            return -1
+    current = _lookup_hint_node(
+        int(prev_cid),
+        x,
+        y,
+        z,
+        lookup_state.cell_node_id,
+        lookup_state.node_parent,
+        lookup_state,
+        _contains_xyz_node,
+    )
+    return _lookup_descend_to_leaf(
+        x,
+        y,
+        z,
+        current,
+        lookup_state.root_node_ids,
+        lookup_state.node_value,
+        lookup_state.node_child,
+        lookup_state,
+        _contains_xyz_cell,
+        _contains_xyz_node,
+    )
 
 
 class _CartesianCellLookup:

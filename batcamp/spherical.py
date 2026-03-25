@@ -14,6 +14,8 @@ from .octree import GridIndex
 from .octree import GridPath
 from .octree import LookupHit
 from .octree import Octree
+from .octree import _lookup_descend_to_leaf
+from .octree import _lookup_hint_node
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
@@ -110,7 +112,7 @@ def _contains_rpa_node(
     return dphi <= (width + tol)
 
 
-@njit(cache=True)
+@njit(cache=False)
 def _lookup_rpa_cell_id_kernel(
     r: float,
     polar: float,
@@ -135,41 +137,28 @@ def _lookup_rpa_cell_id_kernel(
     ):
         return int(prev_cid)
 
-    current = -1
-    if prev_cid >= 0:
-        current = int(lookup_state.cell_node_id[int(prev_cid)])
-        while current >= 0:
-            if _contains_rpa_node(current, r, polar, azimuth, lookup_state):
-                break
-            current = int(lookup_state.node_parent[current])
-    if current < 0:
-        for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
-            node_id = int(lookup_state.root_node_ids[root_pos])
-            if _contains_rpa_node(node_id, r, polar, azimuth, lookup_state):
-                current = node_id
-                break
-    if current < 0:
-        return -1
-
-    while True:
-        node_value = int(lookup_state.node_value[current])
-        if node_value >= 0:
-            cid = int(node_value)
-            if _contains_rpa_cell(cid, r, polar, azimuth, lookup_state):
-                return cid
-            return -1
-
-        found_child = False
-        for child_ord in range(8):
-            child_id = int(lookup_state.node_child[current, child_ord])
-            if child_id < 0:
-                continue
-            if _contains_rpa_node(child_id, r, polar, azimuth, lookup_state):
-                current = child_id
-                found_child = True
-                break
-        if not found_child:
-            return -1
+    current = _lookup_hint_node(
+        int(prev_cid),
+        r,
+        polar,
+        azimuth,
+        lookup_state.cell_node_id,
+        lookup_state.node_parent,
+        lookup_state,
+        _contains_rpa_node,
+    )
+    return _lookup_descend_to_leaf(
+        r,
+        polar,
+        azimuth,
+        current,
+        lookup_state.root_node_ids,
+        lookup_state.node_value,
+        lookup_state.node_child,
+        lookup_state,
+        _contains_rpa_cell,
+        _contains_rpa_node,
+    )
 
 class _SphericalCellLookup:
     """Cell lookup helper for spherical trees."""

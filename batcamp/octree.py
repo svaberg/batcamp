@@ -13,6 +13,7 @@ from typing import TypeAlias
 
 import numpy as np
 from batread import Dataset
+from numba import njit
 
 from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
@@ -48,6 +49,73 @@ class LookupGeometryState(NamedTuple):
     points: np.ndarray
     corners: np.ndarray
     lookup_state: object
+
+
+@njit(cache=True)
+def _lookup_hint_node(
+    prev_cid: int,
+    q0: float,
+    q1: float,
+    q2: float,
+    cell_node_id: np.ndarray,
+    node_parent: np.ndarray,
+    lookup_state: object,
+    contains_node,
+) -> int:
+    """Return the nearest ancestor hint node containing one query, or `-1`."""
+    if prev_cid < 0:
+        return -1
+    current = int(cell_node_id[int(prev_cid)])
+    while current >= 0:
+        if contains_node(current, q0, q1, q2, lookup_state):
+            return current
+        current = int(node_parent[current])
+    return -1
+
+
+@njit(cache=True)
+def _lookup_descend_to_leaf(
+    q0: float,
+    q1: float,
+    q2: float,
+    start_node_id: int,
+    root_node_ids: np.ndarray,
+    node_value: np.ndarray,
+    node_child: np.ndarray,
+    lookup_state: object,
+    contains_cell,
+    contains_node,
+) -> int:
+    """Descend one sparse tree from a containing node hint, or from the roots."""
+    current = int(start_node_id)
+    if current < 0:
+        for root_pos in range(int(root_node_ids.shape[0])):
+            node_id = int(root_node_ids[root_pos])
+            if contains_node(node_id, q0, q1, q2, lookup_state):
+                current = node_id
+                break
+    if current < 0:
+        return -1
+
+    while True:
+        value = int(node_value[current])
+        if value >= 0:
+            cid = int(value)
+            if contains_cell(cid, q0, q1, q2, lookup_state):
+                return cid
+            return -1
+
+        found_child = False
+        for child_ord in range(8):
+            child_id = int(node_child[current, child_ord])
+            if child_id < 0:
+                continue
+            if contains_node(child_id, q0, q1, q2, lookup_state):
+                current = child_id
+                found_child = True
+                break
+        if not found_child:
+            return -1
 
 
 def _level_metadata_from_leaves(
