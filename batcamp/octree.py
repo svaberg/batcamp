@@ -861,6 +861,20 @@ class Octree:
             cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
         return cell_ids.reshape(shape)
 
+    def _cell_axis_starts_and_widths(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return per-cell axis starts and widths for the bound coordinate geometry."""
+        self._require_lookup()
+        return (
+            self._coord_state.cell_axis0_start,
+            self._coord_state.cell_axis0_width,
+            self._coord_state.cell_axis1_start,
+            self._coord_state.cell_axis1_width,
+            self._coord_state.cell_axis2_start,
+            self._coord_state.cell_axis2_width,
+        )
+
     def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:
         """Return unique frontier nodes by truncating leaves to one level cutoff."""
         if self.cell_levels is None:

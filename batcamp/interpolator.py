@@ -296,7 +296,6 @@ class OctreeInterpolator:
             logger.error("Octree is not bound to a dataset; cannot build interpolator.")
             raise ValueError("Octree is not bound to a dataset with corners.")
         self.tree = tree
-        self.tree._require_lookup()
         self._ds = tree.ds
         self._corners = self._ds.corners
         self._points = np.column_stack(tuple(self._ds[name] for name in XYZ_VARS))
@@ -405,13 +404,13 @@ class OctreeInterpolator:
         vr = self._node_r[corners]
         vt = self._node_theta[corners]
         vp = self._node_phi[corners]
-        lookup_state = self.tree._coord_state
-        self._cell_r0 = lookup_state.cell_axis0_start
-        self._cell_r1 = lookup_state.cell_axis0_start + lookup_state.cell_axis0_width
-        self._cell_t0 = lookup_state.cell_axis1_start
-        self._cell_t1 = lookup_state.cell_axis1_start + lookup_state.cell_axis1_width
-        self._cell_p_start = lookup_state.cell_axis2_start
-        self._cell_p_width = lookup_state.cell_axis2_width
+        cell_r0, cell_rwidth, cell_t0, cell_twidth, cell_p_start, cell_p_width = self.tree._cell_axis_starts_and_widths()
+        self._cell_r0 = cell_r0
+        self._cell_r1 = cell_r0 + cell_rwidth
+        self._cell_t0 = cell_t0
+        self._cell_t1 = cell_t0 + cell_twidth
+        self._cell_p_start = cell_p_start
+        self._cell_p_width = cell_p_width
 
         tiny = np.finfo(float).tiny
         self._cell_rden = np.maximum(self._cell_r1 - self._cell_r0, tiny)
@@ -463,17 +462,17 @@ class OctreeInterpolator:
         """
         corners = self._corners
         pts = self._points
-        lookup_state = self.tree._coord_state
         vx = pts[corners, 0]
         vy = pts[corners, 1]
         vz = pts[corners, 2]
+        cell_x0, cell_xwidth, cell_y0, cell_ywidth, cell_z0, cell_zwidth = self.tree._cell_axis_starts_and_widths()
 
-        self._cell_x0 = lookup_state.cell_axis0_start
-        self._cell_x1 = lookup_state.cell_axis0_start + lookup_state.cell_axis0_width
-        self._cell_y0 = lookup_state.cell_axis1_start
-        self._cell_y1 = lookup_state.cell_axis1_start + lookup_state.cell_axis1_width
-        self._cell_z0 = lookup_state.cell_axis2_start
-        self._cell_z1 = lookup_state.cell_axis2_start + lookup_state.cell_axis2_width
+        self._cell_x0 = cell_x0
+        self._cell_x1 = cell_x0 + cell_xwidth
+        self._cell_y0 = cell_y0
+        self._cell_y1 = cell_y0 + cell_ywidth
+        self._cell_z0 = cell_z0
+        self._cell_z1 = cell_z0 + cell_zwidth
 
         tiny = np.finfo(float).tiny
         self._cell_xden = np.maximum(self._cell_x1 - self._cell_x0, tiny)
