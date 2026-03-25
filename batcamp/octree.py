@@ -351,9 +351,15 @@ class Octree:
             self._face_neighbors_by_max_level = cache
         face_neighbors = cache.get(target_max_level)
         if face_neighbors is None:
-            from .face_neighbors import build_face_neighbors
+            from .face_neighbors import _build_face_neighbors_from_frontier
 
-            face_neighbors = build_face_neighbors(self, max_level=target_max_level)
+            frontier_nodes = self._frontier_nodes(target_max_level)
+            face_neighbors = _build_face_neighbors_from_frontier(
+                root_shape=self.root_shape,
+                tree_coord=self.tree_coord,
+                target_max_level=target_max_level,
+                frontier_nodes=frontier_nodes,
+            )
             cache[int(face_neighbors.max_level)] = face_neighbors
         return face_neighbors
 

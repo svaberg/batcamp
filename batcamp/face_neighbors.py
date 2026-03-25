@@ -9,7 +9,9 @@ from typing import NamedTuple
 from numba import njit
 import numpy as np
 
+from .octree import GridShape
 from .octree import Octree
+from .octree import TreeCoord
 
 FACE_COUNT = 6
 _NEG_POS = np.array([-1, 1], dtype=np.int64)
@@ -362,17 +364,17 @@ def build_face_neighbors_kernel(
     return face_counts, face_offsets, face_neighbors
 
 
-def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np.ndarray:
+def _level_shapes_for_cutoff(root_shape: GridShape, min_level: int, max_level: int) -> np.ndarray:
     """Return `(n0, n1, n2)` for every level in `[min_level, max_level]`."""
     if max_level < min_level:
         raise ValueError(f"Invalid level bounds: min_level={min_level}, max_level={max_level}.")
     out = np.empty((max_level - min_level + 1, 3), dtype=np.int64)
-    root0 = int(tree.root_shape[0])
-    root1 = int(tree.root_shape[1])
-    root2 = int(tree.root_shape[2])
+    root0 = int(root_shape[0])
+    root1 = int(root_shape[1])
+    root2 = int(root_shape[2])
     for level in range(min_level, max_level + 1):
         if int(level) < 0:
-            raise ValueError(f"Derived negative level={level}; max_level={tree.max_level}.")
+            raise ValueError(f"Derived negative level={level}.")
         scale = 1 << int(level)
         row = level - min_level
         out[row, 0] = root0 * scale
@@ -381,26 +383,18 @@ def _level_shapes_for_cutoff(tree: Octree, min_level: int, max_level: int) -> np
     return out
 
 
-def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> OctreeFaceNeighbors:
-    """Build one face-neighbor graph from one octree."""
-    if tree.cell_levels is None:
-        raise ValueError("Octree has no cell_levels; cannot build face neighbors.")
-    valid_levels = np.asarray(tree.cell_levels, dtype=np.int64)
-    valid_levels = valid_levels[valid_levels >= 0]
-    if valid_levels.size == 0:
-        raise ValueError("Octree contains no valid cell levels (all < 0).")
-
-    max_tree_level = int(np.max(valid_levels))
-    target_max_level = int(max_tree_level if max_level is None else max_level)
-    if target_max_level < 0 or target_max_level > max_tree_level:
-        raise ValueError(
-            f"max_level={target_max_level} is outside [0, {max_tree_level}] for this tree."
-        )
-
-    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = tree._frontier_nodes(target_max_level)
+def _build_face_neighbors_from_frontier(
+    *,
+    root_shape: GridShape,
+    tree_coord: TreeCoord,
+    target_max_level: int,
+    frontier_nodes: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+) -> OctreeFaceNeighbors:
+    """Build one face-neighbor graph from already-resolved frontier nodes."""
+    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = frontier_nodes
     min_level = int(np.min(levels))
-    level_shapes = _level_shapes_for_cutoff(tree, min_level, target_max_level)
-    periodic_i2 = str(tree.tree_coord) == "rpa"
+    level_shapes = _level_shapes_for_cutoff(root_shape, min_level, target_max_level)
+    periodic_i2 = str(tree_coord) == "rpa"
 
     face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
         levels,
@@ -426,3 +420,8 @@ def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> Octre
         max_level=target_max_level,
         periodic_i2=periodic_i2,
     )
+
+
+def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> OctreeFaceNeighbors:
+    """Build one face-neighbor graph from one octree."""
+    return tree.face_neighbors(max_level=max_level)
