@@ -109,4 +109,4 @@ def test_bind_without_corners_rejected() -> None:
     ds_no_corners = _FakeDataset(ds.points, None, ds._variables)
 
     with pytest.raises(ValueError, match="Dataset has no corners"):
-        tree.bind(ds_no_corners)
+        tree._bind(ds_no_corners)
