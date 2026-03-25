@@ -122,27 +122,21 @@ def test_default_octree_build_selects_cartesian() -> None:
     ds = _build_fake_cartesian_dataset()
     assert OctreeBuilder().build(ds).tree_coord == "xyz"
 
-def test_reuses_prebuilt_cartesian_lookup_state() -> None:
-    """Interpolator should reuse the same prebuilt Cartesian lookup state."""
+def test_interpolator_uses_current_cartesian_lookup_state() -> None:
+    """Interpolator should use the current Cartesian lookup state built by the tree."""
     ds = _build_fake_cartesian_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    tree._require_lookup()
-    lookup_state_before = tree._lookup_state
 
     interp = OctreeInterpolator(tree, ["Scalar"])
-    assert tree._lookup_state is lookup_state_before
-    assert interp._lookup_state_xyz is lookup_state_before
+    assert interp._lookup_state_xyz is tree._lookup_state
 
-def test_reuses_prebuilt_spherical_lookup_state() -> None:
-    """Interpolator should reuse the same prebuilt spherical lookup state."""
+def test_interpolator_uses_current_spherical_lookup_state() -> None:
+    """Interpolator should use the current spherical lookup state built by the tree."""
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
-    tree._require_lookup()
-    lookup_state_before = tree._lookup_state
 
     interp = OctreeInterpolator(tree, ["Scalar"])
-    assert tree._lookup_state is lookup_state_before
-    assert interp._lookup_state_rpa is lookup_state_before
+    assert interp._lookup_state_rpa is tree._lookup_state
 
 def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
     """Cartesian lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
