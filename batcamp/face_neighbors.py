@@ -330,26 +330,6 @@ def build_face_neighbors_kernel(
             )
     return face_counts, face_offsets, face_neighbors
 
-
-def _level_shapes_for_cutoff(root_shape: GridShape, min_level: int, max_level: int) -> np.ndarray:
-    """Return `(n0, n1, n2)` for every level in `[min_level, max_level]`."""
-    if max_level < min_level:
-        raise ValueError(f"Invalid level bounds: min_level={min_level}, max_level={max_level}.")
-    out = np.empty((max_level - min_level + 1, 3), dtype=np.int64)
-    root0 = int(root_shape[0])
-    root1 = int(root_shape[1])
-    root2 = int(root_shape[2])
-    for level in range(min_level, max_level + 1):
-        if int(level) < 0:
-            raise ValueError(f"Derived negative level={level}.")
-        scale = 1 << int(level)
-        row = level - min_level
-        out[row, 0] = root0 * scale
-        out[row, 1] = root1 * scale
-        out[row, 2] = root2 * scale
-    return out
-
-
 def _collect_frontier_cells(
     tree: Octree,
     *,
@@ -419,7 +399,16 @@ def _build_face_neighbors(
         max_level=target_max_level,
     )
     min_level = int(np.min(levels))
-    level_shapes = _level_shapes_for_cutoff(tree.root_shape, min_level, target_max_level)
+    level_shapes = np.empty((target_max_level - min_level + 1, 3), dtype=np.int64)
+    root0 = int(tree.root_shape[0])
+    root1 = int(tree.root_shape[1])
+    root2 = int(tree.root_shape[2])
+    for level in range(min_level, target_max_level + 1):
+        scale = 1 << int(level)
+        row = level - min_level
+        level_shapes[row, 0] = root0 * scale
+        level_shapes[row, 1] = root1 * scale
+        level_shapes[row, 2] = root2 * scale
     periodic_i2 = str(tree.tree_coord) == "rpa"
 
     face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
