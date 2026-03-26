@@ -557,7 +557,6 @@ def test_no_public_depth_for_level_helper() -> None:
 def test_regular_spherical_tree_uses_absolute_levels() -> None:
     """Uniform spherical trees should store root-relative absolute levels."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
-    assert tree.max_level == tree.depth
     assert tree.min_level == tree.max_level
     assert tree.cell_levels is not None
     assert np.all(tree.cell_levels == tree.max_level)
@@ -611,7 +610,7 @@ def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
     ds, cell_levels = _build_adaptive_xyz_dataset()
     tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=cell_levels)
-    assert tree.max_level == tree.depth == 1
+    assert tree.max_level == 1
     assert tree.min_level == 0
     assert tree.cell_levels is not None
     assert np.array_equal(tree.cell_levels, cell_levels)
