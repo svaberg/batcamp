@@ -235,13 +235,13 @@ def test_spherical_uniform_topology_wraps_azimuth_faces(record_property) -> None
         np.full(topo.node_count, 3, dtype=np.int64),
     )
 
-    i2_max = int(np.max(topo.i2))
-    nodes_on_zero = np.flatnonzero(topo.i2 == 0)
+    i2_max = int(np.max(topo.cell_ijk[:, 2]))
+    nodes_on_zero = np.flatnonzero(topo.cell_ijk[:, 2] == 0)
     assert nodes_on_zero.size > 0
     for node_id in nodes_on_zero:
         left = topo.face_neighbor_ids(int(node_id), 4)
         assert left.size == 1
-        assert int(topo.i2[int(left[0])]) == i2_max
+        assert int(topo.cell_ijk[int(left[0]), 2]) == i2_max
 
 
 def test_max_level_cutoff_reduces_frontier_size(record_property) -> None:
