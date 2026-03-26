@@ -40,16 +40,6 @@ _CHILD_IJK_OFFSETS = np.array(
     dtype=np.int64,
 )
 
-def _bound_xyz_and_leaf_levels(
-    tree: "Octree",
-    ds: Dataset,
-    corners: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return the bound dataset arrays and exact leaf levels needed for coordinate state."""
-    x, y, z = (np.asarray(ds[name], dtype=np.float64) for name in XYZ_VARS)
-    return corners, x, y, z, tree.cell_levels
-
-
 def _trilinear_corner_order(
     corner_axes: np.ndarray,
     *,
