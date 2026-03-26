@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,8 +15,6 @@ from numba import prange
 from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
-from .shared_types import GridIndex
-from .shared_types import GridPath
 from .shared_types import GridShape
 from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
@@ -110,24 +107,6 @@ def _trilinear_corner_order(
 
 
 @njit(cache=True)
-def _contains_interval(
-    value: float,
-    start: float,
-    width: float,
-    periodic: bool,
-    period: float,
-    tol: float,
-) -> bool:
-    """Return whether one coordinate lies inside one start/width interval."""
-    if periodic:
-        if width >= (period - tol):
-            return True
-        delta = (value - start) % period
-        return delta <= (width + tol)
-    return value >= (start - tol) and value <= (start + width + tol)
-
-
-@njit(cache=True)
 def _contains_box(
     q: np.ndarray,
     bounds: np.ndarray,
@@ -137,23 +116,19 @@ def _contains_box(
 ) -> bool:
     """Return whether one query lies inside one packed axis-0/1/2 box."""
     for axis in range(AXIS2):
-        if not _contains_interval(
-            float(q[axis]),
-            float(bounds[axis, START]),
-            float(bounds[axis, WIDTH]),
-            periodic=False,
-            period=0.0,
-            tol=tol,
-        ):
+        value = float(q[axis])
+        start = float(bounds[axis, START])
+        width = float(bounds[axis, WIDTH])
+        if value < (start - tol) or value > (start + width + tol):
             return False
-    return _contains_interval(
-        float(q[AXIS2]),
-        float(bounds[AXIS2, START]),
-        float(bounds[AXIS2, WIDTH]),
-        periodic=bool(axis2_periodic),
-        period=float(axis2_period),
-        tol=tol,
-    )
+    value = float(q[AXIS2])
+    start = float(bounds[AXIS2, START])
+    width = float(bounds[AXIS2, WIDTH])
+    if axis2_periodic:
+        if width >= (float(axis2_period) - tol):
+            return True
+        return ((value - start) % float(axis2_period)) <= (width + tol)
+    return value >= (start - tol) and value <= (start + width + tol)
 
 
 @njit(cache=True, parallel=True)
@@ -215,31 +190,6 @@ def _find_cells(
     return cell_ids
 
 
-def _summarize_leaf_levels(
-    root_shape: GridShape,
-    cell_levels: np.ndarray,
-) -> tuple[GridShape, LevelCountTable, int, int]:
-    """Rebuild tree summary metadata from exact leaf levels."""
-    levels = np.asarray(cell_levels, dtype=np.int64)
-    valid = levels >= 0
-    valid_levels = levels[valid]
-    if valid_levels.size == 0:
-        raise ValueError("Octree state requires at least one valid cell level.")
-    min_level = int(np.min(valid_levels))
-    max_level = int(np.max(valid_levels))
-    scale = 1 << max_level
-    leaf_shape = tuple(int(v) * scale for v in root_shape)
-    level_counts = tuple(
-        (
-            int(level),
-            int(np.count_nonzero(valid_levels == level)),
-            int(np.count_nonzero(valid_levels == level) * (8 ** int(max_level - level))),
-        )
-        for level in sorted(set(int(v) for v in valid_levels.tolist()))
-    )
-    return leaf_shape, level_counts, min_level, max_level
-
-
 def _cell_row_order(cell_depth: np.ndarray, cell_ijk: np.ndarray) -> np.ndarray:
     """Return lexicographic `(depth, axis0, axis1, axis2)` row order for packed cell addresses."""
     return np.lexsort(np.column_stack((cell_depth, cell_ijk))[:, ::-1].T)
@@ -251,18 +201,15 @@ def _rebuild_cells(
     leaf_value: np.ndarray,
     *,
     tree_depth: int,
-    label: str,
     n_leaf_slots: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build rebuilt octree cell arrays from exact leaf addresses."""
-    leaf_depth_raw = np.asarray(depths, dtype=np.int64)
-    leaf_ijk_raw = np.asarray(cell_ijk, dtype=np.int64)
-    leaf_value_arr = np.asarray(leaf_value, dtype=np.int64)
+    leaf_ijk_raw = cell_ijk
     if leaf_ijk_raw.ndim != 2 or leaf_ijk_raw.shape[1] != 3:
         raise ValueError("cell_ijk must have shape (n_cells, 3).")
 
-    leaf_order = _cell_row_order(leaf_depth_raw, leaf_ijk_raw)
-    leaf_depth = leaf_depth_raw[leaf_order]
+    leaf_order = _cell_row_order(depths, leaf_ijk_raw)
+    leaf_depth = depths[leaf_order]
     leaf_ijk = leaf_ijk_raw[leaf_order]
 
     same_leaf = (
@@ -272,17 +219,17 @@ def _rebuild_cells(
     if np.any(same_leaf):
         dup = int(np.flatnonzero(same_leaf)[0])
         raise ValueError(
-            f"{label} cells overlap at octree address "
+            "Cells overlap at octree address "
             f"{(int(leaf_depth[dup]), *(int(v) for v in leaf_ijk[dup]))}."
         )
 
     parent_depth_parts: list[np.ndarray] = []
     parent_ijk_parts: list[np.ndarray] = []
     for parent_depth in range(int(tree_depth)):
-        mask = leaf_depth_raw > int(parent_depth)
+        mask = depths > int(parent_depth)
         if not np.any(mask):
             continue
-        up = np.asarray(leaf_depth_raw[mask] - int(parent_depth), dtype=np.int64)
+        up = depths[mask] - int(parent_depth)
         parent_ijk = np.right_shift(leaf_ijk_raw[mask], up[:, None])
         parent_cells = np.column_stack(
             (
@@ -317,21 +264,21 @@ def _rebuild_cells(
     if np.any(same_cell):
         dup = int(np.flatnonzero(same_cell)[0])
         raise ValueError(
-            f"{label} cells overlap across parent/child addresses at "
+            "Cells overlap across parent/child addresses at "
             f"{(int(all_depth[dup]), *(int(v) for v in all_ijk[dup]))}."
         )
 
-    leaf_slots = int(np.max(leaf_value_arr)) + 1 if n_leaf_slots is None and leaf_value_arr.size else int(n_leaf_slots or 0)
+    leaf_slots = int(np.max(leaf_value)) + 1 if n_leaf_slots is None and leaf_value.size else int(n_leaf_slots or 0)
     n_cells = leaf_slots + int(internal_depth.shape[0])
     cell_depth = np.full(n_cells, -1, dtype=np.int64)
-    cell_ijk = np.full((n_cells, 3), -1, dtype=np.int64)
-    cell_depth[leaf_value_arr] = leaf_depth_raw
-    cell_ijk[leaf_value_arr] = leaf_ijk_raw
+    cell_ijk_out = np.full((n_cells, 3), -1, dtype=np.int64)
+    cell_depth[leaf_value] = depths
+    cell_ijk_out[leaf_value] = leaf_ijk_raw
     start = leaf_slots
     stop = start + int(internal_depth.shape[0])
     cell_depth[start:stop] = internal_depth
-    cell_ijk[start:stop] = internal_ijk
-    return cell_depth, cell_ijk
+    cell_ijk_out[start:stop] = internal_ijk
+    return cell_depth, cell_ijk_out
 
 
 def _build_cell_topology(
@@ -339,7 +286,7 @@ def _build_cell_topology(
     cell_ijk: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build sparse 8-child references for occupied rebuilt cells."""
-    n_cells = int(np.asarray(cell_depth, dtype=np.int64).shape[0])
+    n_cells = int(cell_depth.shape[0])
     cell_child = np.full((n_cells, 8), -1, dtype=np.int64)
     cell_parent = np.full(n_cells, -1, dtype=np.int64)
     occupied = np.flatnonzero(cell_depth >= 0).astype(np.int64)
@@ -349,7 +296,7 @@ def _build_cell_topology(
     }
     for idx in occupied:
         depth = int(cell_depth[idx])
-        parent_ijk = np.asarray(cell_ijk[idx], dtype=np.int64)
+        parent_ijk = cell_ijk[idx]
         for child_ord in range(8):
             child_ijk = 2 * parent_ijk + _CHILD_IJK_OFFSETS[child_ord]
             child_key = (depth + 1, *(int(v) for v in child_ijk))
@@ -357,7 +304,7 @@ def _build_cell_topology(
             if child_idx is not None:
                 cell_child[idx, child_ord] = int(child_idx)
                 cell_parent[int(child_idx)] = int(idx)
-    root_cell_ids = np.flatnonzero(np.asarray(cell_depth, dtype=np.int64) == 0).astype(np.int64)
+    root_cell_ids = np.flatnonzero(cell_depth == 0).astype(np.int64)
     return cell_child, root_cell_ids, cell_parent
 
 
@@ -369,61 +316,27 @@ def _rebuild_cell_state(
 ) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied cells from leaf addresses."""
 
-    levels = np.asarray(cell_levels, dtype=np.int64)
-    leaf_ijk = np.asarray(cell_ijk, dtype=np.int64)
-    if leaf_ijk.ndim != 2 or leaf_ijk.shape[1] != 3:
+    if cell_ijk.ndim != 2 or cell_ijk.shape[1] != 3:
         raise ValueError("Octree leaf cell_ijk must have shape (n_cells, 3).")
-    if levels.shape[0] != leaf_ijk.shape[0]:
+    if cell_levels.shape[0] != cell_ijk.shape[0]:
         raise ValueError("Octree leaf level/index arrays must have matching shapes.")
-    valid_ids = np.flatnonzero(levels >= 0).astype(np.int64)
+    valid_ids = np.flatnonzero(cell_levels >= 0).astype(np.int64)
     if valid_ids.size == 0:
         raise ValueError("Octree state requires at least one valid leaf cell.")
-    depths = np.asarray(levels[valid_ids], dtype=np.int64)
-    leaf_ijk_valid = np.asarray(leaf_ijk[valid_ids], dtype=np.int64)
+    depths = cell_levels[valid_ids]
+    leaf_ijk_valid = cell_ijk[valid_ids]
     cell_depth, cell_ijk_rt = _rebuild_cells(
         depths,
         leaf_ijk_valid,
         valid_ids,
         tree_depth=int(max_level),
-        label="Restored",
-        n_leaf_slots=int(levels.shape[0]),
+        n_leaf_slots=int(cell_levels.shape[0]),
     )
     cell_child, root_cell_ids, cell_parent = _build_cell_topology(
         cell_depth,
         cell_ijk_rt,
     )
     return cell_depth, cell_ijk_rt, cell_child, root_cell_ids, cell_parent
-
-
-def _normalize_leaf_state_inputs(
-    *,
-    root_shape: GridShape,
-    tree_coord: TreeCoord,
-    cell_levels: np.ndarray,
-    cell_ijk: np.ndarray,
-) -> tuple[GridShape, TreeCoord, np.ndarray, np.ndarray]:
-    """Normalize constructor inputs to the exact persisted leaf-state arrays."""
-    resolved_tree_coord = str(tree_coord)
-    if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
-        raise ValueError(
-            f"Unsupported tree_coord '{resolved_tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-        )
-    return (
-        tuple(int(v) for v in root_shape),
-        resolved_tree_coord,
-        np.asarray(cell_levels, dtype=np.int64),
-        np.asarray(cell_ijk, dtype=np.int64),
-    )
-
-
-def _require_bound_corners(ds: Dataset) -> np.ndarray:
-    """Validate one bound dataset and return packed corners."""
-    if ds.corners is None:
-        raise ValueError("Dataset has no corners; cannot bind octree lookup.")
-    if not set(XYZ_VARS).issubset(set(ds.variables)):
-        raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
-    return np.asarray(ds.corners, dtype=np.int64)
-
 
 def _build_trilinear_geometry(
     tree: "Octree",
@@ -477,22 +390,20 @@ class Octree:
         """Build one octree directly from exact leaf addresses."""
         leaf_levels: np.ndarray
         leaf_ijk: np.ndarray
-        (
-            self._root_shape,
-            self._tree_coord,
-            leaf_levels,
-            leaf_ijk,
-        ) = _normalize_leaf_state_inputs(
-            root_shape=root_shape,
-            tree_coord=tree_coord,
-            cell_levels=cell_levels,
-            cell_ijk=cell_ijk,
-        )
+        resolved_tree_coord = str(tree_coord)
+        if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
+            raise ValueError(
+                f"Unsupported tree_coord '{resolved_tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+            )
+        self._root_shape = tuple(int(v) for v in root_shape)
+        self._tree_coord = resolved_tree_coord
+        leaf_levels = np.asarray(cell_levels, dtype=np.int64)
+        leaf_ijk = np.asarray(cell_ijk, dtype=np.int64)
 
-        self._leaf_shape, self._level_counts, self._min_level, self._max_level = _summarize_leaf_levels(
-            self._root_shape,
-            leaf_levels,
-        )
+        valid_levels = leaf_levels[leaf_levels >= 0]
+        if valid_levels.size == 0:
+            raise ValueError("Octree state requires at least one valid cell level.")
+        max_level = int(np.max(valid_levels))
         (
             self._cell_depth,
             self._cell_ijk,
@@ -502,10 +413,14 @@ class Octree:
         ) = _rebuild_cell_state(
             leaf_levels,
             leaf_ijk,
-            max_level=self._max_level,
+            max_level=max_level,
         )
         self._leaf_slot_count = int(leaf_levels.shape[0])
-        corners = _require_bound_corners(ds)
+        if ds.corners is None:
+            raise ValueError("Dataset has no corners; cannot bind octree lookup.")
+        if not set(XYZ_VARS).issubset(set(ds.variables)):
+            raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
+        corners = np.asarray(ds.corners, dtype=np.int64)
         cell_bounds, domain_bounds, axis2_period, axis2_periodic = self._coord_backend(str(self._tree_coord))._attach_coord_state(
             self, ds, corners
         )
@@ -531,22 +446,34 @@ class Octree:
     @property
     def leaf_shape(self) -> GridShape:
         """Return finest leaf-grid shape."""
-        return self._leaf_shape
+        scale = 1 << self.max_level
+        return tuple(int(v) * scale for v in self._root_shape)
 
     @property
     def level_counts(self) -> LevelCountTable:
         """Return `(level, leaf_count, fine_equivalent_count)` rows."""
-        return self._level_counts
+        valid_levels = self.cell_levels[self.cell_levels >= 0]
+        max_level = int(np.max(valid_levels))
+        return tuple(
+            (
+                int(level),
+                int(np.count_nonzero(valid_levels == level)),
+                int(np.count_nonzero(valid_levels == level) * (8 ** int(max_level - level))),
+            )
+            for level in sorted(set(int(v) for v in valid_levels.tolist()))
+        )
 
     @property
     def min_level(self) -> int:
         """Return minimum occupied refinement level."""
-        return self._min_level
+        valid_levels = self.cell_levels[self.cell_levels >= 0]
+        return int(np.min(valid_levels))
 
     @property
     def max_level(self) -> int:
         """Return maximum occupied refinement level."""
-        return self._max_level
+        valid_levels = self.cell_levels[self.cell_levels >= 0]
+        return int(np.max(valid_levels))
 
     @property
     def ds(self) -> Dataset:
@@ -610,18 +537,19 @@ class Octree:
         return tree
 
     def __str__(self) -> str:
-        """Return human-readable summary text."""
-        leaf_levels = ", ".join(
-            f"L{level}:{count} (fine-equiv {expected})"
-            for level, count, expected in self.level_counts
-        )
-        shape_kind = "uniform" if int(self._min_level) == int(self._max_level) else "adaptive"
+        """Return a compact human-readable tree summary."""
+        leaf_levels = self.cell_levels
+        n_leaf_cells = int(np.count_nonzero(leaf_levels >= 0))
+        n_runtime_cells = int(np.count_nonzero(self._cell_depth >= 0))
         return (
-            f"Octree ({shape_kind}): "
+            "Octree("
             f"tree_coord={self.tree_coord}, "
-            f"finest_leaf_grid={self.leaf_shape}, root_grid={self.root_shape}, "
-            f"max_level={self.max_level}, "
-            f"levels={self.min_level}..{self.max_level}; leaf_levels[{leaf_levels}]"
+            f"root_shape={self.root_shape}, "
+            f"leaf_shape={self.leaf_shape}, "
+            f"leaf_cells={n_leaf_cells}, "
+            f"runtime_cells={n_runtime_cells}, "
+            f"levels={self.min_level}..{self.max_level}"
+            ")"
         )
 
     @staticmethod
@@ -637,35 +565,6 @@ class Octree:
             return _SphericalCoordSupport
         raise ValueError(
             f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-        )
-
-    @staticmethod
-    def _cell_path(cell_ijk: GridIndex, level: int) -> GridPath:
-        """Construct the root-to-leaf grid-index path for one cell."""
-        cell_ijk_arr = np.asarray(cell_ijk, dtype=np.int64)
-        out: list[GridIndex] = []
-        for path_level in range(level + 1):
-            shift = level - path_level
-            out.append(tuple(int(v) for v in np.right_shift(cell_ijk_arr, shift)))
-        return tuple(out)
-
-    def _cell_hit(self, chosen: int, *, allow_invalid_level: bool = False) -> "CellHit | None":
-        """Build one `CellHit` from an internal cell id."""
-        if chosen < 0:
-            return None
-        level = int(self.cell_levels[chosen])
-        if level < 0:
-            if not allow_invalid_level:
-                return None
-            path_level = int(self.max_level)
-        else:
-            path_level = level
-        cell_ijk = tuple(int(v) for v in np.asarray(self._cell_ijk[chosen], dtype=np.int64))
-        return CellHit(
-            cell_id=int(chosen),
-            level=level,
-            cell_ijk=cell_ijk,
-            path=self._cell_path(cell_ijk, path_level),
         )
 
     @property
@@ -741,12 +640,3 @@ class Octree:
         if resolved_coord == "xyz":
             return backend._domain_bounds_xyz(self)
         return backend._domain_bounds_rpa(self)
-
-@dataclass(frozen=True)
-class CellHit:
-    """Resolved lookup metadata for one query point."""
-
-    cell_id: int
-    level: int
-    cell_ijk: GridIndex
-    path: GridPath

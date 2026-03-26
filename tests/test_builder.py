@@ -345,24 +345,6 @@ def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
     assert np.allclose(np.array(values, dtype=float), expected, atol=1e-12, rtol=0.0)
 
 
-def test_xyz_lookup_reports_exact_adaptive_paths() -> None:
-    """Adaptive Cartesian lookup should report exact discrete addresses and root-leaf paths."""
-    ds, levels = _build_adaptive_xyz_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=levels)
-
-    coarse_hit = tree._cell_hit(int(tree.lookup_points(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")[0]))
-    assert coarse_hit is not None
-    assert coarse_hit.level == 0
-    assert coarse_hit.cell_ijk == (0, 0, 0)
-    assert coarse_hit.path == ((0, 0, 0),)
-
-    fine_hit = tree._cell_hit(int(tree.lookup_points(np.array([1.75, 0.75, 0.75], dtype=float), coord="xyz")[0]))
-    assert fine_hit is not None
-    assert fine_hit.level == 1
-    assert fine_hit.cell_ijk == (3, 1, 1)
-    assert fine_hit.path == ((1, 0, 0), (3, 1, 1))
-
-
 def test_build_rejects_missing_corners() -> None:
     """Builder should fail fast when dataset has no corners."""
     points = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 2.0]])
@@ -532,7 +514,6 @@ def test_rebuild_cells_rejects_duplicate_leaf_addresses() -> None:
             np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
             tree_depth=0,
-            label="Cartesian",
         )
 
 
@@ -544,7 +525,6 @@ def test_rebuild_cells_rejects_parent_child_overlap() -> None:
             np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
             tree_depth=1,
-            label="Cartesian",
         )
 
 
@@ -579,19 +559,6 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     assert np.asarray(rpa_tree._cell_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(rpa_tree._root_cell_ids, dtype=np.int64).ndim == 1
     assert hasattr(rpa_tree, "_radial_edges")
-
-
-def test_regular_spherical_lookup_materializes_exact_indices() -> None:
-    """Regular spherical grids should expose exact root-relative cell indices."""
-    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
-    first = tree._cell_hit(0, allow_invalid_level=True)
-    last = tree._cell_hit(int(tree.cell_count) - 1, allow_invalid_level=True)
-    assert first is not None
-    assert last is not None
-    assert (first.level, first.cell_ijk) == (1, (0, 0, 0))
-    assert first.path == ((0, 0, 0), (0, 0, 0))
-    assert (last.level, last.cell_ijk) == (1, (1, 3, 7))
-    assert last.path == ((0, 1, 3), (1, 3, 7))
 
 
 def test_spherical_lookup_rejects_non_exact_geometry() -> None:
