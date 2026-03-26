@@ -228,7 +228,7 @@ class OctreeBuilder:
                 cell_levels=cell_levels,
                 axis_rho_tol=axis_rho_tol,
             )
-            leaf_shape, _weighted_cells = self._rpa_builder.infer_leaf_shape(level_shapes)
+            leaf_shape = self._rpa_builder.infer_leaf_shape(level_shapes)
         else:
             _level_shapes, levels, max_level = self._xyz_builder.infer_level_shapes(
                 ds,

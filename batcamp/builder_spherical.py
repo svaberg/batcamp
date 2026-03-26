@@ -286,8 +286,8 @@ class SphericalOctreeBuilder:
     @staticmethod
     def infer_leaf_shape(
         level_shapes: LevelShapeStatsMap,
-    ) -> tuple[tuple[int, int, int], int]:
-        """Infer finest spherical leaf shape and weighted finest-cell count."""
+    ) -> tuple[int, int, int]:
+        """Infer finest spherical leaf shape."""
         max_level = max(level_shapes)
         n_axis1_f = int(level_shapes[max_level][0])
         n_axis2_f = int(level_shapes[max_level][1])
@@ -305,7 +305,7 @@ class SphericalOctreeBuilder:
                 "Could not infer integer finest n_axis0 from weighted cell counts: "
                 f"weighted={weighted_cells}, n_axis1={n_axis1_f}, n_axis2={n_axis2_f}."
             )
-        return (n_axis0, n_axis1_f, n_axis2_f), int(weighted_cells)
+        return n_axis0, n_axis1_f, n_axis2_f
 
     @staticmethod
     def populate_tree_state(
