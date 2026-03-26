@@ -329,13 +329,7 @@ class OctreeInterpolator:
         flat = self._point_values.reshape(int(self._point_values.shape[0]), -1)
         self._point_values_2d = np.array(flat, dtype=np.float64, order="C")
         self._n_value_components = int(self._point_values_2d.shape[1])
-        if self._tree_coord == "rpa":
-            self._interp_state_rpa = self.tree._interp_state_from_values(self._point_values_2d)
-            return
-        if self._tree_coord == "xyz":
-            self._interp_state_xyz = self.tree._interp_state_from_values(self._point_values_2d)
-            return
-        raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel cache setup.")
+        self._interp_state = self.tree._interp_state_from_values(self._point_values_2d)
 
     def _fill_value_vector(self) -> np.ndarray:
         """Convert `fill_value` to one vector of length `n_components`."""
@@ -363,19 +357,16 @@ class OctreeInterpolator:
             q_rpa = self.tree._query_points_in_tree_coords(q_xyz, coord="xyz")
             cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
             cell_ids_rpa = self.tree.lookup_points(q_rpa, coord="rpa").reshape(-1)
-            _interp_from_cell_ids_rpa(q_rpa, cell_ids_xyz, fill, self._interp_state_rpa)
-            _interp_from_cell_ids_rpa(q_rpa, cell_ids_rpa, fill, self._interp_state_rpa)
+            _interp_from_cell_ids_rpa(q_rpa, cell_ids_xyz, fill, self._interp_state)
+            _interp_from_cell_ids_rpa(q_rpa, cell_ids_rpa, fill, self._interp_state)
             return
-        if self._tree_coord == "xyz":
-            cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
-            _interp_from_cell_ids_xyz_cartesian(
-                q_xyz,
-                cell_ids_xyz,
-                fill,
-                self._interp_state_xyz,
-            )
-            return
-        raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for kernel warmup.")
+        cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
+        _interp_from_cell_ids_xyz_cartesian(
+            q_xyz,
+            cell_ids_xyz,
+            fill,
+            self._interp_state,
+        )
 
     @staticmethod
     def prepare_queries(*args) -> tuple[np.ndarray, tuple[int, ...]]:
@@ -458,7 +449,7 @@ class OctreeInterpolator:
             q_local = self.tree._query_points_in_tree_coords(q_array, coord=qs)
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-rpa")
-            out2d = _interp_from_cell_ids_rpa(q_local, cell_ids, fill, self._interp_state_rpa)
+            out2d = _interp_from_cell_ids_rpa(q_local, cell_ids, fill, self._interp_state)
         else:
             cell_ids = self.tree.lookup_points(q_array, coord="xyz").reshape(-1)
             if debug_timing:
@@ -467,7 +458,7 @@ class OctreeInterpolator:
                 q_array,
                 cell_ids,
                 fill,
-                self._interp_state_xyz,
+                self._interp_state,
             )
         t_after_kernel = perf_counter() if debug_timing else 0.0
 

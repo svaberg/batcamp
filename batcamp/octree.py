@@ -249,64 +249,6 @@ def _build_interp_bin_to_corner(
     return bin_to_corner, axis0_den, axis1_den, axis2_den, axis2_full, axis2_tiny
 
 
-def _make_cartesian_interp_state(
-    point_values_2d: np.ndarray,
-    corners: np.ndarray,
-    bin_to_corner: np.ndarray,
-    *,
-    cell_x0: np.ndarray,
-    cell_xden: np.ndarray,
-    cell_y0: np.ndarray,
-    cell_yden: np.ndarray,
-    cell_z0: np.ndarray,
-    cell_zden: np.ndarray,
-) -> CartesianInterpKernelState:
-    """Pack Cartesian interpolation arrays into one compiled-kernel state."""
-    return CartesianInterpKernelState(
-        point_values_2d=point_values_2d,
-        corners=corners,
-        bin_to_corner=bin_to_corner,
-        cell_x0=cell_x0,
-        cell_xden=cell_xden,
-        cell_y0=cell_y0,
-        cell_yden=cell_yden,
-        cell_z0=cell_z0,
-        cell_zden=cell_zden,
-    )
-
-
-def _make_spherical_interp_state(
-    point_values_2d: np.ndarray,
-    corners: np.ndarray,
-    bin_to_corner: np.ndarray,
-    *,
-    cell_r0: np.ndarray,
-    cell_rden: np.ndarray,
-    cell_t0: np.ndarray,
-    cell_tden: np.ndarray,
-    cell_p_start: np.ndarray,
-    cell_p_width: np.ndarray,
-    cell_pden: np.ndarray,
-    cell_phi_full: np.ndarray,
-    cell_phi_tiny: np.ndarray,
-) -> SphericalInterpKernelState:
-    """Pack spherical interpolation arrays into one compiled-kernel state."""
-    return SphericalInterpKernelState(
-        point_values_2d=point_values_2d,
-        corners=corners,
-        bin_to_corner=bin_to_corner,
-        cell_r0=cell_r0,
-        cell_rden=cell_rden,
-        cell_t0=cell_t0,
-        cell_tden=cell_tden,
-        cell_p_start=cell_p_start,
-        cell_p_width=cell_p_width,
-        cell_pden=cell_pden,
-        cell_phi_full=cell_phi_full,
-        cell_phi_tiny=cell_phi_tiny,
-    )
-
-
 @njit(cache=True)
 def _contains_lookup_interval(
     value: float,
@@ -1073,10 +1015,10 @@ class Octree:
         """Pack one interpolation state for the given per-point values."""
         corners = np.asarray(self.ds.corners, dtype=np.int64)
         if str(self.tree_coord) == "xyz":
-            return _make_cartesian_interp_state(
-                point_values_2d,
-                corners,
-                self._interp_bin_to_corner,
+            return CartesianInterpKernelState(
+                point_values_2d=point_values_2d,
+                corners=corners,
+                bin_to_corner=self._interp_bin_to_corner,
                 cell_x0=self._coord_state.cell_axis0_start,
                 cell_xden=self._interp_axis0_den,
                 cell_y0=self._coord_state.cell_axis1_start,
@@ -1084,10 +1026,10 @@ class Octree:
                 cell_z0=self._coord_state.cell_axis2_start,
                 cell_zden=self._interp_axis2_den,
             )
-        return _make_spherical_interp_state(
-            point_values_2d,
-            corners,
-            self._interp_bin_to_corner,
+        return SphericalInterpKernelState(
+            point_values_2d=point_values_2d,
+            corners=corners,
+            bin_to_corner=self._interp_bin_to_corner,
             cell_r0=self._coord_state.cell_axis0_start,
             cell_rden=self._interp_axis0_den,
             cell_t0=self._coord_state.cell_axis1_start,
