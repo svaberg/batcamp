@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple
 
 from numba import njit
 import numpy as np
@@ -15,15 +14,6 @@ from .shared_types import TreeCoord
 
 FACE_COUNT = 6
 _NEG_POS = np.array([-1, 1], dtype=np.int64)
-
-
-class FaceNeighborKernelState(NamedTuple):
-    """Arrays consumed directly by numba traversal kernels."""
-
-    face_offsets: np.ndarray
-    face_neighbors: np.ndarray
-    node_cell_ids: np.ndarray
-    cell_to_node_id: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -60,17 +50,6 @@ class OctreeFaceNeighbors:
         start = int(self.face_offsets[slot])
         end = int(self.face_offsets[slot + 1])
         return self.face_neighbors[start:end]
-
-    @property
-    def kernel_state(self) -> FaceNeighborKernelState:
-        """Return compact face-neighbor arrays for numba kernels."""
-        return FaceNeighborKernelState(
-            face_offsets=np.asarray(self.face_offsets, dtype=np.int64),
-            face_neighbors=np.asarray(self.face_neighbors, dtype=np.int64),
-            node_cell_ids=np.asarray(self.node_cell_ids, dtype=np.int64),
-            cell_to_node_id=np.asarray(self.cell_to_node_id, dtype=np.int64),
-        )
-
 
 @njit(cache=True)
 def _find_node_id(
@@ -481,8 +460,3 @@ def _build_face_neighbors(
         max_level=target_max_level,
         periodic_i2=periodic_i2,
     )
-
-
-def build_face_neighbors(tree: Octree, *, max_level: int | None = None) -> OctreeFaceNeighbors:
-    """Build one face-neighbor graph from one octree."""
-    return tree.face_neighbors(max_level=max_level)

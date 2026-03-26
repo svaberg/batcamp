@@ -266,7 +266,7 @@ class SphericalOctreeBuilder:
         *,
         cell_levels: np.ndarray | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int]:
+    ) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
         """Infer spherical level-shape map and validated levels."""
         delta_phi, _center_phi, auto_levels, _expected, _coarse = self.compute_delta_phi_and_levels(
             ds,
@@ -275,13 +275,13 @@ class SphericalOctreeBuilder:
             atol=self.level_atol,
             axis_rho_tol=axis_rho_tol,
         )
-        levels, min_level, max_level = _resolve_cell_levels(
+        levels, _min_level, max_level = _resolve_cell_levels(
             inferred_levels=auto_levels,
             cell_levels=cell_levels,
             expected_shape=auto_levels.shape,
         )
         level_shapes = self.infer_level_angular_shapes(ds, corners, delta_phi, levels)
-        return level_shapes, levels, min_level, max_level
+        return level_shapes, levels, max_level
 
     @staticmethod
     def infer_leaf_shape(
@@ -314,16 +314,16 @@ class SphericalOctreeBuilder:
         *,
         cell_levels: np.ndarray | None = None,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    ) -> tuple[LevelShapeStatsMap, np.ndarray, int, int, tuple[int, int, int], int]:
-        """Infer spherical levels, per-level shapes, and finest leaf shape."""
-        level_shapes, levels, min_level, max_level = self.infer_level_shapes(
+    ) -> tuple[np.ndarray, int, tuple[int, int, int]]:
+        """Infer spherical levels and finest leaf shape."""
+        level_shapes, levels, max_level = self.infer_level_shapes(
             ds,
             corners,
             cell_levels=cell_levels,
             axis_rho_tol=axis_rho_tol,
         )
-        leaf_shape, weighted_cells = self.infer_leaf_shape(level_shapes)
-        return level_shapes, levels, min_level, max_level, leaf_shape, weighted_cells
+        leaf_shape, _weighted_cells = self.infer_leaf_shape(level_shapes)
+        return levels, max_level, leaf_shape
 
     @staticmethod
     def populate_tree_state(

@@ -273,14 +273,14 @@ class OctreeBuilder:
         corners_arr = np.asarray(ds.corners, dtype=np.int64)
 
         if tree_coord == "rpa":
-            level_shapes, levels, min_level, max_level, leaf_shape, _weighted_cells = self._rpa_builder.infer_tree_geometry(
+            levels, max_level, leaf_shape = self._rpa_builder.infer_tree_geometry(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
                 axis_rho_tol=axis_rho_tol,
             )
         else:
-            level_shapes, levels, min_level, max_level, leaf_shape = self._xyz_builder.infer_tree_geometry(
+            levels, max_level, leaf_shape = self._xyz_builder.infer_tree_geometry(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
