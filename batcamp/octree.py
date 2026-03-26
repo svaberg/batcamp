@@ -67,6 +67,43 @@ class LookupKernelState(NamedTuple):
     node_axis2_start: np.ndarray
     node_axis2_width: np.ndarray
 
+
+class SphericalInterpKernelState(NamedTuple):
+    """Packed spherical interpolation arrays for compiled trilinear kernels."""
+
+    point_values_2d: np.ndarray
+    corners: np.ndarray
+    bin_to_corner: np.ndarray
+    cell_r0: np.ndarray
+    cell_rden: np.ndarray
+    cell_t0: np.ndarray
+    cell_tden: np.ndarray
+    cell_p_start: np.ndarray
+    cell_p_width: np.ndarray
+    cell_pden: np.ndarray
+    cell_phi_full: np.ndarray
+    cell_phi_tiny: np.ndarray
+
+
+class CartesianInterpKernelState(NamedTuple):
+    """Packed Cartesian interpolation arrays for compiled trilinear kernels."""
+
+    point_values_2d: np.ndarray
+    corners: np.ndarray
+    bin_to_corner: np.ndarray
+    cell_x0: np.ndarray
+    cell_xden: np.ndarray
+    cell_y0: np.ndarray
+    cell_yden: np.ndarray
+    cell_z0: np.ndarray
+    cell_zden: np.ndarray
+
+
+_TRILINEAR_TARGET_BITS = np.array(
+    [[k & 1, (k >> 1) & 1, (k >> 2) & 1] for k in range(8)],
+    dtype=np.int8,
+)
+
 def _coord_state_inputs(tree: "Octree") -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return the bound dataset arrays and exact leaf levels needed for coordinate state."""
     missing = [
@@ -150,6 +187,123 @@ def _pack_coord_state(
         node_axis1_width=node_axis1_width,
         node_axis2_start=node_axis2_start,
         node_axis2_width=node_axis2_width,
+    )
+
+
+def _build_interp_bin_to_corner(
+    axis0: np.ndarray,
+    axis1: np.ndarray,
+    axis2: np.ndarray,
+    *,
+    axis0_start: np.ndarray,
+    axis0_width: np.ndarray,
+    axis1_start: np.ndarray,
+    axis1_width: np.ndarray,
+    axis2_start: np.ndarray,
+    axis2_width: np.ndarray,
+    axis2_periodic: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build logical trilinear corner indices from per-corner axis coordinates."""
+    tiny = np.finfo(float).tiny
+    axis0_den = np.maximum(axis0_width, tiny)
+    axis1_den = np.maximum(axis1_width, tiny)
+    axis2_den = np.maximum(axis2_width, tiny)
+
+    axis0_mid = axis0_start[:, None] + 0.5 * axis0_width[:, None]
+    axis1_mid = axis1_start[:, None] + 0.5 * axis1_width[:, None]
+    bit0 = (axis0 >= axis0_mid).astype(np.int8)
+    bit1 = (axis1 >= axis1_mid).astype(np.int8)
+    if axis2_periodic:
+        axis2_full = axis2_width >= (2.0 * np.pi - 1.0e-10)
+        axis2_tiny = axis2_width <= tiny
+        axis2_rel = np.mod(axis2 - axis2_start[:, None], 2.0 * np.pi)
+        axis2_rel = np.where(
+            (~axis2_full)[:, None],
+            np.clip(axis2_rel, 0.0, axis2_width[:, None]),
+            axis2_rel,
+        )
+        axis2_mid = 0.5 * axis2_width[:, None]
+        bit2 = np.zeros_like(bit0, dtype=np.int8)
+        valid_axis2 = ~axis2_tiny
+        if np.any(valid_axis2):
+            bit2[valid_axis2] = (axis2_rel[valid_axis2] >= axis2_mid[valid_axis2]).astype(np.int8)
+    else:
+        axis2_full = np.zeros(axis2_width.shape[0], dtype=bool)
+        axis2_tiny = np.zeros(axis2_width.shape[0], dtype=bool)
+        axis2_mid = axis2_start[:, None] + 0.5 * axis2_width[:, None]
+        bit2 = (axis2 >= axis2_mid).astype(np.int8)
+
+    bin_id = bit0 + (bit1 << 1) + (bit2 << 2)
+    bit_trip = np.stack((bit0, bit1, bit2), axis=2)
+    n_cells = int(axis0.shape[0])
+    bin_to_corner = np.empty((n_cells, 8), dtype=np.int64)
+    for k in range(8):
+        eq = bin_id == k
+        has = np.any(eq, axis=1)
+        pick = np.argmax(eq, axis=1).astype(np.int64)
+        missing = ~has
+        if np.any(missing):
+            d = np.sum((bit_trip[missing] - _TRILINEAR_TARGET_BITS[k]) ** 2, axis=2)
+            pick[missing] = np.argmin(d, axis=1)
+        bin_to_corner[:, k] = pick
+    return bin_to_corner, axis0_den, axis1_den, axis2_den, axis2_full, axis2_tiny
+
+
+def _make_cartesian_interp_state(
+    point_values_2d: np.ndarray,
+    corners: np.ndarray,
+    bin_to_corner: np.ndarray,
+    *,
+    cell_x0: np.ndarray,
+    cell_xden: np.ndarray,
+    cell_y0: np.ndarray,
+    cell_yden: np.ndarray,
+    cell_z0: np.ndarray,
+    cell_zden: np.ndarray,
+) -> CartesianInterpKernelState:
+    """Pack Cartesian interpolation arrays into one compiled-kernel state."""
+    return CartesianInterpKernelState(
+        point_values_2d=point_values_2d,
+        corners=corners,
+        bin_to_corner=bin_to_corner,
+        cell_x0=cell_x0,
+        cell_xden=cell_xden,
+        cell_y0=cell_y0,
+        cell_yden=cell_yden,
+        cell_z0=cell_z0,
+        cell_zden=cell_zden,
+    )
+
+
+def _make_spherical_interp_state(
+    point_values_2d: np.ndarray,
+    corners: np.ndarray,
+    bin_to_corner: np.ndarray,
+    *,
+    cell_r0: np.ndarray,
+    cell_rden: np.ndarray,
+    cell_t0: np.ndarray,
+    cell_tden: np.ndarray,
+    cell_p_start: np.ndarray,
+    cell_p_width: np.ndarray,
+    cell_pden: np.ndarray,
+    cell_phi_full: np.ndarray,
+    cell_phi_tiny: np.ndarray,
+) -> SphericalInterpKernelState:
+    """Pack spherical interpolation arrays into one compiled-kernel state."""
+    return SphericalInterpKernelState(
+        point_values_2d=point_values_2d,
+        corners=corners,
+        bin_to_corner=bin_to_corner,
+        cell_r0=cell_r0,
+        cell_rden=cell_rden,
+        cell_t0=cell_t0,
+        cell_tden=cell_tden,
+        cell_p_start=cell_p_start,
+        cell_p_width=cell_p_width,
+        cell_pden=cell_pden,
+        cell_phi_full=cell_phi_full,
+        cell_phi_tiny=cell_phi_tiny,
     )
 
 
@@ -684,6 +838,7 @@ class Octree:
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         self.ds = ds
         self._coord_support(str(self.tree_coord))._attach_coord_state(self)
+        self._prepare_interpolation_geometry()
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -846,17 +1001,102 @@ class Octree:
             cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
         return cell_ids.reshape(shape)
 
-    def _cell_axis_starts_and_widths(
+    def _query_points_in_tree_coords(self, points: np.ndarray, *, coord: TreeCoord) -> np.ndarray:
+        """Return one query batch expressed in this tree's own coordinate system."""
+        q = np.array(points, dtype=np.float64, order="C")
+        if q.ndim != 2 or q.shape[1] != 3:
+            raise ValueError("points must have shape (N, 3).")
+        resolved_coord = str(coord)
+        if resolved_coord not in SUPPORTED_TREE_COORDS:
+            raise ValueError(
+                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+            )
+        if str(self.tree_coord) == "xyz":
+            if resolved_coord != "xyz":
+                raise ValueError("Cartesian lookup supports only coord='xyz'.")
+            return q
+        if resolved_coord == "rpa":
+            return q
+        from .spherical import _xyz_array_to_rpa
+
+        return _xyz_array_to_rpa(q)
+
+    def _prepare_interpolation_geometry(self) -> None:
+        """Build the per-cell trilinear corner map from the bound dataset."""
+        corners = np.asarray(self.ds.corners, dtype=np.int64)
+        cell_axis0_start = self._coord_state.cell_axis0_start
+        cell_axis0_width = self._coord_state.cell_axis0_width
+        cell_axis1_start = self._coord_state.cell_axis1_start
+        cell_axis1_width = self._coord_state.cell_axis1_width
+        cell_axis2_start = self._coord_state.cell_axis2_start
+        cell_axis2_width = self._coord_state.cell_axis2_width
+        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64)
+        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64)
+        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64)
+        if str(self.tree_coord) == "xyz":
+            axis0 = x[corners]
+            axis1 = y[corners]
+            axis2 = z[corners]
+            axis2_periodic = False
+        else:
+            from .spherical import _xyz_arrays_to_rpa
+
+            point_r, point_theta, point_phi = _xyz_arrays_to_rpa(x, y, z)
+            axis0 = point_r[corners]
+            axis1 = point_theta[corners]
+            axis2 = point_phi[corners]
+            axis2_periodic = True
+        (
+            self._interp_bin_to_corner,
+            self._interp_axis0_den,
+            self._interp_axis1_den,
+            self._interp_axis2_den,
+            self._interp_axis2_full,
+            self._interp_axis2_tiny,
+        ) = _build_interp_bin_to_corner(
+            axis0,
+            axis1,
+            axis2,
+            axis0_start=cell_axis0_start,
+            axis0_width=cell_axis0_width,
+            axis1_start=cell_axis1_start,
+            axis1_width=cell_axis1_width,
+            axis2_start=cell_axis2_start,
+            axis2_width=cell_axis2_width,
+            axis2_periodic=axis2_periodic,
+        )
+
+    def _interp_state_from_values(
         self,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Return per-cell axis starts and widths for the bound coordinate geometry."""
-        return (
-            self._coord_state.cell_axis0_start,
-            self._coord_state.cell_axis0_width,
-            self._coord_state.cell_axis1_start,
-            self._coord_state.cell_axis1_width,
-            self._coord_state.cell_axis2_start,
-            self._coord_state.cell_axis2_width,
+        point_values_2d: np.ndarray,
+    ) -> CartesianInterpKernelState | SphericalInterpKernelState:
+        """Pack one interpolation state for the given per-point values."""
+        corners = np.asarray(self.ds.corners, dtype=np.int64)
+        if str(self.tree_coord) == "xyz":
+            return _make_cartesian_interp_state(
+                point_values_2d,
+                corners,
+                self._interp_bin_to_corner,
+                cell_x0=self._coord_state.cell_axis0_start,
+                cell_xden=self._interp_axis0_den,
+                cell_y0=self._coord_state.cell_axis1_start,
+                cell_yden=self._interp_axis1_den,
+                cell_z0=self._coord_state.cell_axis2_start,
+                cell_zden=self._interp_axis2_den,
+            )
+        return _make_spherical_interp_state(
+            point_values_2d,
+            corners,
+            self._interp_bin_to_corner,
+            cell_r0=self._coord_state.cell_axis0_start,
+            cell_rden=self._interp_axis0_den,
+            cell_t0=self._coord_state.cell_axis1_start,
+            cell_tden=self._interp_axis1_den,
+            cell_p_start=self._coord_state.cell_axis2_start,
+            cell_p_width=self._coord_state.cell_axis2_width,
+            cell_pden=self._interp_axis2_den,
+            cell_phi_full=self._interp_axis2_full,
+            cell_phi_tiny=self._interp_axis2_tiny,
         )
 
     def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:

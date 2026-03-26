@@ -158,6 +158,24 @@ def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, 
     return r, polar, azimuth
 
 
+def _xyz_arrays_to_rpa(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert Cartesian coordinate arrays to spherical `(r, polar, azimuth)`."""
+    r = np.sqrt(x * x + y * y + z * z)
+    polar = np.zeros_like(r)
+    valid = r > 0.0
+    if np.any(valid):
+        zr = np.clip(z[valid] / r[valid], -1.0, 1.0)
+        polar[valid] = np.arccos(zr)
+    azimuth = np.mod(np.arctan2(y, x), _TWO_PI)
+    return r, polar, azimuth
+
+
+def _xyz_array_to_rpa(points_xyz: np.ndarray) -> np.ndarray:
+    """Convert an `(N, 3)` Cartesian query array to spherical coordinates."""
+    r, polar, azimuth = _xyz_arrays_to_rpa(points_xyz[:, 0], points_xyz[:, 1], points_xyz[:, 2])
+    return np.column_stack((r, polar, azimuth))
+
+
 @njit(cache=True, parallel=True)
 def _lookup_xyz_cell_ids_for_rpa_tree_kernel(queries_xyz: np.ndarray, lookup_state) -> np.ndarray:
     """Resolve Cartesian queries against one spherical-tree lookup state."""
