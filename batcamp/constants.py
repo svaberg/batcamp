@@ -1,6 +1,4 @@
-"""Shared dataset variable-name conventions."""
-
-from __future__ import annotations
+"""Shared tree-coordinate and dataset-variable constants."""
 
 SUPPORTED_TREE_COORDS = ("rpa", "xyz")
 DEFAULT_TREE_COORD = "xyz"
