@@ -59,7 +59,6 @@ class LookupKernelState(NamedTuple):
     node_child: np.ndarray
     root_node_ids: np.ndarray
     node_parent: np.ndarray
-    cell_node_id: np.ndarray
     node_axis0_start: np.ndarray
     node_axis0_width: np.ndarray
     node_axis1_start: np.ndarray
@@ -120,7 +119,6 @@ def _coord_state_inputs(tree: "Octree") -> tuple[np.ndarray, np.ndarray, np.ndar
             "_node_child",
             "_root_node_ids",
             "_node_parent",
-            "_cell_node_id",
         )
         if not hasattr(tree, name)
     ]
@@ -180,7 +178,6 @@ def _pack_coord_state(
         node_child=tree._node_child,
         root_node_ids=tree._root_node_ids,
         node_parent=tree._node_parent,
-        cell_node_id=tree._cell_node_id,
         node_axis0_start=node_axis0_start,
         node_axis0_width=node_axis0_width,
         node_axis1_start=node_axis1_start,
@@ -388,6 +385,19 @@ def _contains_lookup_domain(
 
 
 @njit(cache=True)
+def _leaf_node_id_from_cell_id(
+    cell_id: int,
+    lookup_state: LookupKernelState,
+) -> int:
+    """Return the leaf node id for one cell id, or `-1` if not present."""
+    target = int(cell_id)
+    for node_id in range(int(lookup_state.node_value.shape[0])):
+        if int(lookup_state.node_value[node_id]) == target:
+            return node_id
+    return -1
+
+
+@njit(cache=True)
 def _lookup_hint_node(
     prev_cid: int,
     q0: float,
@@ -397,9 +407,7 @@ def _lookup_hint_node(
     tol: float,
 ) -> int:
     """Return the nearest ancestor hint node containing one query, or `-1`."""
-    if prev_cid < 0:
-        return -1
-    current = int(lookup_state.cell_node_id[int(prev_cid)])
+    current = _leaf_node_id_from_cell_id(int(prev_cid), lookup_state)
     while current >= 0:
         if _contains_lookup_node(current, q0, q1, q2, lookup_state, tol):
             return current
@@ -430,10 +438,7 @@ def _lookup_descend_to_leaf(
     while True:
         value = int(lookup_state.node_value[current])
         if value >= 0:
-            cid = int(value)
-            if _contains_lookup_cell(cid, q0, q1, q2, lookup_state, tol):
-                return cid
-            return -1
+            return int(value)
 
         found_child = False
         for child_ord in range(8):
@@ -697,10 +702,7 @@ def _node_state_from_leaves(
         node_i2,
         node_value,
     )
-    cell_node_id = np.full(levels.shape[0], -1, dtype=np.int64)
-    leaf_mask = node_value >= 0
-    cell_node_id[node_value[leaf_mask]] = np.flatnonzero(leaf_mask).astype(np.int64)
-    return node_depth, node_i0, node_i1, node_i2, node_value, node_child, root_node_ids, node_parent, cell_node_id
+    return node_depth, node_i0, node_i1, node_i2, node_value, node_child, root_node_ids, node_parent
 
 
 class Octree:
@@ -747,7 +749,6 @@ class Octree:
             self._node_child,
             self._root_node_ids,
             self._node_parent,
-            self._cell_node_id,
         ) = _node_state_from_leaves(
             self.cell_levels,
             self._i0,
