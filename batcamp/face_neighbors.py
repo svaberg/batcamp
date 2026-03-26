@@ -21,9 +21,7 @@ class OctreeFaceNeighbors:
     """Face-neighbor graph for one octree at one level cutoff."""
 
     levels: np.ndarray
-    i0: np.ndarray
-    i1: np.ndarray
-    i2: np.ndarray
+    cell_ijk: np.ndarray
     face_counts: np.ndarray
     face_offsets: np.ndarray
     face_neighbors: np.ndarray
@@ -54,9 +52,7 @@ class OctreeFaceNeighbors:
 @njit(cache=True)
 def _find_node_id(
     levels: np.ndarray,
-    i0: np.ndarray,
-    i1: np.ndarray,
-    i2: np.ndarray,
+    cell_ijk: np.ndarray,
     q_level: int,
     q_i0: int,
     q_i1: int,
@@ -75,7 +71,7 @@ def _find_node_id(
             lo = mid + 1
             continue
 
-        m_i0 = int(i0[mid])
+        m_i0 = int(cell_ijk[mid, 0])
         if q_i0 < m_i0:
             hi = mid - 1
             continue
@@ -83,7 +79,7 @@ def _find_node_id(
             lo = mid + 1
             continue
 
-        m_i1 = int(i1[mid])
+        m_i1 = int(cell_ijk[mid, 1])
         if q_i1 < m_i1:
             hi = mid - 1
             continue
@@ -91,7 +87,7 @@ def _find_node_id(
             lo = mid + 1
             continue
 
-        m_i2 = int(i2[mid])
+        m_i2 = int(cell_ijk[mid, 2])
         if q_i2 < m_i2:
             hi = mid - 1
             continue
@@ -123,9 +119,7 @@ def _emit_face_neighbors(
     node_id: int,
     face: int,
     levels: np.ndarray,
-    i0: np.ndarray,
-    i1: np.ndarray,
-    i2: np.ndarray,
+    cell_ijk: np.ndarray,
     min_level: int,
     max_level: int,
     level_shapes: np.ndarray,
@@ -136,9 +130,9 @@ def _emit_face_neighbors(
 ) -> int:
     """Enumerate neighbors for one node face; count or write based on `do_write`."""
     level_node = int(levels[node_id])
-    i0_node = int(i0[node_id])
-    i1_node = int(i1[node_id])
-    i2_node = int(i2[node_id])
+    i0_node = int(cell_ijk[node_id, 0])
+    i1_node = int(cell_ijk[node_id, 1])
+    i2_node = int(cell_ijk[node_id, 2])
 
     axis = face // 2
     sign = int(_NEG_POS[face % 2])
@@ -198,7 +192,7 @@ def _emit_face_neighbors(
             c2_norm, ok_i2 = _normalize_i2(c2, n2, periodic_i2)
             if not ok_i2:
                 continue
-            nbr = _find_node_id(levels, i0, i1, i2, level_cand, c0, c1, c2_norm)
+            nbr = _find_node_id(levels, cell_ijk, level_cand, c0, c1, c2_norm)
             if nbr >= 0 and nbr != node_id:
                 if do_write:
                     neighbor_out[out_offset + count] = nbr
@@ -224,7 +218,7 @@ def _emit_face_neighbors(
                     c2_norm, ok_i2 = _normalize_i2(c2, n2, periodic_i2)
                     if not ok_i2:
                         continue
-                    nbr = _find_node_id(levels, i0, i1, i2, level_cand, c0, c1, c2_norm)
+                    nbr = _find_node_id(levels, cell_ijk, level_cand, c0, c1, c2_norm)
                     if nbr >= 0 and nbr != node_id:
                         if do_write:
                             neighbor_out[out_offset + count] = nbr
@@ -247,7 +241,7 @@ def _emit_face_neighbors(
                     c2_norm, ok_i2 = _normalize_i2(c2, n2, periodic_i2)
                     if not ok_i2:
                         continue
-                    nbr = _find_node_id(levels, i0, i1, i2, level_cand, c0, c1, c2_norm)
+                    nbr = _find_node_id(levels, cell_ijk, level_cand, c0, c1, c2_norm)
                     if nbr >= 0 and nbr != node_id:
                         if do_write:
                             neighbor_out[out_offset + count] = nbr
@@ -270,7 +264,7 @@ def _emit_face_neighbors(
                     c1 = base1 + o1
                     if c1 < 0 or c1 >= n1:
                         continue
-                    nbr = _find_node_id(levels, i0, i1, i2, level_cand, c0, c1, c2_norm)
+                    nbr = _find_node_id(levels, cell_ijk, level_cand, c0, c1, c2_norm)
                     if nbr >= 0 and nbr != node_id:
                         if do_write:
                             neighbor_out[out_offset + count] = nbr
@@ -281,9 +275,7 @@ def _emit_face_neighbors(
 @njit(cache=True)
 def build_face_neighbors_kernel(
     levels: np.ndarray,
-    i0: np.ndarray,
-    i1: np.ndarray,
-    i2: np.ndarray,
+    cell_ijk: np.ndarray,
     min_level: int,
     max_level: int,
     level_shapes: np.ndarray,
@@ -299,9 +291,7 @@ def build_face_neighbors_kernel(
                 node_id,
                 face,
                 levels,
-                i0,
-                i1,
-                i2,
+                cell_ijk,
                 min_level,
                 max_level,
                 level_shapes,
@@ -329,9 +319,7 @@ def build_face_neighbors_kernel(
                 node_id,
                 face,
                 levels,
-                i0,
-                i1,
-                i2,
+                cell_ijk,
                 min_level,
                 max_level,
                 level_shapes,
@@ -366,7 +354,7 @@ def _collect_frontier_cells(
     tree: Octree,
     *,
     max_level: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Collect frontier cells by traversing the rebuilt cell tree and stopping at `max_level`."""
     if max_level < 0:
         raise ValueError(f"Invalid max_level={max_level}.")
@@ -400,9 +388,7 @@ def _collect_frontier_cells(
     )
     frontier_cell_ids = frontier_cell_ids[order]
     levels = cell_depth[frontier_cell_ids]
-    i0 = cell_ijk[frontier_cell_ids, 0]
-    i1 = cell_ijk[frontier_cell_ids, 1]
-    i2 = cell_ijk[frontier_cell_ids, 2]
+    frontier_cell_ijk = cell_ijk[frontier_cell_ids]
 
     leaf_row_count = int(tree.cell_levels.shape[0])
     cell_to_node_id = np.full(leaf_row_count, -1, dtype=np.int64)
@@ -419,7 +405,7 @@ def _collect_frontier_cells(
             if not has_child and cell_id < leaf_row_count:
                 cell_to_node_id[cell_id] = int(node_id)
 
-    return levels, i0, i1, i2, frontier_cell_ids, cell_to_node_id
+    return levels, frontier_cell_ijk, frontier_cell_ids, cell_to_node_id
 
 
 def _build_face_neighbors(
@@ -428,7 +414,7 @@ def _build_face_neighbors(
     target_max_level: int,
 ) -> OctreeFaceNeighbors:
     """Build one face-neighbor graph by traversing the rebuilt cell tree to one cutoff."""
-    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = _collect_frontier_cells(
+    levels, cell_ijk, node_cell_ids, cell_to_node_id = _collect_frontier_cells(
         tree,
         max_level=target_max_level,
     )
@@ -438,9 +424,7 @@ def _build_face_neighbors(
 
     face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
         levels,
-        i0,
-        i1,
-        i2,
+        cell_ijk,
         min_level,
         target_max_level,
         level_shapes,
@@ -448,9 +432,7 @@ def _build_face_neighbors(
     )
     return OctreeFaceNeighbors(
         levels=levels,
-        i0=i0,
-        i1=i1,
-        i2=i2,
+        cell_ijk=cell_ijk,
         face_counts=face_counts,
         face_offsets=face_offsets,
         face_neighbors=face_neighbors,
