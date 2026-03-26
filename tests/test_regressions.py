@@ -37,8 +37,8 @@ def test_default_tree_inference_selects_rpa_for_regression_dataset(regression_co
     assert tree.tree_coord == "rpa"
 
     q = np.array([1.0, 0.0, 0.0], dtype=float)
-    vals, cids = interp(q, return_cell_ids=True)
-    assert int(np.asarray(cids).reshape(-1)[0]) >= 0
+    vals, cell_ids = interp(q, return_cell_ids=True)
+    assert int(np.asarray(cell_ids).reshape(-1)[0]) >= 0
     assert np.isfinite(float(np.asarray(vals).reshape(-1)[0]))
 
 
@@ -49,8 +49,7 @@ def test_lookup_outside_domain_returns_none(regression_context) -> None:
     _r_lo, r_hi = tree.domain_bounds(coord="rpa")
     r_max = float(r_hi[0])
     q = np.array([r_max + 50.0, 0.0, 0.0], dtype=float)
-    hit = tree.lookup_point(q, coord="xyz")
-    assert hit is None
+    assert int(tree.lookup_points(q, coord="xyz")[0]) < 0
 
 
 @pytest.mark.slow
@@ -65,5 +64,4 @@ def test_load_uses_dataset_corners(tmp_path, regression_context) -> None:
 
     # Ensure lookups are functional via ds.corners.
     q = np.array([1.0, 0.0, 0.0], dtype=float)
-    hit = loaded.lookup_point(q, coord="xyz")
-    assert hit is not None
+    assert int(loaded.lookup_points(q, coord="xyz")[0]) >= 0

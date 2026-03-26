@@ -76,16 +76,15 @@ def _build_fake_cartesian_dataset() -> _FakeDataset:
 
 def _first_resolvable_rpa(tree: Octree) -> tuple[float, float, float]:
     """Private test helper: return one interior spherical point resolved by lookup."""
-    for cid in range(int(tree.cell_count)):
-        lo, hi = cell_bounds(tree, int(cid), coord="rpa")
+    for cell_id in range(int(tree.cell_count)):
+        lo, hi = cell_bounds(tree, int(cell_id), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
         polar = 0.5 * (float(lo[1]) + float(hi[1]))
         width = float((hi[2] - lo[2]) % (2.0 * math.pi))
         if np.isclose(width, 0.0, atol=1e-12):
             width = 2.0 * math.pi
         azimuth = (float(lo[2]) + 0.4 * width) % (2.0 * math.pi)
-        hit = tree.lookup_point(np.array([r, polar, azimuth], dtype=float), coord="rpa")
-        if hit is not None:
+        if int(tree.lookup_points(np.array([r, polar, azimuth], dtype=float), coord="rpa")[0]) >= 0:
             return r, polar, azimuth
     raise AssertionError("No resolvable interior rpa point found in fake dataset.")
 
@@ -160,17 +159,15 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
 
     q0 = np.array([0.5, -0.5, -0.5], dtype=float)
     q1 = np.array([1.5, -0.5, -0.5], dtype=float)
-    hit0 = tree.lookup_point(q0, coord="xyz")
-    hit1 = tree.lookup_point(q1, coord="xyz")
-    assert hit0 is not None
-    assert hit1 is not None
-    assert int(hit0.cell_id) != int(hit1.cell_id)
+    cell_id0 = int(tree.lookup_points(q0, coord="xyz")[0])
+    cell_id1 = int(tree.lookup_points(q1, coord="xyz")[0])
+    assert cell_id0 >= 0
+    assert cell_id1 >= 0
+    assert cell_id0 != cell_id1
 
     root_cell_ids = np.empty((0,), dtype=np.int64)
-    cid = _lookup_cell_id_kernel(
-        float(q1[0]),
-        float(q1[1]),
-        float(q1[2]),
+    cell_id = _lookup_cell_id_kernel(
+        q1,
         cell_is_leaf,
         cell_child,
         root_cell_ids,
@@ -179,9 +176,9 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
         tree._domain_bounds,
         tree._axis2_period,
         tree._axis2_periodic,
-        int(hit0.cell_id),
+        cell_id0,
     )
-    assert int(cid) == int(hit1.cell_id)
+    assert int(cell_id) == cell_id1
 
 def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     """Spherical lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
@@ -204,17 +201,15 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
         0.5 * (float(lo1[1]) + float(hi1[1])),
         (float(lo1[2]) + 0.4 * float((hi1[2] - lo1[2]) % (2.0 * math.pi) or 2.0 * math.pi)) % (2.0 * math.pi),
     ], dtype=float)
-    hit0 = tree.lookup_point(q0, coord="rpa")
-    hit1 = tree.lookup_point(q1, coord="rpa")
-    assert hit0 is not None
-    assert hit1 is not None
-    assert int(hit0.cell_id) != int(hit1.cell_id)
+    cell_id0 = int(tree.lookup_points(q0, coord="rpa")[0])
+    cell_id1 = int(tree.lookup_points(q1, coord="rpa")[0])
+    assert cell_id0 >= 0
+    assert cell_id1 >= 0
+    assert cell_id0 != cell_id1
 
     root_cell_ids = np.empty((0,), dtype=np.int64)
-    cid = _lookup_cell_id_kernel(
-        float(q1[0]),
-        float(q1[1]),
-        float(q1[2]),
+    cell_id = _lookup_cell_id_kernel(
+        q1,
         cell_is_leaf,
         cell_child,
         root_cell_ids,
@@ -223,9 +218,9 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
         tree._domain_bounds,
         tree._axis2_period,
         tree._axis2_periodic,
-        int(hit0.cell_id),
+        cell_id0,
     )
-    assert int(cid) == int(hit1.cell_id)
+    assert int(cell_id) == cell_id1
 
 def test_call_rejects_invalid_query_coord() -> None:
     """Runtime call should reject invalid query_coord override."""
@@ -275,8 +270,8 @@ def test_outside_queries_use_fill_and_minus_one() -> None:
             [-1e6, 0.0, 0.0],
         ]
     )
-    vals, cids = interp(q, return_cell_ids=True)
-    assert np.all(cids == -1)
+    vals, cell_ids = interp(q, return_cell_ids=True)
+    assert np.all(cell_ids == -1)
     assert np.allclose(vals, -77.0, atol=0.0, rtol=0.0)
 
 def test_vector_fill_applies_outside_domain() -> None:
@@ -285,9 +280,9 @@ def test_vector_fill_applies_outside_domain() -> None:
     fill = np.array([-5.0, 8.0])
     interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="rpa"), ["Scalar", "Scalar2"], fill_value=fill)
     q = np.array([[1e6, 0.0, 0.0]])
-    vals, cids = interp(q, return_cell_ids=True)
+    vals, cell_ids = interp(q, return_cell_ids=True)
     assert vals.shape == (1, 2)
-    assert int(cids[0]) == -1
+    assert int(cell_ids[0]) == -1
     assert np.allclose(vals[0], fill, atol=0.0, rtol=0.0)
 
 def test_rpa_wrap_equivalence() -> None:
@@ -316,12 +311,12 @@ def test_invalid_level_cells_treated_as_misses() -> None:
     q_invalid = np.array([0.5, 0.0, 0.25], dtype=float)
     q_valid = np.array([1.5, 0.0, 0.25], dtype=float)
 
-    assert tree.lookup_point(q_invalid, coord="xyz") is None
-    assert tree.lookup_point(q_valid, coord="xyz") is not None
+    assert int(tree.lookup_points(q_invalid, coord="xyz")[0]) < 0
+    assert int(tree.lookup_points(q_valid, coord="xyz")[0]) >= 0
 
     interp = OctreeInterpolator(tree, ["Scalar"], fill_value=-123.0)
-    vals, cids = interp(np.vstack((q_invalid, q_valid)), return_cell_ids=True)
+    vals, cell_ids = interp(np.vstack((q_invalid, q_valid)), return_cell_ids=True)
 
-    assert int(cids[0]) == -1
-    assert int(cids[1]) >= 0
+    assert int(cell_ids[0]) == -1
+    assert int(cell_ids[1]) >= 0
     assert np.isclose(float(vals[0]), -123.0, atol=0.0, rtol=0.0)

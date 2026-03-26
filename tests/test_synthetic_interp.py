@@ -63,12 +63,12 @@ def synthetic_context() -> tuple[_FakeDataset, Octree, np.ndarray, tuple[float, 
     return ds, tree, linear_field, coeffs
 
 
-def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+def _sample_inside_cells(tree: Octree, cell_ids: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     """Private test helper: sample one interior xyz/rpa point per selected cell."""
     xyz_list: list[np.ndarray] = []
     rpa_list: list[np.ndarray] = []
-    for cid in cids.tolist():
-        lo, hi = cell_bounds(tree, int(cid), coord="rpa")
+    for cell_id in cell_ids.tolist():
+        lo, hi = cell_bounds(tree, int(cell_id), coord="rpa")
         r0 = float(lo[0])
         r1 = float(hi[0])
         t0 = float(lo[1])
@@ -92,10 +92,10 @@ def _sample_inside_cells(tree: Octree, cids: np.ndarray, rng: np.random.Generato
     return np.array(xyz_list), np.array(rpa_list)
 
 
-def _midpoints_xyz(tree: Octree, cids: np.ndarray) -> np.ndarray:
+def _midpoints_xyz(tree: Octree, cell_ids: np.ndarray) -> np.ndarray:
     xyz_list: list[np.ndarray] = []
-    for cid in cids.tolist():
-        lo, hi = cell_bounds(tree, int(cid), coord="rpa")
+    for cell_id in cell_ids.tolist():
+        lo, hi = cell_bounds(tree, int(cell_id), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
         theta = 0.5 * (float(lo[1]) + float(hi[1]))
         phi0 = float(lo[2])
@@ -117,8 +117,8 @@ def _interpolation_valid_cells(
     n_cells = int(tree.cell_count)
     lo = np.empty((n_cells, 3), dtype=float)
     hi = np.empty((n_cells, 3), dtype=float)
-    for cid in range(n_cells):
-        lo[cid], hi[cid] = cell_bounds(tree, cid, coord="rpa")
+    for cell_id in range(n_cells):
+        lo[cell_id], hi[cell_id] = cell_bounds(tree, cell_id, coord="rpa")
     phi_end = hi[:, 2]
     ids = np.flatnonzero(
         (lo[:, 1] > 1e-6)
@@ -127,7 +127,7 @@ def _interpolation_valid_cells(
     )
     if interp is None:
         return ids
-    good = [int(cid) for cid in ids.tolist() if interp.cell_has_full_trilinear_corner_map(int(cid))]
+    good = [int(cell_id) for cell_id in ids.tolist() if interp.cell_has_full_trilinear_corner_map(int(cell_id))]
     return np.array(good, dtype=np.int64)
 
 
@@ -135,11 +135,9 @@ def test_lookup_hits_cell_midpoints(synthetic_context) -> None:
     """Lookup of each synthetic cell midpoint should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context
     queries = _midpoints_xyz(tree, np.arange(tree.cell_count, dtype=np.int64))
-    for cid in range(queries.shape[0]):
-        q = queries[cid]
-        hit = tree.lookup_point(q, coord="xyz")
-        assert hit is not None
-        assert int(hit.cell_id) == int(cid)
+    for cell_id in range(queries.shape[0]):
+        q = queries[cell_id]
+        assert int(tree.lookup_points(q, coord="xyz")[0]) == int(cell_id)
 
 
 def test_lookup_xyz_rpa_match_random_points(synthetic_context) -> None:
@@ -151,11 +149,11 @@ def test_lookup_xyz_rpa_match_random_points(synthetic_context) -> None:
     xyz, rpa = _sample_inside_cells(tree, choose, rng)
 
     for i in range(xyz.shape[0]):
-        hit_xyz = tree.lookup_point(xyz[i], coord="xyz")
-        hit_rpa = tree.lookup_point(rpa[i], coord="rpa")
-        assert hit_xyz is not None
-        assert hit_rpa is not None
-        assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
+        cell_id_xyz = int(tree.lookup_points(xyz[i], coord="xyz")[0])
+        cell_id_rpa = int(tree.lookup_points(rpa[i], coord="rpa")[0])
+        assert cell_id_xyz >= 0
+        assert cell_id_rpa >= 0
+        assert cell_id_xyz == cell_id_rpa
 
 
 def test_interp_matches_linear_field_xyz(synthetic_context) -> None:

@@ -21,8 +21,8 @@ def _select_interior_queries(tree: Octree, *, n_query: int, seed: int) -> np.nda
     n = min(int(n_query), n_cells)
     idx = rng.choice(n_cells, size=n, replace=False)
     queries = []
-    for cid in idx.tolist():
-        lo, hi = cell_bounds(tree, int(cid), coord="xyz")
+    for cell_id in idx.tolist():
+        lo, hi = cell_bounds(tree, int(cell_id), coord="xyz")
         queries.append(0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float)))
     return np.asarray(queries, dtype=float)
 
@@ -44,11 +44,11 @@ def test_lookup_xyz_rpa_consistency(advanced_context) -> None:
     queries = _select_interior_queries(tree, n_query=64, seed=1)
 
     for q in queries:
-        hit_xyz = tree.lookup_point(q, coord="xyz")
-        assert hit_xyz is not None
-        hit_rpa = tree.lookup_point(_xyz_to_rpa_numpy(q), coord="rpa")
-        assert hit_rpa is not None
-        assert int(hit_xyz.cell_id) == int(hit_rpa.cell_id)
+        cell_id_xyz = int(tree.lookup_points(q, coord="xyz")[0])
+        assert cell_id_xyz >= 0
+        cell_id_rpa = int(tree.lookup_points(_xyz_to_rpa_numpy(q), coord="rpa")[0])
+        assert cell_id_rpa >= 0
+        assert cell_id_xyz == cell_id_rpa
 
 
 @pytest.mark.slow

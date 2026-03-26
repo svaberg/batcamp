@@ -338,19 +338,15 @@ class CartesianOctreeBuilder:
             bad = int(valid_ids[np.flatnonzero(~snap_ok)[0]])
             raise ValueError(f"Cartesian cell {bad} bounds do not align with inferred octree grid.")
 
-        cell_i0 = np.full(levels.shape[0], -1, dtype=np.int64)
-        cell_i1 = np.full(levels.shape[0], -1, dtype=np.int64)
-        cell_i2 = np.full(levels.shape[0], -1, dtype=np.int64)
+        cell_ijk = np.full((levels.shape[0], 3), -1, dtype=np.int64)
         i0 = np.right_shift(x0_f, shifts)
         i1 = np.right_shift(y0_f, shifts)
         i2 = np.right_shift(z0_f, shifts)
-        cell_i0[valid_ids] = i0
-        cell_i1[valid_ids] = i1
-        cell_i2[valid_ids] = i2
+        cell_ijk[valid_ids, 0] = i0
+        cell_ijk[valid_ids, 1] = i1
+        cell_ijk[valid_ids, 2] = i2
 
         return {
             "cell_levels": np.asarray(cell_levels, dtype=np.int64),
-            "cell_i0": np.asarray(cell_i0, dtype=np.int64),
-            "cell_i1": np.asarray(cell_i1, dtype=np.int64),
-            "cell_i2": np.asarray(cell_i2, dtype=np.int64),
+            "cell_ijk": np.asarray(cell_ijk, dtype=np.int64),
         }

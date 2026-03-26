@@ -50,22 +50,17 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
 
     assert loaded.cell_levels is not None and tree.cell_levels is not None
     assert np.array_equal(loaded.cell_levels, tree.cell_levels)
-    assert np.array_equal(np.asarray(loaded._i0, dtype=np.int64), np.asarray(tree._i0, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._i1, dtype=np.int64), np.asarray(tree._i1, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._i2, dtype=np.int64), np.asarray(tree._i2, dtype=np.int64))
+    assert np.array_equal(
+        np.asarray(loaded._cell_ijk[: loaded.cell_levels.shape[0]], dtype=np.int64),
+        np.asarray(tree._cell_ijk[: tree.cell_levels.shape[0]], dtype=np.int64),
+    )
     assert np.array_equal(np.asarray(loaded._cell_depth, dtype=np.int64), np.asarray(tree._cell_depth, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._cell_i0, dtype=np.int64), np.asarray(tree._cell_i0, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._cell_i1, dtype=np.int64), np.asarray(tree._cell_i1, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._cell_i2, dtype=np.int64), np.asarray(tree._cell_i2, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._cell_ijk, dtype=np.int64), np.asarray(tree._cell_ijk, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._cell_child, dtype=np.int64), np.asarray(tree._cell_child, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._root_cell_ids, dtype=np.int64), np.asarray(tree._root_cell_ids, dtype=np.int64))
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-    hit_tree = tree.lookup_point(q_xyz, coord="xyz")
-    hit_loaded = loaded.lookup_point(q_xyz, coord="xyz")
-    assert hit_tree is not None
-    assert hit_loaded is not None
-    assert int(hit_tree.cell_id) == int(hit_loaded.cell_id)
+    assert int(tree.lookup_points(q_xyz, coord="xyz")[0]) == int(loaded.lookup_points(q_xyz, coord="xyz")[0])
     assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
     assert np.array_equal(np.asarray(loaded._cell_is_leaf, dtype=bool), np.asarray(tree._cell_is_leaf, dtype=bool))
     assert np.allclose(
@@ -105,8 +100,7 @@ def test_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> None:
 
     loaded = Octree.load(path, ds=ds)
     assert loaded.ds is ds
-    hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
-    assert hit is not None
+    assert int(loaded.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 
 @pytest.mark.slow
@@ -119,9 +113,8 @@ def test_persistence_omits_legacy_corners_payload(tree_dataset_pair, tmp_path) -
     with np.load(path, allow_pickle=False) as data:
         assert "corners" not in data.files
         assert "has_corners" not in data.files
-        assert set(data.files) == {"version", "tree_coord", "root_shape", "cell_levels", "cell_i0", "cell_i1", "cell_i2"}
-    hit = loaded.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
-    assert hit is not None
+        assert set(data.files) == {"version", "tree_coord", "root_shape", "cell_levels", "cell_ijk"}
+    assert int(loaded.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 
 def test_load_rejects_unsupported_file_version(tree_dataset_pair, tmp_path) -> None:

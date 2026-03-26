@@ -370,13 +370,13 @@ class SphericalOctreeBuilder:
         phi_start = np.empty(levels.shape[0], dtype=float)
         phi_width = np.empty(levels.shape[0], dtype=float)
         phi_corners = phi_points[corners_arr]
-        for cid in range(levels.shape[0]):
-            vals = phi_corners[cid, ~axis_mask[cid]]
+        for cell_id in range(levels.shape[0]):
+            vals = phi_corners[cell_id, ~axis_mask[cell_id]]
             if vals.size < 2:
-                vals = phi_corners[cid]
+                vals = phi_corners[cell_id]
             start, width = SphericalOctreeBuilder._minimal_phi_interval(vals)
-            phi_start[cid] = start
-            phi_width[cid] = width
+            phi_start[cell_id] = start
+            phi_width[cell_id] = width
 
         r_min = float(np.min(cell_r_min))
         r_max = float(np.max(cell_r_max))
@@ -483,19 +483,15 @@ class SphericalOctreeBuilder:
             bad = int(valid_ids[np.flatnonzero(~aligned)[0]])
             raise ValueError(f"Spherical cell {bad} fine-grid origin is not aligned to its inferred level.")
 
-        cell_i0 = np.full(levels.shape[0], -1, dtype=np.int64)
-        cell_i1 = np.full(levels.shape[0], -1, dtype=np.int64)
-        cell_i2 = np.full(levels.shape[0], -1, dtype=np.int64)
+        cell_ijk = np.full((levels.shape[0], 3), -1, dtype=np.int64)
         i0 = np.right_shift(r0_f, shifts)
         i1 = np.right_shift(i1_f, shifts)
         i2 = np.right_shift(i2_f, shifts)
-        cell_i0[valid_ids] = i0
-        cell_i1[valid_ids] = i1
-        cell_i2[valid_ids] = i2
+        cell_ijk[valid_ids, 0] = i0
+        cell_ijk[valid_ids, 1] = i1
+        cell_ijk[valid_ids, 2] = i2
 
         return {
             "cell_levels": np.asarray(cell_levels, dtype=np.int64),
-            "cell_i0": np.asarray(cell_i0, dtype=np.int64),
-            "cell_i1": np.asarray(cell_i1, dtype=np.int64),
-            "cell_i2": np.asarray(cell_i2, dtype=np.int64),
+            "cell_ijk": np.asarray(cell_ijk, dtype=np.int64),
         }

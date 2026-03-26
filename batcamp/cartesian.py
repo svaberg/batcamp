@@ -15,11 +15,8 @@ from .octree import AXIS0
 from .octree import AXIS1
 from .octree import AXIS2
 from .octree import _coord_state_inputs
-from .octree import _contains_lookup_cell
 from .octree import START
 from .octree import WIDTH
-
-_LOOKUP_CONTAIN_TOL = 1e-10
 
 
 class _CartesianCoordSupport:
@@ -54,16 +51,16 @@ class _CartesianCoordSupport:
         octree_cell_z_max[leaf_cell_ids] = cell_z_max[leaf_cell_ids]
         occupied_ids = np.flatnonzero(self._cell_depth >= 0)
         occupied_ids = occupied_ids[np.argsort(self._cell_depth[occupied_ids])[::-1]]
-        for cid in occupied_ids:
-            parent = int(self._cell_parent[cid])
+        for cell_id in occupied_ids:
+            parent = int(self._cell_parent[cell_id])
             if parent < 0:
                 continue
-            octree_cell_x_min[parent] = min(octree_cell_x_min[parent], octree_cell_x_min[cid])
-            octree_cell_x_max[parent] = max(octree_cell_x_max[parent], octree_cell_x_max[cid])
-            octree_cell_y_min[parent] = min(octree_cell_y_min[parent], octree_cell_y_min[cid])
-            octree_cell_y_max[parent] = max(octree_cell_y_max[parent], octree_cell_y_max[cid])
-            octree_cell_z_min[parent] = min(octree_cell_z_min[parent], octree_cell_z_min[cid])
-            octree_cell_z_max[parent] = max(octree_cell_z_max[parent], octree_cell_z_max[cid])
+            octree_cell_x_min[parent] = min(octree_cell_x_min[parent], octree_cell_x_min[cell_id])
+            octree_cell_x_max[parent] = max(octree_cell_x_max[parent], octree_cell_x_max[cell_id])
+            octree_cell_y_min[parent] = min(octree_cell_y_min[parent], octree_cell_y_min[cell_id])
+            octree_cell_y_max[parent] = max(octree_cell_y_max[parent], octree_cell_y_max[cell_id])
+            octree_cell_z_min[parent] = min(octree_cell_z_min[parent], octree_cell_z_min[cell_id])
+            octree_cell_z_max[parent] = max(octree_cell_z_max[parent], octree_cell_z_max[cell_id])
         root_ids = self._root_cell_ids
         xyz_min = np.array(
             [
@@ -112,28 +109,4 @@ class _CartesianCoordSupport:
         return (
             np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
             np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
-        )
-
-    def _contains_xyz_cell(
-        self,
-        cell_id: int,
-        x: float,
-        y: float,
-        z: float,
-        *,
-        tol: float = _LOOKUP_CONTAIN_TOL,
-    ) -> bool:
-        """Return whether one `(x, y, z)` point lies inside one cell."""
-        return bool(
-            _contains_lookup_cell(
-                int(cell_id),
-                float(x),
-                float(y),
-                float(z),
-                self._cell_is_leaf,
-                self._cell_bounds,
-                self._axis2_period,
-                self._axis2_periodic,
-                float(tol),
-            )
         )

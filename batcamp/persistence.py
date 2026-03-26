@@ -12,18 +12,16 @@ from .octree import Octree
 from .shared_types import GridShape
 from .shared_types import TreeCoord
 
-OCTREE_FILE_VERSION = 5
+OCTREE_FILE_VERSION = 6
 
-_REQUIRED_TREE_ATTRS = ("_i0", "_i1", "_i2")
+_REQUIRED_TREE_ATTRS = ("_cell_ijk",)
 
 _REQUIRED_FILE_KEYS = (
     "version",
     "tree_coord",
     "root_shape",
     "cell_levels",
-    "cell_i0",
-    "cell_i1",
-    "cell_i2",
+    "cell_ijk",
 )
 
 
@@ -34,9 +32,7 @@ class OctreeState:
     tree_coord: TreeCoord
     root_shape: GridShape
     cell_levels: np.ndarray
-    cell_i0: np.ndarray
-    cell_i1: np.ndarray
-    cell_i2: np.ndarray
+    cell_ijk: np.ndarray
 
     @classmethod
     def from_tree(cls, tree: Octree) -> "OctreeState":
@@ -46,13 +42,12 @@ class OctreeState:
         missing = [name for name in _REQUIRED_TREE_ATTRS if not hasattr(tree, name)]
         if missing:
             raise ValueError(f"Cannot persist octree without exact leaf addresses: missing {missing}.")
+        leaf_row_count = int(tree.cell_levels.shape[0])
         return cls(
             tree_coord=str(tree.tree_coord),
             root_shape=tuple(int(v) for v in tree.root_shape),
             cell_levels=np.asarray(tree.cell_levels, dtype=np.int64),
-            cell_i0=np.asarray(tree._i0, dtype=np.int64),
-            cell_i1=np.asarray(tree._i1, dtype=np.int64),
-            cell_i2=np.asarray(tree._i2, dtype=np.int64),
+            cell_ijk=np.asarray(tree._cell_ijk[:leaf_row_count], dtype=np.int64),
         )
 
     def save_npz(self, path: str | Path) -> None:
@@ -65,9 +60,7 @@ class OctreeState:
             tree_coord=str(self.tree_coord),
             root_shape=np.asarray(self.root_shape, dtype=np.int64),
             cell_levels=np.asarray(self.cell_levels, dtype=np.int64),
-            cell_i0=np.asarray(self.cell_i0, dtype=np.int64),
-            cell_i1=np.asarray(self.cell_i1, dtype=np.int64),
-            cell_i2=np.asarray(self.cell_i2, dtype=np.int64),
+            cell_ijk=np.asarray(self.cell_ijk, dtype=np.int64),
         )
 
     @classmethod
@@ -88,7 +81,5 @@ class OctreeState:
                 tree_coord=str(data["tree_coord"]),
                 root_shape=tuple(int(v) for v in np.asarray(data["root_shape"], dtype=np.int64).tolist()),
                 cell_levels=np.asarray(data["cell_levels"], dtype=np.int64),
-                cell_i0=np.asarray(data["cell_i0"], dtype=np.int64),
-                cell_i1=np.asarray(data["cell_i1"], dtype=np.int64),
-                cell_i2=np.asarray(data["cell_i2"], dtype=np.int64),
+                cell_ijk=np.asarray(data["cell_ijk"], dtype=np.int64),
             )

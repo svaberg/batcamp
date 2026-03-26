@@ -75,9 +75,9 @@ def test_lookup_xyz_rpa_agree(octree_context: dict[str, object]) -> None:
     tree = octree_context["tree"]
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-    hit_xyz = tree.lookup_point(q_xyz, coord="xyz")
-    assert hit_xyz is not None
+    cell_id_xyz = int(tree.lookup_points(q_xyz, coord="xyz")[0])
+    assert cell_id_xyz >= 0
 
-    hit_rpa = tree.lookup_point(_xyz_to_rpa_numpy(q_xyz), coord="rpa")
-    assert hit_rpa is not None
-    assert hit_xyz.cell_id == hit_rpa.cell_id
+    cell_id_rpa = int(tree.lookup_points(_xyz_to_rpa_numpy(q_xyz), coord="rpa")[0])
+    assert cell_id_rpa >= 0
+    assert cell_id_xyz == cell_id_rpa
