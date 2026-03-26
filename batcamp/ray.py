@@ -647,7 +647,6 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
         node_child=np.full((n_cells, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_cells, dtype=np.int64),
         node_parent=np.full(n_cells, -1, dtype=np.int64),
-        cell_node_id=np.arange(n_cells, dtype=np.int64),
         node_axis0_start=cell_x0,
         node_axis0_width=cell_xden,
         node_axis1_start=cell_y0,
@@ -808,10 +807,6 @@ def _build_sparse_spherical_seed_lookup_state(
         cell_phi_width[cid] = float(geometry.cell_p_width[node_id])
         cell_valid[cid] = True
 
-    cell_node_id = np.full(n_leaf_cells, -1, dtype=np.int64)
-    for node_id, rep_cid in enumerate(rep_cell_ids):
-        cell_node_id[int(rep_cid)] = int(node_id)
-
     return LookupKernelState(
         cell_axis0_start=cell_r_min,
         cell_axis0_width=cell_r_max - cell_r_min,
@@ -832,7 +827,6 @@ def _build_sparse_spherical_seed_lookup_state(
         node_child=np.full((n_nodes, 8), -1, dtype=np.int64),
         root_node_ids=np.arange(n_nodes, dtype=np.int64),
         node_parent=np.full(n_nodes, -1, dtype=np.int64),
-        cell_node_id=cell_node_id,
         node_axis0_start=np.asarray(geometry.cell_r0, dtype=np.float64),
         node_axis0_width=np.asarray(geometry.cell_rden, dtype=np.float64),
         node_axis1_start=np.asarray(geometry.cell_t0, dtype=np.float64),
