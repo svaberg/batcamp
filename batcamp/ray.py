@@ -12,6 +12,7 @@ from numba import njit
 from numba import prange
 import numpy as np
 
+from .constants import XYZ_VARS
 from .interpolator import _trilinear_from_cell
 from .interpolator import _trilinear_from_cell_rpa
 from .octree import CartesianInterpKernelState
@@ -250,10 +251,9 @@ def _face_neighbor_state_for_node_cells(face_neighbors) -> FaceNeighborKernelSta
 
 def _node_point_candidates(tree: Octree, face_neighbors) -> list[np.ndarray]:
     """Return unique descendant-corner point ids for every frontier node."""
-    lookup_geometry = tree.lookup_geometry()
     if tree.cell_levels is None:
         raise ValueError("Octree has no cell levels; cannot build truncated ray cells.")
-    corners = lookup_geometry.corners
+    corners = np.asarray(tree.ds.corners, dtype=np.int64)
     cell_levels = np.asarray(tree.cell_levels, dtype=np.int64)
     valid_cells = np.flatnonzero(cell_levels >= 0).astype(np.int64)
     node_ids = np.asarray(face_neighbors.cell_to_node_id[valid_cells], dtype=np.int64)
@@ -485,11 +485,10 @@ def _build_plane_state_from_ordered_corners(
 
 def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
     """Build one Cartesian plane model from face_neighbors-aligned cell faces."""
-    lookup_geometry = tree.lookup_geometry()
-    corners = lookup_geometry.corners
-    points = lookup_geometry.points
+    corners = np.asarray(tree.ds.corners, dtype=np.int64)
+    points = np.column_stack(tuple(np.asarray(tree.ds[name], dtype=np.float64) for name in XYZ_VARS))
     centers = np.mean(points[corners], axis=1)
-    lookup_state = lookup_geometry.coord_state
+    lookup_state = tree._coord_state
     n_cells = int(corners.shape[0])
 
     face_normals = np.zeros((n_cells, 6, 3), dtype=np.float64)
@@ -579,8 +578,7 @@ def _build_cell_plane_kernel_state(tree: Octree) -> CellPlaneKernelState:
 
 def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> CartesianRayCellGeometry:
     """Build truncated Cartesian ray-cell geometry from one frontier face_neighbors."""
-    lookup_geometry = tree.lookup_geometry()
-    points = lookup_geometry.points
+    points = np.column_stack(tuple(np.asarray(tree.ds[name], dtype=np.float64) for name in XYZ_VARS))
     point_groups = _node_point_candidates(tree, face_neighbors)
     n_cells = int(face_neighbors.node_count)
 
@@ -626,7 +624,7 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
         cell_yden[node_id] = dy
         cell_zden[node_id] = dz
 
-    seed_lookup = lookup_geometry.coord_state
+    seed_lookup = tree._coord_state
     lookup_state = LookupKernelState(
         cell_axis0_start=cell_x0,
         cell_axis0_width=cell_xden,
@@ -670,8 +668,7 @@ def _build_cartesian_ray_cell_geometry(tree: Octree, face_neighbors) -> Cartesia
 
 def _build_spherical_ray_cell_geometry(tree: Octree, face_neighbors) -> SphericalRayCellGeometry:
     """Build truncated spherical ray-cell geometry from one frontier face_neighbors."""
-    lookup_geometry = tree.lookup_geometry()
-    points = lookup_geometry.points
+    points = np.column_stack(tuple(np.asarray(tree.ds[name], dtype=np.float64) for name in XYZ_VARS))
     point_groups = _node_point_candidates(tree, face_neighbors)
     point_r = np.linalg.norm(points, axis=1)
     point_phi = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * math.pi)
@@ -786,7 +783,6 @@ def _build_sparse_spherical_seed_lookup_state(
     geometry: SphericalRayCellGeometry,
 ) -> LookupKernelState:
     """Build one sparse coarse spherical lookup state keyed by representative leaf ids."""
-    lookup_geometry = tree.lookup_geometry()
     n_leaf_cells = int(np.asarray(tree.cell_levels, dtype=np.int64).shape[0])
     rep_cell_ids = np.asarray(face_neighbors.node_cell_ids, dtype=np.int64)
     n_nodes = int(rep_cell_ids.shape[0])
@@ -1999,6 +1995,7 @@ def _integrate_rays_xyz_neighbors_kernel(
     cell_lookup_state: CartesianLookupKernelState,
     face_state: FaceNeighborKernelState,
     interp_state: CartesianInterpKernelState,
+    interp_uses_nodes: bool,
 ) -> np.ndarray:
     """Integrate fields along rays on Cartesian trees with 2-point Gauss segments."""
     n_rays = int(origins_xyz.shape[0])
@@ -2033,6 +2030,9 @@ def _integrate_rays_xyz_neighbors_kernel(
             dt = tb - ta
             if dt <= 0.0:
                 continue
+            interp_id = int(cids[j])
+            if interp_uses_nodes:
+                interp_id = int(face_state.cell_to_node_id[interp_id])
             tm = 0.5 * (ta + tb)
             th = 0.5 * dt
             tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
@@ -2040,12 +2040,12 @@ def _integrate_rays_xyz_neighbors_kernel(
             x = ox + tg0 * d0
             y = oy + tg0 * d1
             z = oz + tg0 * d2
-            _trilinear_from_cell(row, int(cids[j]), x, y, z, interp_state)
+            _trilinear_from_cell(row, interp_id, x, y, z, interp_state)
             acc += row * th
             x = ox + tg1 * d0
             y = oy + tg1 * d1
             z = oz + tg1 * d2
-            _trilinear_from_cell(row, int(cids[j]), x, y, z, interp_state)
+            _trilinear_from_cell(row, interp_id, x, y, z, interp_state)
             acc += row * th
             used = True
         if used:
@@ -2067,6 +2067,7 @@ def _integrate_rays_rpa_neighbors_kernel(
     seed_plane_state: CellPlaneKernelState,
     plane_state: CellPlaneKernelState,
     interp_state: SphericalInterpKernelState,
+    interp_uses_nodes: bool,
 ) -> np.ndarray:
     """Integrate fields along rays on spherical trees with 2-point Gauss segments."""
     n_rays = int(origins_xyz.shape[0])
@@ -2102,6 +2103,9 @@ def _integrate_rays_rpa_neighbors_kernel(
             dt = tb - ta
             if dt <= 0.0:
                 continue
+            interp_id = int(cids[j])
+            if interp_uses_nodes:
+                interp_id = int(face_state.cell_to_node_id[interp_id])
             tm = 0.5 * (ta + tb)
             th = 0.5 * dt
             tg0 = tm - th * _GAUSS_LEGENDRE_2_ABSCISSA
@@ -2110,13 +2114,13 @@ def _integrate_rays_rpa_neighbors_kernel(
             y = oy + tg0 * d1
             z = oz + tg0 * d2
             r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-            _trilinear_from_cell_rpa(row, int(cids[j]), r, polar, azimuth, interp_state)
+            _trilinear_from_cell_rpa(row, interp_id, r, polar, azimuth, interp_state)
             acc += row * th
             x = ox + tg1 * d0
             y = oy + tg1 * d1
             z = oz + tg1 * d2
             r, polar, azimuth = _xyz_to_rpa_components(x, y, z)
-            _trilinear_from_cell_rpa(row, int(cids[j]), r, polar, azimuth, interp_state)
+            _trilinear_from_cell_rpa(row, interp_id, r, polar, azimuth, interp_state)
             acc += row * th
             used = True
         if used:
@@ -2198,7 +2202,6 @@ class OctreeRayTracer:
     def __init__(self, tree: Octree, *, max_level: int | None = None) -> None:
         """Bind one built octree."""
         self.tree = tree
-        lookup_geometry = tree.lookup_geometry()
         self.max_level = _resolve_ray_max_level(tree, max_level)
         self._tree_coord = str(tree.tree_coord)
         dmin, dmax = tree.domain_bounds(coord="xyz")
@@ -2206,7 +2209,7 @@ class OctreeRayTracer:
         self._domain_xyz_max = np.asarray(dmax, dtype=float).reshape(3)
         _r_lo, r_hi = tree.domain_bounds(coord="rpa")
         self._domain_r_max = float(np.asarray(r_hi, dtype=float).reshape(3)[0])
-        self._seed_lookup_state = lookup_geometry.coord_state
+        self._seed_lookup_state = tree._coord_state
         self._seed_cell_plane_state = None
 
         if int(self.max_level) >= int(tree.max_level):
@@ -2495,17 +2498,50 @@ class OctreeRayInterpolator:
         self._cell_lookup_state = self.ray_tracer._cell_lookup_state
         self._seed_cell_plane_state = self.ray_tracer._seed_cell_plane_state
         self._cell_plane_state = self.ray_tracer._cell_plane_state
+        self._interp_uses_nodes = int(self.max_level) >= int(self.tree.max_level)
         tree_coord = str(self.tree.tree_coord)
-        if int(self.max_level) >= int(self.tree.max_level):
-            self._interp_state = interpolator._interp_state
+        if self._interp_uses_nodes:
+            frontier_cell_ids = self._face_neighbor_state.node_cell_ids
+            leaf_node_ids = np.flatnonzero(self.tree._node_value >= 0).astype(np.int64)
+            tree_leaf_node_by_cell = np.empty(int(self.tree.cell_count), dtype=np.int64)
+            tree_leaf_node_by_cell[self.tree._node_value[leaf_node_ids]] = leaf_node_ids
+            tree_leaf_node_ids = tree_leaf_node_by_cell[frontier_cell_ids]
+            point_values_2d = interpolator._interp_state.point_values_2d
+            if tree_coord == "xyz":
+                self._interp_state = CartesianInterpKernelState(
+                    point_values_2d=point_values_2d,
+                    corners=self.tree._interp_corners[tree_leaf_node_ids],
+                    bin_to_corner=self.tree._interp_bin_to_corner[tree_leaf_node_ids],
+                    cell_x0=self.tree._coord_state.node_axis0_start[tree_leaf_node_ids],
+                    cell_xden=self.tree._interp_axis0_den[tree_leaf_node_ids],
+                    cell_y0=self.tree._coord_state.node_axis1_start[tree_leaf_node_ids],
+                    cell_yden=self.tree._interp_axis1_den[tree_leaf_node_ids],
+                    cell_z0=self.tree._coord_state.node_axis2_start[tree_leaf_node_ids],
+                    cell_zden=self.tree._interp_axis2_den[tree_leaf_node_ids],
+                )
+            else:
+                self._interp_state = SphericalInterpKernelState(
+                    point_values_2d=point_values_2d,
+                    corners=self.tree._interp_corners[tree_leaf_node_ids],
+                    bin_to_corner=self.tree._interp_bin_to_corner[tree_leaf_node_ids],
+                    cell_r0=self.tree._coord_state.node_axis0_start[tree_leaf_node_ids],
+                    cell_rden=self.tree._interp_axis0_den[tree_leaf_node_ids],
+                    cell_t0=self.tree._coord_state.node_axis1_start[tree_leaf_node_ids],
+                    cell_tden=self.tree._interp_axis1_den[tree_leaf_node_ids],
+                    cell_p_start=self.tree._coord_state.node_axis2_start[tree_leaf_node_ids],
+                    cell_p_width=self.tree._coord_state.node_axis2_width[tree_leaf_node_ids],
+                    cell_pden=self.tree._interp_axis2_den[tree_leaf_node_ids],
+                    cell_phi_full=self.tree._interp_axis2_full[tree_leaf_node_ids],
+                    cell_phi_tiny=self.tree._interp_axis2_tiny[tree_leaf_node_ids],
+                )
         else:
-            geometry = _ray_cell_geometry_for_max_level(self.tree, int(self.max_level))
             point_values = np.asarray(interpolator.point_values, dtype=np.float64)
             point_values_2d = np.array(
                 point_values.reshape(int(point_values.shape[0]), -1),
                 dtype=np.float64,
                 order="C",
             )
+            geometry = _ray_cell_geometry_for_max_level(self.tree, int(self.max_level))
             if isinstance(geometry, CartesianRayCellGeometry):
                 self._interp_state = _cartesian_interp_state_from_geometry(point_values_2d, geometry)
             elif isinstance(geometry, SphericalRayCellGeometry):
@@ -2591,6 +2627,7 @@ class OctreeRayInterpolator:
                     self._cell_lookup_state,
                     self._face_neighbor_state,
                     self._interp_state,
+                    self._interp_uses_nodes,
                 )
             elif tree_coord == "rpa":
                 out[start:stop] = _integrate_rays_rpa_neighbors_kernel(
@@ -2606,6 +2643,7 @@ class OctreeRayInterpolator:
                     self._seed_cell_plane_state,
                     self._cell_plane_state,
                     self._interp_state,
+                    self._interp_uses_nodes,
                 )
             else:
                 raise ValueError(f"Unsupported tree_coord '{tree_coord}'.")
