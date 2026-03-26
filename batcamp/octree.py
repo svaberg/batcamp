@@ -412,14 +412,14 @@ class Octree:
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         corners = np.asarray(ds.corners, dtype=np.int64)
         if self._tree_coord == "xyz":
-            from .cartesian import _CartesianCoordSupport
+            from .cartesian import _attach_cartesian_coord_state
 
-            coord_backend = _CartesianCoordSupport
+            attach_coord_state = _attach_cartesian_coord_state
         else:
-            from .spherical import _SphericalCoordSupport
+            from .spherical import _attach_spherical_coord_state
 
-            coord_backend = _SphericalCoordSupport
-        cell_bounds, domain_bounds, axis2_period, axis2_periodic = coord_backend._attach_coord_state(self, ds, corners)
+            attach_coord_state = _attach_spherical_coord_state
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, ds, corners)
         interp_corners = _build_trilinear_geometry(self, ds, corners, cell_bounds)
         self._ds = ds
         self._corners = interp_corners
@@ -612,13 +612,16 @@ class Octree:
             )
 
         if self.tree_coord == "xyz":
-            from .cartesian import _CartesianCoordSupport
+            from .cartesian import _cartesian_domain_bounds_rpa
+            from .cartesian import _cartesian_domain_bounds_xyz
 
-            backend = _CartesianCoordSupport
+            if resolved_coord == "xyz":
+                return _cartesian_domain_bounds_xyz(self)
+            return _cartesian_domain_bounds_rpa(self)
         else:
-            from .spherical import _SphericalCoordSupport
+            from .spherical import _spherical_domain_bounds_rpa
+            from .spherical import _spherical_domain_bounds_xyz
 
-            backend = _SphericalCoordSupport
-        if resolved_coord == "xyz":
-            return backend._domain_bounds_xyz(self)
-        return backend._domain_bounds_rpa(self)
+            if resolved_coord == "xyz":
+                return _spherical_domain_bounds_xyz(self)
+            return _spherical_domain_bounds_rpa(self)
