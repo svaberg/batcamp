@@ -307,19 +307,16 @@ class OctreeInterpolator:
             if isinstance(xi, tuple):
                 if len(xi) != 3:
                     raise ValueError("Tuple input must have exactly 3 arrays.")
-                a0, a1, a2 = np.broadcast_arrays(*[np.array(v, dtype=float) for v in xi])
-                shape = a0.shape
-                q = np.stack((a0, a1, a2), axis=-1).reshape(-1, 3)
-                return q, shape
-
-            arr = np.array(xi, dtype=float)
-            if arr.ndim == 1:
-                if arr.size != 3:
-                    raise ValueError("1D xi must have length 3.")
-                return arr.reshape(1, 3), ()
-            if arr.shape[-1] != 3:
-                raise ValueError("xi must have shape (..., 3).")
-            return arr.reshape(-1, 3), arr.shape[:-1]
+                args = xi
+            else:
+                arr = np.array(xi, dtype=float)
+                if arr.ndim == 1:
+                    if arr.size != 3:
+                        raise ValueError("1D xi must have length 3.")
+                    return arr.reshape(1, 3), ()
+                if arr.shape[-1] != 3:
+                    raise ValueError("xi must have shape (..., 3).")
+                return arr.reshape(-1, 3), arr.shape[:-1]
 
         if len(args) == 3:
             a0, a1, a2 = np.broadcast_arrays(*[np.array(v, dtype=float) for v in args])
