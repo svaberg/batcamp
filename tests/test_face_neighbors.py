@@ -122,9 +122,7 @@ def _build_two_level_topology_tree() -> Octree:
         root_shape=(2, 2, 2),
         tree_coord="xyz",
         cell_levels=levels,
-        cell_i0=i0,
-        cell_i1=i1,
-        cell_i2=i2,
+        cell_ijk=np.column_stack((i0, i1, i2)),
         ds=ds,
     )
     return tree

@@ -13,12 +13,10 @@ from .octree import AXIS0
 from .octree import AXIS1
 from .octree import AXIS2
 from .octree import _coord_state_inputs
-from .octree import _contains_lookup_cell
 from .octree import START
 from .octree import WIDTH
 
 _TWO_PI = 2.0 * math.pi
-_LOOKUP_CONTAIN_TOL = 1e-10
 
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
@@ -30,7 +28,7 @@ class _SphericalCoordSupport:
         valid_ids = np.flatnonzero(cell_levels >= 0)
         shifts = int(self.max_level) - cell_levels[valid_ids]
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
-        r0_f = np.left_shift(self._i0[valid_ids], shifts)
+        r0_f = np.left_shift(self._cell_ijk[valid_ids, AXIS0], shifts)
         r1_f = r0_f + width_units
         n_r_edges = int(self.leaf_shape[0]) + 1
         radial_sum = np.zeros(n_r_edges, dtype=np.float64)
@@ -52,8 +50,8 @@ class _SphericalCoordSupport:
         r_max = float(self._radial_edges[-1])
         d_theta_f = math.pi / float(int(self.leaf_shape[1]))
         d_phi_f = (2.0 * math.pi) / float(int(self.leaf_shape[2]))
-        fine_i1 = np.left_shift(self._i1[valid_ids], shifts)
-        fine_i2 = np.left_shift(self._i2[valid_ids], shifts)
+        fine_i1 = np.left_shift(self._cell_ijk[valid_ids, AXIS1], shifts)
+        fine_i2 = np.left_shift(self._cell_ijk[valid_ids, AXIS2], shifts)
         n_octree_cells = int(self._cell_depth.shape[0])
         octree_cell_r_min = np.full(n_octree_cells, np.nan, dtype=np.float64)
         octree_cell_r_max = np.full(n_octree_cells, np.nan, dtype=np.float64)
@@ -64,11 +62,11 @@ class _SphericalCoordSupport:
         occupied_ids = np.flatnonzero(self._cell_depth >= 0)
         cell_shift = int(self.max_level) - self._cell_depth[occupied_ids]
         cell_width = np.left_shift(np.ones_like(cell_shift, dtype=np.int64), cell_shift)
-        cell_r0_f = np.left_shift(self._cell_i0[occupied_ids], cell_shift)
+        cell_r0_f = np.left_shift(self._cell_ijk[occupied_ids, AXIS0], cell_shift)
         cell_r1_f = cell_r0_f + cell_width
-        cell_t0_f = np.left_shift(self._cell_i1[occupied_ids], cell_shift)
+        cell_t0_f = np.left_shift(self._cell_ijk[occupied_ids, AXIS1], cell_shift)
         cell_t1_f = cell_t0_f + cell_width
-        cell_p0_f = np.left_shift(self._cell_i2[occupied_ids], cell_shift)
+        cell_p0_f = np.left_shift(self._cell_ijk[occupied_ids, AXIS2], cell_shift)
         octree_cell_r_min[occupied_ids] = self._radial_edges[cell_r0_f]
         octree_cell_r_max[occupied_ids] = self._radial_edges[cell_r1_f]
         octree_cell_theta_min[occupied_ids] = cell_t0_f * d_theta_f
@@ -101,27 +99,6 @@ class _SphericalCoordSupport:
         lo = np.array(self._domain_bounds[:, START], dtype=float)
         hi = np.array(self._domain_bounds[:, START] + self._domain_bounds[:, WIDTH], dtype=float)
         return lo, hi
-
-    def _contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
-        """Return whether one Cartesian point lies inside one cell."""
-        r, polar, azimuth = _xyz_to_rpa_components(float(x), float(y), float(z))
-        return _SphericalCoordSupport._contains_rpa_cell(self, int(cell_id), r, polar, azimuth, tol=float(tol))
-
-    def _contains_rpa_cell(self, cell_id: int, r: float, polar: float, azimuth: float, *, tol: float = 1e-10) -> bool:
-        """Return whether one spherical point lies inside one cell."""
-        return bool(
-            _contains_lookup_cell(
-                int(cell_id),
-                float(r),
-                float(polar),
-                float(azimuth) % _TWO_PI,
-                self._cell_is_leaf,
-                self._cell_bounds,
-                self._axis2_period,
-                self._axis2_periodic,
-                float(tol),
-            )
-        )
 
 
 @njit(cache=True)

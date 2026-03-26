@@ -383,18 +383,79 @@ def _level_shapes_for_cutoff(root_shape: GridShape, min_level: int, max_level: i
     return out
 
 
-def _build_face_neighbors_from_frontier(
+def _collect_frontier_cells(
+    tree: Octree,
     *,
-    root_shape: GridShape,
-    tree_coord: TreeCoord,
+    max_level: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Collect frontier cells by traversing the rebuilt cell tree and stopping at `max_level`."""
+    if max_level < 0:
+        raise ValueError(f"Invalid max_level={max_level}.")
+
+    cell_depth = np.asarray(tree._cell_depth, dtype=np.int64)
+    cell_ijk = np.asarray(tree._cell_ijk, dtype=np.int64)
+    cell_child = np.asarray(tree._cell_child, dtype=np.int64)
+    root_cell_ids = np.asarray(tree._root_cell_ids, dtype=np.int64)
+
+    frontier_cell_ids_list: list[int] = []
+    stack = [int(cell_id) for cell_id in root_cell_ids[::-1].tolist()]
+    while stack:
+        cell_id = stack.pop()
+        children = cell_child[cell_id]
+        has_child = bool(np.any(children >= 0))
+        if int(cell_depth[cell_id]) >= max_level or not has_child:
+            frontier_cell_ids_list.append(int(cell_id))
+            continue
+        for child_id in children[::-1]:
+            if int(child_id) >= 0:
+                stack.append(int(child_id))
+
+    frontier_cell_ids = np.asarray(frontier_cell_ids_list, dtype=np.int64)
+    order = np.lexsort(
+        (
+            cell_ijk[frontier_cell_ids, 2],
+            cell_ijk[frontier_cell_ids, 1],
+            cell_ijk[frontier_cell_ids, 0],
+            cell_depth[frontier_cell_ids],
+        )
+    )
+    frontier_cell_ids = frontier_cell_ids[order]
+    levels = cell_depth[frontier_cell_ids]
+    i0 = cell_ijk[frontier_cell_ids, 0]
+    i1 = cell_ijk[frontier_cell_ids, 1]
+    i2 = cell_ijk[frontier_cell_ids, 2]
+
+    leaf_row_count = int(tree.cell_levels.shape[0])
+    cell_to_node_id = np.full(leaf_row_count, -1, dtype=np.int64)
+    for node_id, frontier_cell_id in enumerate(frontier_cell_ids.tolist()):
+        stack = [int(frontier_cell_id)]
+        while stack:
+            cell_id = stack.pop()
+            children = cell_child[cell_id]
+            has_child = False
+            for child_id in children:
+                if int(child_id) >= 0:
+                    has_child = True
+                    stack.append(int(child_id))
+            if not has_child and cell_id < leaf_row_count:
+                cell_to_node_id[cell_id] = int(node_id)
+
+    return levels, i0, i1, i2, frontier_cell_ids, cell_to_node_id
+
+
+def _build_face_neighbors(
+    *,
+    tree: Octree,
     target_max_level: int,
-    frontier_cells: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
 ) -> OctreeFaceNeighbors:
-    """Build one face-neighbor graph from already-resolved frontier nodes."""
-    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = frontier_cells
+    """Build one face-neighbor graph by traversing the rebuilt cell tree to one cutoff."""
+    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = _collect_frontier_cells(
+        tree,
+        max_level=target_max_level,
+    )
     min_level = int(np.min(levels))
-    level_shapes = _level_shapes_for_cutoff(root_shape, min_level, target_max_level)
-    periodic_i2 = str(tree_coord) == "rpa"
+    level_shapes = _level_shapes_for_cutoff(tree.root_shape, min_level, target_max_level)
+    periodic_i2 = str(tree.tree_coord) == "rpa"
 
     face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
         levels,

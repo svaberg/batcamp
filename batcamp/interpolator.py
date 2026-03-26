@@ -47,7 +47,7 @@ def _write_trilinear_row(
     point_values: np.ndarray,
 ) -> None:
     """Write one trilinear interpolation row for one cell from normalized local coordinates."""
-    cid = int(cell_id)
+    cell_id = int(cell_id)
 
     weight000 = (1.0 - frac_axis0) * (1.0 - frac_axis1) * (1.0 - frac_axis2)
     weight100 = frac_axis0 * (1.0 - frac_axis1) * (1.0 - frac_axis2)
@@ -58,26 +58,26 @@ def _write_trilinear_row(
     weight011 = (1.0 - frac_axis0) * frac_axis1 * frac_axis2
     weight111 = frac_axis0 * frac_axis1 * frac_axis2
 
-    local = corners[cid]
-    map_row = bin_to_corner[cid]
-    c0 = int(local[int(map_row[0])])
-    c1 = int(local[int(map_row[1])])
-    c2 = int(local[int(map_row[2])])
-    c3 = int(local[int(map_row[3])])
-    c4 = int(local[int(map_row[4])])
-    c5 = int(local[int(map_row[5])])
-    c6 = int(local[int(map_row[6])])
-    c7 = int(local[int(map_row[7])])
+    local = corners[cell_id]
+    map_row = bin_to_corner[cell_id]
+    corner_id0 = int(local[int(map_row[0])])
+    corner_id1 = int(local[int(map_row[1])])
+    corner_id2 = int(local[int(map_row[2])])
+    corner_id3 = int(local[int(map_row[3])])
+    corner_id4 = int(local[int(map_row[4])])
+    corner_id5 = int(local[int(map_row[5])])
+    corner_id6 = int(local[int(map_row[6])])
+    corner_id7 = int(local[int(map_row[7])])
 
     out_row[:] = (
-        weight000 * point_values[c0]
-        + weight100 * point_values[c1]
-        + weight010 * point_values[c2]
-        + weight110 * point_values[c3]
-        + weight001 * point_values[c4]
-        + weight101 * point_values[c5]
-        + weight011 * point_values[c6]
-        + weight111 * point_values[c7]
+        weight000 * point_values[corner_id0]
+        + weight100 * point_values[corner_id1]
+        + weight010 * point_values[corner_id2]
+        + weight110 * point_values[corner_id3]
+        + weight001 * point_values[corner_id4]
+        + weight101 * point_values[corner_id5]
+        + weight011 * point_values[corner_id6]
+        + weight111 * point_values[corner_id7]
     )
 
 
@@ -95,35 +95,35 @@ def _trilinear_from_cell_rpa(
     interp_state: SphericalInterpKernelState,
 ) -> None:
     """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
-    cid = int(cell_id)
+    cell_id = int(cell_id)
 
-    frac_r = (r - cell_bounds[cid, AXIS0, START]) / max(
-        cell_bounds[cid, AXIS0, WIDTH], _TINY
+    frac_r = (r - cell_bounds[cell_id, AXIS0, START]) / max(
+        cell_bounds[cell_id, AXIS0, WIDTH], _TINY
     )
     if frac_r < 0.0:
         frac_r = 0.0
     elif frac_r > 1.0:
         frac_r = 1.0
 
-    frac_p = (polar - cell_bounds[cid, AXIS1, START]) / max(
-        cell_bounds[cid, AXIS1, WIDTH], _TINY
+    frac_p = (polar - cell_bounds[cell_id, AXIS1, START]) / max(
+        cell_bounds[cell_id, AXIS1, WIDTH], _TINY
     )
     if frac_p < 0.0:
         frac_p = 0.0
     elif frac_p > 1.0:
         frac_p = 1.0
 
-    a_rel = (azimuth - cell_bounds[cid, AXIS2, START]) % _TWO_PI
-    if interp_state.cell_a_tiny[cid]:
+    a_rel = (azimuth - cell_bounds[cell_id, AXIS2, START]) % _TWO_PI
+    if interp_state.cell_a_tiny[cell_id]:
         frac_a = 0.0
     else:
-        if not interp_state.cell_a_full[cid]:
-            width = cell_bounds[cid, AXIS2, WIDTH]
+        if not interp_state.cell_a_full[cell_id]:
+            width = cell_bounds[cell_id, AXIS2, WIDTH]
             if a_rel < 0.0:
                 a_rel = 0.0
             elif a_rel > width:
                 a_rel = width
-        frac_a = a_rel / max(cell_bounds[cid, AXIS2, WIDTH], _TINY)
+        frac_a = a_rel / max(cell_bounds[cell_id, AXIS2, WIDTH], _TINY)
         if frac_a < 0.0:
             frac_a = 0.0
         elif frac_a > 1.0:
@@ -154,23 +154,23 @@ def _trilinear_from_cell(
     point_values: np.ndarray,
 ) -> None:
     """Write one Cartesian trilinear interpolation result row for one leaf cell using flat point values."""
-    cid = int(cell_id)
-    frac_x = (x - cell_bounds[cid, AXIS0, START]) / max(
-        cell_bounds[cid, AXIS0, WIDTH], _TINY
+    cell_id = int(cell_id)
+    frac_x = (x - cell_bounds[cell_id, AXIS0, START]) / max(
+        cell_bounds[cell_id, AXIS0, WIDTH], _TINY
     )
     if frac_x < 0.0:
         frac_x = 0.0
     elif frac_x > 1.0:
         frac_x = 1.0
-    frac_y = (y - cell_bounds[cid, AXIS1, START]) / max(
-        cell_bounds[cid, AXIS1, WIDTH], _TINY
+    frac_y = (y - cell_bounds[cell_id, AXIS1, START]) / max(
+        cell_bounds[cell_id, AXIS1, WIDTH], _TINY
     )
     if frac_y < 0.0:
         frac_y = 0.0
     elif frac_y > 1.0:
         frac_y = 1.0
-    frac_z = (z - cell_bounds[cid, AXIS2, START]) / max(
-        cell_bounds[cid, AXIS2, WIDTH], _TINY
+    frac_z = (z - cell_bounds[cell_id, AXIS2, START]) / max(
+        cell_bounds[cell_id, AXIS2, WIDTH], _TINY
     )
     if frac_z < 0.0:
         frac_z = 0.0
@@ -206,12 +206,12 @@ def _interp_from_cell_ids_rpa(
     out = np.empty((n_query, ncomp), dtype=point_values.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
-        cid = int(cell_ids[i])
-        if cid < 0:
+        cell_id = int(cell_ids[i])
+        if cell_id < 0:
             continue
         _trilinear_from_cell_rpa(
             out[i],
-            cid,
+            cell_id,
             queries_rpa[i, 0],
             queries_rpa[i, 1],
             queries_rpa[i, 2] % _TWO_PI,
@@ -243,12 +243,12 @@ def _interp_from_cell_ids_xyz_cartesian(
     out = np.empty((n_query, ncomp), dtype=point_values.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
-        cid = int(cell_ids[i])
-        if cid < 0:
+        cell_id = int(cell_ids[i])
+        if cell_id < 0:
             continue
         _trilinear_from_cell(
             out[i],
-            cid,
+            cell_id,
             queries_xyz[i, 0],
             queries_xyz[i, 1],
             queries_xyz[i, 2],
@@ -411,7 +411,7 @@ class OctreeInterpolator:
                 cell_ids_xyz,
                 fill,
                 self.tree._cell_bounds,
-                self.tree._interp_corners,
+                self.tree._corners,
                 self.tree._interp_bin_to_corner,
                 self._point_values_2d,
                 self._interp_state,
@@ -421,7 +421,7 @@ class OctreeInterpolator:
                 cell_ids_rpa,
                 fill,
                 self.tree._cell_bounds,
-                self.tree._interp_corners,
+                self.tree._corners,
                 self.tree._interp_bin_to_corner,
                 self._point_values_2d,
                 self._interp_state,
@@ -433,7 +433,7 @@ class OctreeInterpolator:
             cell_ids_xyz,
             fill,
             self.tree._cell_bounds,
-            self.tree._interp_corners,
+            self.tree._corners,
             self.tree._interp_bin_to_corner,
             self._point_values_2d,
         )
@@ -523,7 +523,7 @@ class OctreeInterpolator:
                 cell_ids,
                 fill,
                 self.tree._cell_bounds,
-                self.tree._interp_corners,
+                self.tree._corners,
                 self.tree._interp_bin_to_corner,
                 self._point_values_2d,
                 self._interp_state,
@@ -537,7 +537,7 @@ class OctreeInterpolator:
                 cell_ids,
                 fill,
                 self.tree._cell_bounds,
-                self.tree._interp_corners,
+                self.tree._corners,
                 self.tree._interp_bin_to_corner,
                 self._point_values_2d,
             )
@@ -574,10 +574,10 @@ class OctreeInterpolator:
 
     def trilinear_corner_count(self, cell_id: int) -> int:
         """Return number of unique mapped corners used for one cell interpolation map."""
-        cid = int(cell_id)
-        if cid < 0 or cid >= int(self.tree.cell_count) or int(self.tree.cell_levels[cid]) < 0:
-            raise ValueError(f"Invalid cell_id {cid}.")
-        return int(np.unique(self.tree._interp_bin_to_corner[cid]).size)
+        cell_id = int(cell_id)
+        if cell_id < 0 or cell_id >= int(self.tree.cell_count) or int(self.tree.cell_levels[cell_id]) < 0:
+            raise ValueError(f"Invalid cell_id {cell_id}.")
+        return int(np.unique(self.tree._interp_bin_to_corner[cell_id]).size)
 
     def cell_has_full_trilinear_corner_map(self, cell_id: int) -> bool:
         """Return whether one cell maps to all 8 logical trilinear corners."""

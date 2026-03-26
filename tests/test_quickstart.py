@@ -27,8 +27,8 @@ _CASES = [
 
 def _midpoint_queries_xyz(tree: Octree, n_query: int) -> np.ndarray:
     queries = []
-    for cid in range(min(int(n_query), int(tree.cell_count))):
-        lo, hi = cell_bounds(tree, cid, coord="xyz")
+    for cell_id in range(min(int(n_query), int(tree.cell_count))):
+        lo, hi = cell_bounds(tree, cell_id, coord="xyz")
         queries.append(0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float)))
     return np.asarray(queries, dtype=float)
 

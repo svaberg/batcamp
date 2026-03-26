@@ -316,12 +316,10 @@ def test_xyz_fixture_builds_tree(cartesian_octree_context) -> None:
 def test_xyz_lookup_hits_cell_midpoints(cartesian_octree_context) -> None:
     """Cartesian lookup should resolve each cell midpoint to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
-    for cid in range(tree.cell_count):
-        lo, hi = cell_bounds(tree, cid, coord="xyz")
+    for cell_id in range(tree.cell_count):
+        lo, hi = cell_bounds(tree, cell_id, coord="xyz")
         q = 0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float))
-        hit = tree.lookup_point(q, coord="xyz")
-        assert hit is not None
-        assert int(hit.cell_id) == int(cid)
+        assert int(tree.lookup_points(q, coord="xyz")[0]) == int(cell_id)
 
 
 def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
@@ -333,8 +331,8 @@ def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
 
     q = np.empty((choose.size, 3), dtype=float)
     expected = np.empty(choose.size, dtype=float)
-    for i, cid in enumerate(choose.tolist()):
-        lo, hi = cell_bounds(tree, int(cid), coord="xyz")
+    for i, cell_id in enumerate(choose.tolist()):
+        lo, hi = cell_bounds(tree, int(cell_id), coord="xyz")
         u, v, w = rng.uniform(0.1, 0.9, size=3)
         x = float(lo[0] + u * (hi[0] - lo[0]))
         y = float(lo[1] + v * (hi[1] - lo[1]))
@@ -352,16 +350,16 @@ def test_xyz_lookup_reports_exact_adaptive_paths() -> None:
     ds, levels = _build_adaptive_xyz_dataset()
     tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=levels)
 
-    coarse_hit = tree.lookup_point(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")
+    coarse_hit = tree._hit_from_chosen(int(tree.lookup_points(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")[0]))
     assert coarse_hit is not None
     assert coarse_hit.level == 0
-    assert (coarse_hit.i0, coarse_hit.i1, coarse_hit.i2) == (0, 0, 0)
+    assert coarse_hit.cell_ijk == (0, 0, 0)
     assert coarse_hit.path == ((0, 0, 0),)
 
-    fine_hit = tree.lookup_point(np.array([1.75, 0.75, 0.75], dtype=float), coord="xyz")
+    fine_hit = tree._hit_from_chosen(int(tree.lookup_points(np.array([1.75, 0.75, 0.75], dtype=float), coord="xyz")[0]))
     assert fine_hit is not None
     assert fine_hit.level == 1
-    assert (fine_hit.i0, fine_hit.i1, fine_hit.i2) == (3, 1, 1)
+    assert fine_hit.cell_ijk == (3, 1, 1)
     assert fine_hit.path == ((1, 0, 0), (3, 1, 1))
 
 
@@ -531,9 +529,7 @@ def test_build_cell_arrays_rejects_duplicate_leaf_addresses() -> None:
     with pytest.raises(ValueError, match="overlap at octree address"):
         _build_cell_arrays(
             np.array([0, 0], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
+            np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
             tree_depth=0,
             label="Cartesian",
@@ -545,9 +541,7 @@ def test_build_cell_arrays_rejects_parent_child_overlap() -> None:
     with pytest.raises(ValueError, match="overlap across parent/child addresses"):
         _build_cell_arrays(
             np.array([0, 1], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
-            np.array([0, 0], dtype=np.int64),
+            np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
             tree_depth=1,
             label="Cartesian",
@@ -573,7 +567,7 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     """Builder should attach exact tree indices on the ready bound tree."""
     xyz_tree = OctreeBuilder()._build(_build_regular_xyz_dataset(), tree_coord="xyz")
     assert xyz_tree.cell_levels is not None
-    assert np.asarray(xyz_tree._i0, dtype=np.int64).shape == xyz_tree.cell_levels.shape
+    assert np.asarray(xyz_tree._cell_ijk[: xyz_tree.cell_levels.shape[0]], dtype=np.int64).shape == (xyz_tree.cell_levels.shape[0], 3)
     assert np.asarray(xyz_tree._cell_depth, dtype=np.int64).ndim == 1
     assert np.asarray(xyz_tree._cell_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(xyz_tree._root_cell_ids, dtype=np.int64).ndim == 1
@@ -581,7 +575,7 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
 
     rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa")
     assert rpa_tree.cell_levels is not None
-    assert np.asarray(rpa_tree._i0, dtype=np.int64).shape == rpa_tree.cell_levels.shape
+    assert np.asarray(rpa_tree._cell_ijk[: rpa_tree.cell_levels.shape[0]], dtype=np.int64).shape == (rpa_tree.cell_levels.shape[0], 3)
     assert np.asarray(rpa_tree._cell_depth, dtype=np.int64).ndim == 1
     assert np.asarray(rpa_tree._cell_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(rpa_tree._root_cell_ids, dtype=np.int64).ndim == 1
@@ -595,9 +589,9 @@ def test_regular_spherical_lookup_materializes_exact_indices() -> None:
     last = tree._hit_from_chosen(int(tree.cell_count) - 1, allow_invalid_level=True)
     assert first is not None
     assert last is not None
-    assert (first.level, first.i0, first.i1, first.i2) == (1, 0, 0, 0)
+    assert (first.level, first.cell_ijk) == (1, (0, 0, 0))
     assert first.path == ((0, 0, 0), (0, 0, 0))
-    assert (last.level, last.i0, last.i1, last.i2) == (1, 1, 3, 7)
+    assert (last.level, last.cell_ijk) == (1, (1, 3, 7))
     assert last.path == ((0, 1, 3), (1, 3, 7))
 
 
@@ -847,7 +841,7 @@ def test_build_returns_bound_tree() -> None:
         cell_levels=cell_levels,
     )
     assert tree.ds is ds
-    assert tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz") is not None
+    assert int(tree.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 
 def test_build_stores_tree_coord() -> None:
@@ -876,8 +870,7 @@ def test_lookup_runs_for_xyz() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    hit_xyz = tree.lookup_point(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")
-    assert hit_xyz is not None
+    assert int(tree.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
     assert not hasattr(tree, "lookup_rpa")
 
 
@@ -886,8 +879,7 @@ def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
     ds = _build_disjoint_xyz_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
     q_gap = np.array([5.0, 0.5, 0.5], dtype=float)
-    hit = tree.lookup_point(q_gap, coord="xyz")
-    assert hit is None
+    assert int(tree.lookup_points(q_gap, coord="xyz")[0]) < 0
 
 
 def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:

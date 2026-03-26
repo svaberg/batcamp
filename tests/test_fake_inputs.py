@@ -76,11 +76,11 @@ def test_lookup_rejects_invalid_queries() -> None:
     ds = _build_regular_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
 
-    assert tree.lookup_point(np.array([float("nan"), 0.0, 0.0], dtype=float), coord="xyz") is None
-    assert tree.lookup_point(np.array([float("inf"), 0.0, 0.0], dtype=float), coord="xyz") is None
-    assert tree.lookup_point(np.array([1.5, -1e-6, 0.0], dtype=float), coord="rpa") is None
-    assert tree.lookup_point(np.array([1.5, math.pi + 1e-6, 0.0], dtype=float), coord="rpa") is None
-    assert tree.lookup_point(np.array([float("nan"), 1.0, 0.0], dtype=float), coord="rpa") is None
+    assert int(tree.lookup_points(np.array([float("nan"), 0.0, 0.0], dtype=float), coord="xyz")[0]) < 0
+    assert int(tree.lookup_points(np.array([float("inf"), 0.0, 0.0], dtype=float), coord="xyz")[0]) < 0
+    assert int(tree.lookup_points(np.array([1.5, -1e-6, 0.0], dtype=float), coord="rpa")[0]) < 0
+    assert int(tree.lookup_points(np.array([1.5, math.pi + 1e-6, 0.0], dtype=float), coord="rpa")[0]) < 0
+    assert int(tree.lookup_points(np.array([float("nan"), 1.0, 0.0], dtype=float), coord="rpa")[0]) < 0
 
 
 def test_interpolator_fill_for_invalid_points() -> None:
@@ -98,8 +98,8 @@ def test_interpolator_fill_for_invalid_points() -> None:
     )
     q = invalid
 
-    vals, cids = interp(q, return_cell_ids=True)
-    assert np.all(cids == -1)
+    vals, cell_ids = interp(q, return_cell_ids=True)
+    assert np.all(cell_ids == -1)
     assert np.allclose(vals, -123.0, atol=0.0, rtol=0.0)
 
 
