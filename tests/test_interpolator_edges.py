@@ -9,7 +9,7 @@ from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
-from batcamp.octree import _lookup_cell_id_kernel
+from batcamp.octree import _find_cells
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -131,8 +131,8 @@ def test_interpolator_does_not_stash_spherical_lookup_state() -> None:
     interp = OctreeInterpolator(tree, ["Scalar"])
     assert not hasattr(interp, "_lookup_state_rpa")
 
-def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
-    """Cartesian lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
+def test_cartesian_batch_lookup_resolves_adjacent_cells() -> None:
+    """Cartesian batch lookup should resolve adjacent queries correctly."""
     points, corners = _build_cartesian_hex_mesh(
         x_edges=np.array([0.0, 1.0, 2.0, 3.0, 4.0], dtype=float),
         y_edges=np.array([-1.0, 0.0, 1.0], dtype=float),
@@ -165,23 +165,22 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
     assert cell_id1 >= 0
     assert cell_id0 != cell_id1
 
-    root_cell_ids = np.empty((0,), dtype=np.int64)
-    cell_id = _lookup_cell_id_kernel(
-        q1,
+    cell_ids = _find_cells(
+        np.vstack((q0, q1)),
         cell_is_leaf,
         cell_child,
-        root_cell_ids,
+        tree._root_cell_ids,
         cell_parent,
         tree_cell_bounds,
         tree._domain_bounds,
         tree._axis2_period,
         tree._axis2_periodic,
-        cell_id0,
     )
-    assert int(cell_id) == cell_id1
+    assert int(cell_ids[0]) == cell_id0
+    assert int(cell_ids[1]) == cell_id1
 
-def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
-    """Spherical lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
+def test_spherical_batch_lookup_resolves_adjacent_cells() -> None:
+    """Spherical batch lookup should resolve adjacent queries correctly."""
     ds = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
     cell_is_leaf = tree._cell_is_leaf
@@ -207,20 +206,19 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     assert cell_id1 >= 0
     assert cell_id0 != cell_id1
 
-    root_cell_ids = np.empty((0,), dtype=np.int64)
-    cell_id = _lookup_cell_id_kernel(
-        q1,
+    cell_ids = _find_cells(
+        np.vstack((q0, q1)),
         cell_is_leaf,
         cell_child,
-        root_cell_ids,
+        tree._root_cell_ids,
         cell_parent,
         tree_cell_bounds,
         tree._domain_bounds,
         tree._axis2_period,
         tree._axis2_periodic,
-        cell_id0,
     )
-    assert int(cell_id) == cell_id1
+    assert int(cell_ids[0]) == cell_id0
+    assert int(cell_ids[1]) == cell_id1
 
 def test_call_rejects_invalid_query_coord() -> None:
     """Runtime call should reject invalid query_coord override."""
@@ -249,16 +247,16 @@ def test_supports_xyz_and_rpa_query_coords() -> None:
     assert np.array_equal(cids_a, cids_b)
     assert np.allclose(vals_a, vals_b, atol=0.0, rtol=0.0, equal_nan=True)
 
-def test_prepare_queries_validation() -> None:
-    """`prepare_queries` should enforce valid tuple/shape conventions."""
+def test_normalize_queries_validation() -> None:
+    """`_normalize_queries` should enforce valid tuple/shape conventions."""
     with pytest.raises(ValueError, match="Tuple input must have exactly 3 arrays"):
-        OctreeInterpolator.prepare_queries((np.array([1.0]), np.array([2.0])))
+        OctreeInterpolator._normalize_queries((np.array([1.0]), np.array([2.0])))
     with pytest.raises(ValueError, match="1D xi must have length 3"):
-        OctreeInterpolator.prepare_queries(np.array([1.0, 2.0]))
+        OctreeInterpolator._normalize_queries(np.array([1.0, 2.0]))
     with pytest.raises(ValueError, match="xi must have shape"):
-        OctreeInterpolator.prepare_queries(np.array([[1.0, 2.0], [3.0, 4.0]]))
+        OctreeInterpolator._normalize_queries(np.array([[1.0, 2.0], [3.0, 4.0]]))
     with pytest.raises(ValueError, match="Call with xi or with x1, x2, x3"):
-        OctreeInterpolator.prepare_queries(np.array([1.0]), np.array([2.0]))
+        OctreeInterpolator._normalize_queries(np.array([1.0]), np.array([2.0]))
 
 def test_outside_queries_use_fill_and_minus_one() -> None:
     """Outside-domain queries should return fill values and `cell_id=-1`."""

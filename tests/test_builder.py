@@ -15,7 +15,7 @@ from batcamp.builder import _resolve_cell_levels
 from batcamp.builder_cartesian import CartesianOctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
 from batcamp.constants import XYZ_VARS
-from batcamp.octree import _build_cell_arrays
+from batcamp.octree import _rebuild_cells
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -350,13 +350,13 @@ def test_xyz_lookup_reports_exact_adaptive_paths() -> None:
     ds, levels = _build_adaptive_xyz_dataset()
     tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=levels)
 
-    coarse_hit = tree._hit_from_chosen(int(tree.lookup_points(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")[0]))
+    coarse_hit = tree._cell_hit(int(tree.lookup_points(np.array([0.25, 0.25, 0.25], dtype=float), coord="xyz")[0]))
     assert coarse_hit is not None
     assert coarse_hit.level == 0
     assert coarse_hit.cell_ijk == (0, 0, 0)
     assert coarse_hit.path == ((0, 0, 0),)
 
-    fine_hit = tree._hit_from_chosen(int(tree.lookup_points(np.array([1.75, 0.75, 0.75], dtype=float), coord="xyz")[0]))
+    fine_hit = tree._cell_hit(int(tree.lookup_points(np.array([1.75, 0.75, 0.75], dtype=float), coord="xyz")[0]))
     assert fine_hit is not None
     assert fine_hit.level == 1
     assert fine_hit.cell_ijk == (3, 1, 1)
@@ -524,10 +524,10 @@ def test_resolve_cell_levels_rejects_shape_mismatch() -> None:
         )
 
 
-def test_build_cell_arrays_rejects_duplicate_leaf_addresses() -> None:
+def test_rebuild_cells_rejects_duplicate_leaf_addresses() -> None:
     """Sparse-cell construction should reject duplicate leaf octree addresses."""
     with pytest.raises(ValueError, match="overlap at octree address"):
-        _build_cell_arrays(
+        _rebuild_cells(
             np.array([0, 0], dtype=np.int64),
             np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
@@ -536,10 +536,10 @@ def test_build_cell_arrays_rejects_duplicate_leaf_addresses() -> None:
         )
 
 
-def test_build_cell_arrays_rejects_parent_child_overlap() -> None:
+def test_rebuild_cells_rejects_parent_child_overlap() -> None:
     """Sparse-cell construction should reject explicit parent/child double occupancy."""
     with pytest.raises(ValueError, match="overlap across parent/child addresses"):
-        _build_cell_arrays(
+        _rebuild_cells(
             np.array([0, 1], dtype=np.int64),
             np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
@@ -585,8 +585,8 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
 def test_regular_spherical_lookup_materializes_exact_indices() -> None:
     """Regular spherical grids should expose exact root-relative cell indices."""
     tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
-    first = tree._hit_from_chosen(0, allow_invalid_level=True)
-    last = tree._hit_from_chosen(int(tree.cell_count) - 1, allow_invalid_level=True)
+    first = tree._cell_hit(0, allow_invalid_level=True)
+    last = tree._cell_hit(int(tree.cell_count) - 1, allow_invalid_level=True)
     assert first is not None
     assert last is not None
     assert (first.level, first.cell_ijk) == (1, (0, 0, 0))
