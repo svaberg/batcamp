@@ -929,14 +929,12 @@ class Octree:
                 raise ValueError("points must have shape (..., 3).")
             shape = q.shape[:-1]
             q = q.reshape(-1, 3)
-        q = self._query_points_in_tree_coords(q, coord=coord)
-        cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
+        _q_local, cell_ids = self._lookup_points_local(q, coord=coord)
         return cell_ids.reshape(shape)
 
-    def _query_points_in_tree_coords(self, points: np.ndarray, *, coord: TreeCoord) -> np.ndarray:
-        """Return one query batch expressed in this tree's own coordinate system."""
-        q = np.array(points, dtype=np.float64, order="C")
-        if q.ndim != 2 or q.shape[1] != 3:
+    def _lookup_points_local(self, points: np.ndarray, *, coord: TreeCoord) -> tuple[np.ndarray, np.ndarray]:
+        """Return tree-coordinate queries plus resolved cell ids for one batch."""
+        if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError("points must have shape (N, 3).")
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
@@ -946,13 +944,14 @@ class Octree:
         if str(self.tree_coord) == "xyz":
             if resolved_coord != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
-            return q
+            return points, _lookup_cell_ids_kernel(points, self._coord_state)
         if resolved_coord == "rpa":
-            return q
+            return points, _lookup_cell_ids_kernel(points, self._coord_state)
         from .spherical import _xyz_arrays_to_rpa
 
-        axis0, axis1, axis2 = _xyz_arrays_to_rpa(q[:, 0], q[:, 1], q[:, 2])
-        return np.column_stack((axis0, axis1, axis2))
+        axis0, axis1, axis2 = _xyz_arrays_to_rpa(points[:, 0], points[:, 1], points[:, 2])
+        q_local = np.column_stack((axis0, axis1, axis2))
+        return q_local, _lookup_cell_ids_kernel(q_local, self._coord_state)
 
     def _prepare_interpolation_geometry(self) -> None:
         """Build the per-cell trilinear corner map from the bound dataset."""

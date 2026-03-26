@@ -354,9 +354,8 @@ class OctreeInterpolator:
             q_xyz = np.column_stack(tuple(np.asarray(self._ds[name][:1], dtype=np.float64) for name in XYZ_VARS))
         fill = self._fill_value_vector()
         if self._tree_coord == "rpa":
-            q_rpa = self.tree._query_points_in_tree_coords(q_xyz, coord="xyz")
-            cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
-            cell_ids_rpa = self.tree.lookup_points(q_rpa, coord="rpa").reshape(-1)
+            q_rpa, cell_ids_xyz = self.tree._lookup_points_local(q_xyz, coord="xyz")
+            _q_rpa_direct, cell_ids_rpa = self.tree._lookup_points_local(q_rpa, coord="rpa")
             _interp_from_cell_ids_rpa(q_rpa, cell_ids_xyz, fill, self._interp_state)
             _interp_from_cell_ids_rpa(q_rpa, cell_ids_rpa, fill, self._interp_state)
             return
@@ -445,8 +444,7 @@ class OctreeInterpolator:
         t_after_fill = perf_counter() if debug_timing else 0.0
 
         if self._tree_coord == "rpa":
-            cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
-            q_local = self.tree._query_points_in_tree_coords(q_array, coord=qs)
+            q_local, cell_ids = self.tree._lookup_points_local(q_array, coord=qs)
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-rpa")
             out2d = _interp_from_cell_ids_rpa(q_local, cell_ids, fill, self._interp_state)
