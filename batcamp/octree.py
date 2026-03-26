@@ -556,16 +556,10 @@ class Octree:
     def lookup_points(self, points: np.ndarray, *, coord: TreeCoord) -> np.ndarray:
         """Resolve one batch of query points to leaf cell ids, with `-1` for misses."""
         q = np.array(points, dtype=np.float64, order="C")
-        if q.ndim == 1:
-            if q.size != 3:
-                raise ValueError("points must have shape (..., 3).")
-            shape = (1,)
-            q = q.reshape(1, 3)
-        else:
-            if q.shape[-1] != 3:
-                raise ValueError("points must have shape (..., 3).")
-            shape = q.shape[:-1]
-            q = q.reshape(-1, 3)
+        if q.ndim == 0 or q.shape[-1] != 3:
+            raise ValueError("points must have shape (..., 3).")
+        shape = (1,) if q.ndim == 1 else q.shape[:-1]
+        q = q.reshape(-1, 3)
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
