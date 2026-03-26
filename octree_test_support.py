@@ -28,17 +28,17 @@ def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.n
     if coord == "rpa" and str(tree.tree_coord) == "rpa":
         lo = np.array(
             [
-                tree._cell_bounds[cell_id, AXIS0, START],
-                tree._cell_bounds[cell_id, AXIS1, START],
-                tree._cell_bounds[cell_id, AXIS2, START],
+                tree.cell_bounds[cell_id, AXIS0, START],
+                tree.cell_bounds[cell_id, AXIS1, START],
+                tree.cell_bounds[cell_id, AXIS2, START],
             ],
             dtype=float,
         )
         hi = np.array(
             [
-                tree._cell_bounds[cell_id, AXIS0, START] + tree._cell_bounds[cell_id, AXIS0, WIDTH],
-                tree._cell_bounds[cell_id, AXIS1, START] + tree._cell_bounds[cell_id, AXIS1, WIDTH],
-                (tree._cell_bounds[cell_id, AXIS2, START] + tree._cell_bounds[cell_id, AXIS2, WIDTH])
+                tree.cell_bounds[cell_id, AXIS0, START] + tree.cell_bounds[cell_id, AXIS0, WIDTH],
+                tree.cell_bounds[cell_id, AXIS1, START] + tree.cell_bounds[cell_id, AXIS1, WIDTH],
+                (tree.cell_bounds[cell_id, AXIS2, START] + tree.cell_bounds[cell_id, AXIS2, WIDTH])
                 % (2.0 * math.pi),
             ],
             dtype=float,

@@ -45,7 +45,6 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert loaded.leaf_shape == tree.leaf_shape
     assert loaded.root_shape == tree.root_shape
     assert loaded.level_counts == tree.level_counts
-    assert loaded.depth == tree.depth
     assert loaded.tree_coord == tree.tree_coord
 
     assert loaded.cell_levels is not None and tree.cell_levels is not None
@@ -62,30 +61,29 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
     assert int(tree.lookup_points(q_xyz, coord="xyz")[0]) == int(loaded.lookup_points(q_xyz, coord="xyz")[0])
     assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
-    assert np.array_equal(np.asarray(loaded._cell_is_leaf, dtype=bool), np.asarray(tree._cell_is_leaf, dtype=bool))
     assert np.allclose(
-        np.asarray(loaded._cell_bounds[:, 0, 0], dtype=float),
-        np.asarray(tree._cell_bounds[:, 0, 0], dtype=float),
+        np.asarray(loaded.cell_bounds[:, 0, 0], dtype=float),
+        np.asarray(tree.cell_bounds[:, 0, 0], dtype=float),
     )
     assert np.allclose(
-        np.asarray(loaded._cell_bounds[:, 0, 1], dtype=float),
-        np.asarray(tree._cell_bounds[:, 0, 1], dtype=float),
+        np.asarray(loaded.cell_bounds[:, 0, 1], dtype=float),
+        np.asarray(tree.cell_bounds[:, 0, 1], dtype=float),
     )
     assert np.allclose(
-        np.asarray(loaded._cell_bounds[:, 1, 0], dtype=float),
-        np.asarray(tree._cell_bounds[:, 1, 0], dtype=float),
+        np.asarray(loaded.cell_bounds[:, 1, 0], dtype=float),
+        np.asarray(tree.cell_bounds[:, 1, 0], dtype=float),
     )
     assert np.allclose(
-        np.asarray(loaded._cell_bounds[:, 1, 1], dtype=float),
-        np.asarray(tree._cell_bounds[:, 1, 1], dtype=float),
+        np.asarray(loaded.cell_bounds[:, 1, 1], dtype=float),
+        np.asarray(tree.cell_bounds[:, 1, 1], dtype=float),
     )
     assert np.allclose(
-        np.asarray(loaded._cell_bounds[:, 2, 0], dtype=float),
-        np.asarray(tree._cell_bounds[:, 2, 0], dtype=float),
+        np.asarray(loaded.cell_bounds[:, 2, 0], dtype=float),
+        np.asarray(tree.cell_bounds[:, 2, 0], dtype=float),
     )
     assert np.allclose(
-        np.asarray(loaded._cell_bounds[:, 2, 1], dtype=float),
-        np.asarray(tree._cell_bounds[:, 2, 1], dtype=float),
+        np.asarray(loaded.cell_bounds[:, 2, 1], dtype=float),
+        np.asarray(tree.cell_bounds[:, 2, 1], dtype=float),
     )
     assert float(loaded._domain_bounds[0, 0]) == pytest.approx(float(tree._domain_bounds[0, 0]))
     assert float(loaded._domain_bounds[0, 1]) == pytest.approx(float(tree._domain_bounds[0, 1]))

@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import logging
 import math
-from time import perf_counter
 from typing import Literal
-from typing import NamedTuple
 
 from numba import njit
 from numba import prange
@@ -23,16 +21,8 @@ from .octree import WIDTH
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
 _TINY = np.finfo(np.float64).tiny
-
-
-class SphericalInterpState(NamedTuple):
-    """Packed spherical interpolation arrays for compiled flat trilinear kernels."""
-
-    cell_a_full: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively the full circle.
-    cell_a_tiny: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively zero.
 
 
 @njit(cache=True)
@@ -70,7 +60,6 @@ def _interp_cell_rpa(
     cell_bounds: np.ndarray,
     corners: np.ndarray,
     point_values: np.ndarray,
-    interp_state: SphericalInterpState,
 ) -> None:
     """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
     cell_id = int(cell_id)
@@ -91,17 +80,17 @@ def _interp_cell_rpa(
     elif frac_p > 1.0:
         frac_p = 1.0
 
+    cell_a_width = cell_bounds[cell_id, AXIS2, WIDTH]
     a_rel = (azimuth - cell_bounds[cell_id, AXIS2, START]) % _TWO_PI
-    if interp_state.cell_a_tiny[cell_id]:
+    if cell_a_width <= _TINY:
         frac_a = 0.0
     else:
-        if not interp_state.cell_a_full[cell_id]:
-            width = cell_bounds[cell_id, AXIS2, WIDTH]
+        if cell_a_width < (_TWO_PI - 1.0e-10):
             if a_rel < 0.0:
                 a_rel = 0.0
-            elif a_rel > width:
-                a_rel = width
-        frac_a = a_rel / max(cell_bounds[cell_id, AXIS2, WIDTH], _TINY)
+            elif a_rel > cell_a_width:
+                a_rel = cell_a_width
+        frac_a = a_rel / max(cell_a_width, _TINY)
         if frac_a < 0.0:
             frac_a = 0.0
         elif frac_a > 1.0:
@@ -172,7 +161,6 @@ def _interp_cells_rpa(
     cell_bounds: np.ndarray,
     corners: np.ndarray,
     point_values: np.ndarray,
-    interp_state: SphericalInterpState,
 ) -> np.ndarray:
     """Evaluate spherical-tree interpolation for spherical queries with known leaf cell ids using flat point values."""
     n_query = queries_rpa.shape[0]
@@ -192,7 +180,6 @@ def _interp_cells_rpa(
             cell_bounds,
             corners,
             point_values,
-            interp_state,
         )
     return out
 
@@ -258,99 +245,52 @@ class OctreeInterpolator:
         self.tree = tree
         self._ds = tree.ds
         self.fill_value = fill_value
-
-        logger.debug(
-            "Initializing OctreeInterpolator: points=%d, cells=%d",
-            int(self._ds.points.shape[0]),
-            int(self.tree.corners.shape[0]),
-        )
         self.value_names: tuple[str, ...] = ()
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
-        self._tree_coord = str(self.tree.tree_coord)
+        self._tree_coord = self.tree.tree_coord
         if self._tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
-        self._build_interp_state()
+        self._n_value_components = int(self._point_values_2d.shape[1])
         self.warmup()
-        logger.info(
-            "Interpolator ready: uniform=%s, max_level=%d, leaf_shape=%s",
-            self.tree.is_uniform,
-            int(self.tree.max_level),
-            tuple(self.tree.leaf_shape),
-        )
 
     def _flatten_point_values(self, values: list[str] | np.ndarray | None) -> tuple[np.ndarray, tuple[int, ...]]:
         """Resolve requested fields into one flat `(n_points, n_components)` array plus trailing shape."""
         n_points = int(self._ds.points.shape[0])
         if values is None:
-            names: list[str]
             names = [str(name) for name in self._ds.variables]
             if len(names) == 0:
                 raise ValueError("Dataset has no variables; cannot interpolate values=None.")
-            arrays: list[np.ndarray] = []
-            for name in names:
-                arr_name = np.array(self._ds[name])
-                if arr_name.shape[0] != n_points:
-                    logger.error(
-                        "Value size mismatch for field %s: values=%d, n_points=%d",
-                        name,
-                        int(arr_name.shape[0]),
-                        n_points,
-                    )
-                    raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
-                arrays.append(arr_name)
-            self.value_names = tuple(names)
-            if len(arrays) == 1:
-                arr = arrays[0]
-                logger.debug("Using field %s with shape=%s", names[0], tuple(arr.shape))
-                return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
-            merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
-            logger.debug("Using %d fields with merged shape=%s", len(names), tuple(merged.shape))
-            return np.array(merged, dtype=np.float64, order="C"), tuple(merged.shape[1:])
-
-        if isinstance(values, str):
+        elif isinstance(values, str):
             raise ValueError("values must be None, array-like, or list[str]; single-string values are not supported.")
-        if isinstance(values, list):
+        elif isinstance(values, list):
             if len(values) == 0 or not all(isinstance(v, str) for v in values):
                 raise ValueError("values must be None, array-like, or a non-empty list[str] of field names.")
             names = [str(name) for name in values]
-            arrays: list[np.ndarray] = []
-            for name in names:
-                arr_name = np.array(self._ds[name])
-                if arr_name.shape[0] != n_points:
-                    logger.error(
-                        "Value size mismatch for field %s: values=%d, n_points=%d",
-                        name,
-                        int(arr_name.shape[0]),
-                        n_points,
-                    )
-                    raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
-                arrays.append(arr_name)
-            self.value_names = tuple(names)
-            if len(arrays) == 1:
-                arr = arrays[0]
-                logger.debug("Using field %s with shape=%s", names[0], tuple(arr.shape))
-                return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
-            merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
-            logger.debug("Using %d fields with merged shape=%s", len(names), tuple(merged.shape))
-            return np.array(merged, dtype=np.float64, order="C"), tuple(merged.shape[1:])
+        else:
+            arr = np.asarray(values)
+            if arr.shape[0] != n_points:
+                raise ValueError(f"values length {arr.shape[0]} does not match required n_points={n_points}.")
+            self.value_names = ()
+            return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
 
-        arr = np.asarray(values)
-        if arr.shape[0] != n_points:
-            raise ValueError(f"values length {arr.shape[0]} does not match required n_points={n_points}.")
-        self.value_names = ()
-        logger.debug("Using explicit value array with shape=%s", tuple(arr.shape))
-        return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
-
-    def _build_interp_state(self) -> None:
-        """Prepare interpolation-time state for the chosen point values."""
-        self._n_value_components = int(self._point_values_2d.shape[1])
-        if self._tree_coord == "xyz":
-            self._interp_state = None
-            return
-        self._interp_state = SphericalInterpState(
-            cell_a_full=self.tree._interp_axis2_full,
-            cell_a_tiny=self.tree._interp_axis2_tiny,
-        )
+        arrays: list[np.ndarray] = []
+        for name in names:
+            arr_name = np.array(self._ds[name])
+            if arr_name.shape[0] != n_points:
+                logger.error(
+                    "Value size mismatch for field %s: values=%d, n_points=%d",
+                    name,
+                    int(arr_name.shape[0]),
+                    n_points,
+                )
+                raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
+            arrays.append(arr_name)
+        self.value_names = tuple(names)
+        if len(arrays) == 1:
+            arr = arrays[0]
+            return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
+        merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
+        return np.array(merged, dtype=np.float64, order="C"), tuple(merged.shape[1:])
 
     def _fill_values(self) -> np.ndarray:
         """Convert `fill_value` to one vector of length `n_components`."""
@@ -445,46 +385,38 @@ class OctreeInterpolator:
             logger.error("query_coord='rpa' is not supported for Cartesian trees.")
             raise ValueError("query_coord='rpa' is only supported for tree_coord='rpa'.")
 
-        debug_timing = logger.isEnabledFor(logging.DEBUG)
-        t0_total = perf_counter() if debug_timing else 0.0
-
         q, shape = self._normalize_queries(*args)
-        t_after_prepare = perf_counter() if debug_timing else 0.0
         q_array = np.array(q, dtype=np.float64, order="C")
-        t_after_convert = perf_counter() if debug_timing else 0.0
         n = q_array.shape[0]
         trailing = self._value_shape_tail
-        logger.debug("Interpolating %d query points in %s space", int(n), qs)
         fill = self._fill_values()
-        t_after_fill = perf_counter() if debug_timing else 0.0
 
+        cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
         if self._tree_coord == "rpa":
-            kernel_queries, cell_ids = self.tree._resolve_queries(q_array, coord=qs)
-            if debug_timing:
-                logger.debug("Interpolation kernel mode: compiled-rpa")
+            if qs == "rpa":
+                kernel_queries = q_array
+            else:
+                from .spherical import _xyz_arrays_to_rpa
+
+                kernel_queries = np.column_stack(_xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
             out2d = _interp_cells_rpa(
                 kernel_queries,
                 cell_ids,
                 fill,
-                self.tree._cell_bounds,
+                self.tree.cell_bounds,
                 self.tree.corners,
                 self._point_values_2d,
-                self._interp_state,
             )
         else:
-            _kernel_queries, cell_ids = self.tree._resolve_queries(q_array, coord="xyz")
             kernel_queries = q_array
-            if debug_timing:
-                logger.debug("Interpolation kernel mode: compiled-xyz")
             out2d = _interp_cells_xyz(
                 kernel_queries,
                 cell_ids,
                 fill,
-                self.tree._cell_bounds,
+                self.tree.cell_bounds,
                 self.tree.corners,
                 self._point_values_2d,
             )
-        t_after_kernel = perf_counter() if debug_timing else 0.0
 
         misses = int(np.count_nonzero(cell_ids < 0))
         if log_outside_domain:
@@ -494,77 +426,18 @@ class OctreeInterpolator:
                 logger.info("Some query points were outside interpolation domain (%d/%d misses).", misses, n)
 
         out = out2d.reshape((n,) + trailing).reshape(shape + trailing)
-        t_after_post = perf_counter() if debug_timing else 0.0
-        if debug_timing:
-            prep_s = t_after_prepare - t0_total
-            convert_s = t_after_convert - t_after_prepare
-            fill_s = t_after_fill - t_after_convert
-            kernel_s = t_after_kernel - t_after_fill
-            post_s = t_after_post - t_after_kernel
-            total_s = t_after_post - t0_total
-            logger.debug(
-                (
-                    "Interpolation timings: "
-                    f"n={int(n)} qs={qs} prep={prep_s:.6f}s convert={convert_s:.6f}s "
-                    f"fill={fill_s:.6f}s kernel={kernel_s:.6f}s post={post_s:.6f}s "
-                    f"total={total_s:.6f}s "
-                    f"kernel_share={((kernel_s / total_s) if total_s > 0.0 else float('nan')):.3f}"
-                )
-            )
         if return_cell_ids:
             return out, cell_ids.reshape(shape)
         return out
-
-    def cell_corner_count(self, cell_id: int) -> int:
-        """Return number of unique mapped corners used for one cell interpolation map."""
-        cell_id = int(cell_id)
-        if cell_id < 0 or cell_id >= int(self.tree.cell_count) or int(self.tree.cell_levels[cell_id]) < 0:
-            raise ValueError(f"Invalid cell_id {cell_id}.")
-        return int(np.unique(self.tree.corners[cell_id]).size)
-
-    def cell_has_8_corners(self, cell_id: int) -> bool:
-        """Return whether one cell maps to all 8 logical trilinear corners."""
-        return self.cell_corner_count(int(cell_id)) == 8
 
     @property
     def n_value_components(self) -> int:
         """Return flattened component count of the interpolated output."""
         return int(self._n_value_components)
 
-    @property
-    def corners(self) -> np.ndarray:
-        """Return cell-to-node corner connectivity used by interpolation."""
-        return self.tree.corners
-
-    @property
-    def point_values(self) -> np.ndarray:
-        """Return per-node interpolation values in original component shape."""
-        return self._point_values_2d.reshape((int(self._point_values_2d.shape[0]),) + self._value_shape_tail)
-
-    def set_values(
-        self,
-        values: list[str] | None,
-        *,
-        fill_value: float | np.ndarray | None = None,
-        warmup: bool = False,
-    ) -> None:
-        """Experimental: switch interpolated fields without rebuilding geometry.
-
-        This reuses the existing tree/lookup and only repacks value arrays and
-        interpolation kernel state.
-        """
-        if fill_value is not None:
-            self.fill_value = fill_value
-        self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
-        self._build_interp_state()
-        # Fail fast when a vector fill value no longer matches component count.
-        _ = self._fill_values()
-        if warmup:
-            self.warmup()
-
     def __str__(self) -> str:
         """Return a compact human-readable interpolator description."""
-        n_points = int(self._ds.points.shape[0]) if hasattr(self._ds, "points") else -1
+        n_points = int(self._ds.points.shape[0])
         n_cells = int(self.tree.corners.shape[0])
         n_fields = int(len(self.value_names))
         if n_fields == 0:
