@@ -339,10 +339,10 @@ def _collect_frontier_cells(
     if max_level < 0:
         raise ValueError(f"Invalid max_level={max_level}.")
 
-    cell_depth = np.asarray(tree._cell_depth, dtype=np.int64)
-    cell_ijk = np.asarray(tree._cell_ijk, dtype=np.int64)
-    cell_child = np.asarray(tree._cell_child, dtype=np.int64)
-    root_cell_ids = np.asarray(tree._root_cell_ids, dtype=np.int64)
+    cell_depth = tree._cell_depth
+    cell_ijk = tree._cell_ijk
+    cell_child = tree._cell_child
+    root_cell_ids = tree._root_cell_ids
 
     frontier_cell_ids_list: list[int] = []
     stack = [int(cell_id) for cell_id in root_cell_ids[::-1].tolist()]
