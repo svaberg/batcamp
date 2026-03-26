@@ -180,30 +180,6 @@ class OctreeBuilder:
         self._rpa_builder = SphericalOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
         self._xyz_builder = CartesianOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
 
-    @staticmethod
-    def _twos_factor(n: int) -> int:
-        """Compute the exponent of the largest power of two dividing `n`."""
-        k = 0
-        while n > 0 and (n % 2 == 0):
-            n //= 2
-            k += 1
-        return k
-
-    @staticmethod
-    def _root_shape_and_depth(leaf_shape: GridShape) -> tuple[GridShape, int]:
-        """Compute root shape and depth from finest leaf shape."""
-        depth = min(
-            OctreeBuilder._twos_factor(leaf_shape[0]),
-            OctreeBuilder._twos_factor(leaf_shape[1]),
-            OctreeBuilder._twos_factor(leaf_shape[2]),
-        )
-        root_shape = (
-            leaf_shape[0] >> depth,
-            leaf_shape[1] >> depth,
-            leaf_shape[2] >> depth,
-        )
-        return root_shape, depth
-
     def build(
         self,
         ds: Dataset,
@@ -267,11 +243,16 @@ class OctreeBuilder:
             )
 
         _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
-        root_shape, _depth = self._root_shape_and_depth(leaf_shape)
-        level_offset = int(_depth) - int(max_level)
+        depth = min(int(np.log2(v & -v)) for v in leaf_shape)
+        root_shape = (
+            leaf_shape[0] >> depth,
+            leaf_shape[1] >> depth,
+            leaf_shape[2] >> depth,
+        )
+        level_offset = int(depth) - int(max_level)
         if level_offset < 0:
             raise ValueError(
-                f"Inferred level offset is negative: depth={_depth}, max_level={max_level}."
+                f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
             )
         levels = np.asarray(levels, dtype=np.int64)
         levels_abs = np.array(levels, copy=True)
