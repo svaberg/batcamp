@@ -12,7 +12,6 @@ from .builder import format_histogram
 from .builder import point_refinement_levels
 from .builder import valid_cell_fraction
 from .constants import DEFAULT_TREE_COORD
-from .octree import CellHit
 from .octree import Octree
 from .persistence import OCTREE_FILE_VERSION
 
@@ -25,7 +24,6 @@ __all__ = [
     "DEFAULT_TREE_COORD",
     "DEFAULT_MIN_VALID_CELL_FRACTION",
     "OCTREE_FILE_VERSION",
-    "CellHit",
     "Octree",
     "OctreeInterpolator",
 ]

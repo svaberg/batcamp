@@ -243,21 +243,28 @@ class OctreeInterpolator:
         if not isinstance(tree, Octree):
             raise TypeError("OctreeInterpolator requires a built Octree as its first argument.")
         self.tree = tree
-        self._ds = tree.ds
         self.fill_value = fill_value
-        self.value_names: tuple[str, ...] = ()
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
-        self._tree_coord = self.tree.tree_coord
-        if self._tree_coord not in {"xyz", "rpa"}:
-            raise NotImplementedError(f"Unsupported tree_coord '{self._tree_coord}' for interpolation.")
-        self._n_value_components = int(self._point_values_2d.shape[1])
-        self.warmup()
+        if self.tree.tree_coord not in {"xyz", "rpa"}:
+            raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
+        if int(self.tree.ds.points.shape[0]) == 0:
+            q_xyz = np.zeros((1, 3), dtype=np.float64)
+        else:
+            q_xyz = np.column_stack(tuple(np.asarray(self.tree.ds[name][:1], dtype=np.float64) for name in XYZ_VARS))
+        if self.tree.tree_coord == "rpa":
+            from .spherical import _xyz_arrays_to_rpa
+
+            q_rpa = np.column_stack(_xyz_arrays_to_rpa(q_xyz[:, 0], q_xyz[:, 1], q_xyz[:, 2]))
+            self(q_xyz, query_coord="xyz", log_outside_domain=False)
+            self(q_rpa, query_coord="rpa", log_outside_domain=False)
+        else:
+            self(q_xyz, query_coord="xyz", log_outside_domain=False)
 
     def _flatten_point_values(self, values: list[str] | np.ndarray | None) -> tuple[np.ndarray, tuple[int, ...]]:
         """Resolve requested fields into one flat `(n_points, n_components)` array plus trailing shape."""
-        n_points = int(self._ds.points.shape[0])
+        n_points = int(self.tree.ds.points.shape[0])
         if values is None:
-            names = [str(name) for name in self._ds.variables]
+            names = [str(name) for name in self.tree.ds.variables]
             if len(names) == 0:
                 raise ValueError("Dataset has no variables; cannot interpolate values=None.")
         elif isinstance(values, str):
@@ -270,57 +277,19 @@ class OctreeInterpolator:
             arr = np.asarray(values)
             if arr.shape[0] != n_points:
                 raise ValueError(f"values length {arr.shape[0]} does not match required n_points={n_points}.")
-            self.value_names = ()
             return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
 
         arrays: list[np.ndarray] = []
         for name in names:
-            arr_name = np.array(self._ds[name])
+            arr_name = np.array(self.tree.ds[name])
             if arr_name.shape[0] != n_points:
-                logger.error(
-                    "Value size mismatch for field %s: values=%d, n_points=%d",
-                    name,
-                    int(arr_name.shape[0]),
-                    n_points,
-                )
                 raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
             arrays.append(arr_name)
-        self.value_names = tuple(names)
         if len(arrays) == 1:
             arr = arrays[0]
             return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
         merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
         return np.array(merged, dtype=np.float64, order="C"), tuple(merged.shape[1:])
-
-    def _fill_values(self) -> np.ndarray:
-        """Convert `fill_value` to one vector of length `n_components`."""
-        ncomp = int(self._n_value_components)
-        if np.isscalar(self.fill_value):
-            return np.full(ncomp, float(self.fill_value), dtype=np.float64)
-
-        fill = np.array(self.fill_value, dtype=np.float64).reshape(-1)
-        if fill.size == 1:
-            return np.full(ncomp, float(fill[0]), dtype=np.float64)
-        if fill.size != ncomp:
-            raise ValueError(
-                f"fill_value has {fill.size} entries but interpolated values require {ncomp} components."
-            )
-        return fill
-
-    def warmup(self) -> None:
-        """Trigger JIT compilation ahead of first real query."""
-        if int(self._ds.points.shape[0]) == 0:
-            q_xyz = np.zeros((1, 3), dtype=np.float64)
-        else:
-            q_xyz = np.column_stack(tuple(np.asarray(self._ds[name][:1], dtype=np.float64) for name in XYZ_VARS))
-        if self._tree_coord == "rpa":
-            from .spherical import _xyz_arrays_to_rpa
-
-            q_rpa = np.column_stack(_xyz_arrays_to_rpa(q_xyz[:, 0], q_xyz[:, 1], q_xyz[:, 2]))
-            self(q_xyz, query_coord="xyz", log_outside_domain=False)
-            self(q_rpa, query_coord="rpa", log_outside_domain=False)
-            return
-        self(q_xyz, query_coord="xyz", log_outside_domain=False)
 
     @staticmethod
     def _normalize_queries(*args) -> tuple[np.ndarray, tuple[int, ...]]:
@@ -379,20 +348,27 @@ class OctreeInterpolator:
         """
         qs = str(query_coord)
         if qs not in {"xyz", "rpa"}:
-            logger.error("Invalid query_coord=%s in call", qs)
             raise ValueError("query_coord must be 'xyz' or 'rpa'.")
-        if self._tree_coord == "xyz" and qs == "rpa":
-            logger.error("query_coord='rpa' is not supported for Cartesian trees.")
+        if self.tree.tree_coord == "xyz" and qs == "rpa":
             raise ValueError("query_coord='rpa' is only supported for tree_coord='rpa'.")
 
         q, shape = self._normalize_queries(*args)
         q_array = np.array(q, dtype=np.float64, order="C")
         n = q_array.shape[0]
         trailing = self._value_shape_tail
-        fill = self._fill_values()
+        if np.isscalar(self.fill_value):
+            fill = np.full(self.n_value_components, float(self.fill_value), dtype=np.float64)
+        else:
+            fill = np.array(self.fill_value, dtype=np.float64).reshape(-1)
+            if fill.size == 1:
+                fill = np.full(self.n_value_components, float(fill[0]), dtype=np.float64)
+            elif fill.size != self.n_value_components:
+                raise ValueError(
+                    f"fill_value has {fill.size} entries but interpolated values require {self.n_value_components} components."
+                )
 
         cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
-        if self._tree_coord == "rpa":
+        if self.tree.tree_coord == "rpa":
             if qs == "rpa":
                 kernel_queries = q_array
             else:
@@ -433,26 +409,16 @@ class OctreeInterpolator:
     @property
     def n_value_components(self) -> int:
         """Return flattened component count of the interpolated output."""
-        return int(self._n_value_components)
+        return int(self._point_values_2d.shape[1])
 
     def __str__(self) -> str:
-        """Return a compact human-readable interpolator description."""
-        n_points = int(self._ds.points.shape[0])
-        n_cells = int(self.tree.corners.shape[0])
-        n_fields = int(len(self.value_names))
-        if n_fields == 0:
-            field_text = "<none>"
-        elif n_fields <= 3:
-            field_text = ", ".join(self.value_names)
-        else:
-            field_text = f"{', '.join(self.value_names[:3])}, ..."
+        """Return a compact human-readable interpolator summary."""
         return (
             "OctreeInterpolator("
-            f"tree_coord={self._tree_coord}, "
-            f"fields={n_fields}[{field_text}], "
-            f"n_points={n_points}, "
-            f"n_cells={n_cells}, "
-            f"n_components={int(self._n_value_components)}"
+            f"tree_coord={self.tree.tree_coord}, "
+            f"n_points={int(self.tree.ds.points.shape[0])}, "
+            f"n_cells={int(self.tree.corners.shape[0])}, "
+            f"n_components={self.n_value_components}"
             ")"
         )
 
