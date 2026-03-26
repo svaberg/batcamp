@@ -106,8 +106,8 @@ def _resolve_cell_levels(
     inferred_levels: np.ndarray | None,
     cell_levels: np.ndarray | None,
     expected_shape: tuple[int, ...],
-) -> tuple[np.ndarray, int, int]:
-    """Finalize level array with shared validation and min/max extraction."""
+) -> tuple[np.ndarray, int]:
+    """Finalize level array with shared validation and max-level extraction."""
     if cell_levels is None:
         if inferred_levels is None:
             raise ValueError("inferred_levels is required when cell_levels is omitted.")
@@ -122,9 +122,8 @@ def _resolve_cell_levels(
     valid_levels = levels[levels >= 0]
     if valid_levels.size == 0:
         raise ValueError("No valid (>=0) levels available to infer octree.")
-    min_level = int(np.min(valid_levels))
     max_level = int(np.max(valid_levels))
-    return levels, min_level, max_level
+    return levels, max_level
 
 
 def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
