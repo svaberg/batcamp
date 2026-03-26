@@ -12,7 +12,7 @@ from .constants import XYZ_VARS
 from .octree import AXIS0
 from .octree import AXIS1
 from .octree import AXIS2
-from .octree import _coord_state_inputs
+from .octree import _bound_xyz_and_leaf_levels
 from .octree import START
 from .octree import WIDTH
 
@@ -23,7 +23,7 @@ class _SphericalCoordSupport:
 
     def _attach_coord_state(self, ds, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
         """Derive spherical cell bounds, domain bounds, and axis-2 periodic metadata from the bound dataset."""
-        corners, x, y, z, cell_levels = _coord_state_inputs(self, ds, corners)
+        corners, x, y, z, cell_levels = _bound_xyz_and_leaf_levels(self, ds, corners)
         n_cells = int(corners.shape[0])
         valid_ids = np.flatnonzero(cell_levels >= 0)
         shifts = int(self.max_level) - cell_levels[valid_ids]

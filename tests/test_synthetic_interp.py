@@ -127,7 +127,7 @@ def _interpolation_valid_cells(
     )
     if interp is None:
         return ids
-    good = [int(cell_id) for cell_id in ids.tolist() if interp.cell_has_full_trilinear_corner_map(int(cell_id))]
+    good = [int(cell_id) for cell_id in ids.tolist() if interp.cell_has_8_corners(int(cell_id))]
     return np.array(good, dtype=np.int64)
 
 

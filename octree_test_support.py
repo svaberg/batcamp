@@ -15,7 +15,7 @@ from batcamp.octree import WIDTH
 
 def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.ndarray, np.ndarray]:
     cell_id = int(cell_id)
-    corners = tree.ds.corners[cell_id]
+    corners = tree.corners[cell_id]
     pts = np.column_stack(
         (
             tree.ds[XYZ_VARS[0]][corners],
