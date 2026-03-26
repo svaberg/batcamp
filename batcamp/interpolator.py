@@ -375,24 +375,18 @@ class OctreeInterpolator:
                 from .spherical import _xyz_arrays_to_rpa
 
                 kernel_queries = np.column_stack(_xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
-            out2d = _interp_cells_rpa(
-                kernel_queries,
-                cell_ids,
-                fill,
-                self.tree.cell_bounds,
-                self.tree.corners,
-                self._point_values_2d,
-            )
+            kernel = _interp_cells_rpa
         else:
             kernel_queries = q_array
-            out2d = _interp_cells_xyz(
-                kernel_queries,
-                cell_ids,
-                fill,
-                self.tree.cell_bounds,
-                self.tree.corners,
-                self._point_values_2d,
-            )
+            kernel = _interp_cells_xyz
+        out2d = kernel(
+            kernel_queries,
+            cell_ids,
+            fill,
+            self.tree.cell_bounds,
+            self.tree.corners,
+            self._point_values_2d,
+        )
 
         misses = int(np.count_nonzero(cell_ids < 0))
         if log_outside_domain:
