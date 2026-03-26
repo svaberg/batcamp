@@ -270,17 +270,24 @@ class OctreeBuilder:
         corners_arr = np.asarray(ds.corners, dtype=np.int64)
 
         if tree_coord == "rpa":
-            levels, max_level, leaf_shape = self._rpa_builder.infer_tree_geometry(
+            level_shapes, levels, max_level = self._rpa_builder.infer_level_shapes(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
                 axis_rho_tol=axis_rho_tol,
             )
+            leaf_shape, _weighted_cells = self._rpa_builder.infer_leaf_shape(level_shapes)
         else:
-            levels, max_level, leaf_shape = self._xyz_builder.infer_tree_geometry(
+            _level_shapes, levels, max_level = self._xyz_builder.infer_level_shapes(
                 ds,
                 corners_arr,
                 cell_levels=cell_levels,
+            )
+            leaf_shape = self._xyz_builder.infer_leaf_shape(
+                ds,
+                corners_arr,
+                levels,
+                max_level=max_level,
             )
 
         _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
