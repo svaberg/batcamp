@@ -14,16 +14,6 @@ from .shared_types import TreeCoord
 
 OCTREE_FILE_VERSION = 6
 
-_REQUIRED_TREE_ATTRS = ("_cell_ijk",)
-
-_REQUIRED_FILE_KEYS = (
-    "version",
-    "tree_coord",
-    "root_shape",
-    "cell_levels",
-    "cell_ijk",
-)
-
 
 @dataclass(frozen=True)
 class OctreeState:
@@ -37,11 +27,6 @@ class OctreeState:
     @classmethod
     def from_tree(cls, tree: Octree) -> "OctreeState":
         """Capture one octree as minimal persisted state."""
-        if tree.cell_levels is None:
-            raise ValueError("Cannot persist octree without cell_levels.")
-        missing = [name for name in _REQUIRED_TREE_ATTRS if not hasattr(tree, name)]
-        if missing:
-            raise ValueError(f"Cannot persist octree without exact leaf addresses: missing {missing}.")
         leaf_row_count = int(tree.cell_levels.shape[0])
         return cls(
             tree_coord=str(tree.tree_coord),
@@ -67,7 +52,11 @@ class OctreeState:
     def load_npz(cls, path: str | Path) -> "OctreeState":
         """Load one persisted octree state from `.npz`."""
         with np.load(Path(path), allow_pickle=False) as data:
-            missing = [key for key in _REQUIRED_FILE_KEYS if key not in data]
+            missing = [
+                key
+                for key in ("version", "tree_coord", "root_shape", "cell_levels", "cell_ijk")
+                if key not in data
+            ]
             if missing:
                 raise ValueError(f"Missing required octree fields: {missing}.")
 
