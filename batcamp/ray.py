@@ -12,13 +12,15 @@ from numba import njit
 from numba import prange
 import numpy as np
 
-from .interpolator import CartesianInterpKernelState
-from .interpolator import SphericalInterpKernelState
 from .interpolator import _trilinear_from_cell
 from .interpolator import _trilinear_from_cell_rpa
+from .octree import CartesianInterpKernelState
 from .octree import _lookup_cell_id_kernel
+from .octree import _make_cartesian_interp_state
+from .octree import _make_spherical_interp_state
 from .octree import LookupKernelState
 from .octree import Octree
+from .octree import SphericalInterpKernelState
 from .spherical import _xyz_to_rpa_components
 from .face_neighbors import FaceNeighborKernelState
 
@@ -847,10 +849,10 @@ def _cartesian_interp_state_from_geometry(
     geometry: CartesianRayCellGeometry,
 ) -> CartesianInterpKernelState:
     """Build one Cartesian interpolation state from truncated ray-cell geometry."""
-    return CartesianInterpKernelState(
-        point_values_2d=point_values_2d,
-        corners=geometry.corners,
-        bin_to_corner=geometry.bin_to_corner,
+    return _make_cartesian_interp_state(
+        point_values_2d,
+        geometry.corners,
+        geometry.bin_to_corner,
         cell_x0=geometry.cell_x0,
         cell_xden=geometry.cell_xden,
         cell_y0=geometry.cell_y0,
@@ -865,10 +867,10 @@ def _spherical_interp_state_from_geometry(
     geometry: SphericalRayCellGeometry,
 ) -> SphericalInterpKernelState:
     """Build one spherical interpolation state from truncated ray-cell geometry."""
-    return SphericalInterpKernelState(
-        point_values_2d=point_values_2d,
-        corners=geometry.corners,
-        bin_to_corner=geometry.bin_to_corner,
+    return _make_spherical_interp_state(
+        point_values_2d,
+        geometry.corners,
+        geometry.bin_to_corner,
         cell_r0=geometry.cell_r0,
         cell_rden=geometry.cell_rden,
         cell_t0=geometry.cell_t0,
@@ -2504,7 +2506,7 @@ class OctreeRayInterpolator:
         tree_coord = str(self.tree.tree_coord)
         if int(self.max_level) >= int(self.tree.max_level):
             if tree_coord == "xyz":
-                self._interp_state = interpolator.xyz_interp_state
+                self._interp_state = getattr(interpolator, "_interp_state_xyz", None)
             elif tree_coord == "rpa":
                 self._interp_state = getattr(interpolator, "_interp_state_rpa", None)
             else:
