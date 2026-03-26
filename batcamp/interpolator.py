@@ -7,6 +7,7 @@ import logging
 import math
 from time import perf_counter
 from typing import Literal
+from typing import NamedTuple
 
 from numba import njit
 from numba import prange
@@ -16,9 +17,7 @@ from .constants import XYZ_VARS
 from .octree import AXIS0
 from .octree import AXIS1
 from .octree import AXIS2
-from .octree import CartesianInterpKernelState
 from .octree import Octree
-from .octree import SphericalInterpKernelState
 from .octree import START
 from .octree import WIDTH
 
@@ -27,6 +26,13 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SEED_CHUNK_SIZE = 1024
 _TWO_PI = 2.0 * math.pi
 _TINY = np.finfo(np.float64).tiny
+
+
+class SphericalInterpKernelState(NamedTuple):
+    """Packed spherical interpolation arrays for compiled flat trilinear kernels."""
+
+    cell_a_full: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively the full circle.
+    cell_a_tiny: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively zero.
 
 
 @njit(cache=True)
@@ -83,6 +89,9 @@ def _trilinear_from_cell_rpa(
     polar: float,
     azimuth: float,
     cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    bin_to_corner: np.ndarray,
+    point_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
 ) -> None:
     """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
@@ -126,9 +135,9 @@ def _trilinear_from_cell_rpa(
         frac_r,
         frac_p,
         frac_a,
-        interp_state.corners,
-        interp_state.bin_to_corner,
-        interp_state.point_values,
+        corners,
+        bin_to_corner,
+        point_values,
     )
 
 
@@ -140,7 +149,9 @@ def _trilinear_from_cell(
     y: float,
     z: float,
     cell_bounds: np.ndarray,
-    interp_state: CartesianInterpKernelState,
+    corners: np.ndarray,
+    bin_to_corner: np.ndarray,
+    point_values: np.ndarray,
 ) -> None:
     """Write one Cartesian trilinear interpolation result row for one leaf cell using flat point values."""
     cid = int(cell_id)
@@ -172,9 +183,9 @@ def _trilinear_from_cell(
         frac_x,
         frac_y,
         frac_z,
-        interp_state.corners,
-        interp_state.bin_to_corner,
-        interp_state.point_values,
+        corners,
+        bin_to_corner,
+        point_values,
     )
 
 
@@ -184,12 +195,15 @@ def _interp_from_cell_ids_rpa(
     cell_ids: np.ndarray,
     fill_values: np.ndarray,
     cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    bin_to_corner: np.ndarray,
+    point_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
 ) -> np.ndarray:
     """Evaluate spherical-tree interpolation for spherical queries with known leaf cell ids using flat point values."""
     n_query = queries_rpa.shape[0]
-    ncomp = interp_state.point_values.shape[1]
-    out = np.empty((n_query, ncomp), dtype=interp_state.point_values.dtype)
+    ncomp = point_values.shape[1]
+    out = np.empty((n_query, ncomp), dtype=point_values.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
         cid = int(cell_ids[i])
@@ -202,6 +216,9 @@ def _interp_from_cell_ids_rpa(
             queries_rpa[i, 1],
             queries_rpa[i, 2] % _TWO_PI,
             cell_bounds,
+            corners,
+            bin_to_corner,
+            point_values,
             interp_state,
         )
     return out
@@ -213,15 +230,17 @@ def _interp_from_cell_ids_xyz_cartesian(
     cell_ids: np.ndarray,
     fill_values: np.ndarray,
     cell_bounds: np.ndarray,
-    interp_state: CartesianInterpKernelState,
+    corners: np.ndarray,
+    bin_to_corner: np.ndarray,
+    point_values: np.ndarray,
 ) -> np.ndarray:
     """Evaluate Cartesian-tree interpolation for Cartesian queries with known leaf cell ids using flat point values.
 
     Assumes the Cartesian backend cell model (axis-aligned per-cell bounds).
     """
     n_query = queries_xyz.shape[0]
-    ncomp = interp_state.point_values.shape[1]
-    out = np.empty((n_query, ncomp), dtype=interp_state.point_values.dtype)
+    ncomp = point_values.shape[1]
+    out = np.empty((n_query, ncomp), dtype=point_values.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
         cid = int(cell_ids[i])
@@ -234,7 +253,9 @@ def _interp_from_cell_ids_xyz_cartesian(
             queries_xyz[i, 1],
             queries_xyz[i, 2],
             cell_bounds,
-            interp_state,
+            corners,
+            bin_to_corner,
+            point_values,
         )
     return out
 
@@ -350,9 +371,15 @@ class OctreeInterpolator:
         return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
 
     def prepare_kernel_cache(self) -> None:
-        """Pack per-point values and bind them to tree-owned interpolation geometry."""
+        """Prepare interpolation-time state for the chosen point values."""
         self._n_value_components = int(self._point_values_2d.shape[1])
-        self._interp_state = self.tree._interp_state_from_values(self._point_values_2d)
+        if self._tree_coord == "xyz":
+            self._interp_state = None
+            return
+        self._interp_state = SphericalInterpKernelState(
+            cell_a_full=self.tree._interp_axis2_full,
+            cell_a_tiny=self.tree._interp_axis2_tiny,
+        )
 
     def _fill_value_vector(self) -> np.ndarray:
         """Convert `fill_value` to one vector of length `n_components`."""
@@ -379,8 +406,26 @@ class OctreeInterpolator:
         if self._tree_coord == "rpa":
             q_rpa, cell_ids_xyz = self.tree._lookup_points_local(q_xyz, coord="xyz")
             _q_rpa_direct, cell_ids_rpa = self.tree._lookup_points_local(q_rpa, coord="rpa")
-            _interp_from_cell_ids_rpa(q_rpa, cell_ids_xyz, fill, self.tree._cell_bounds, self._interp_state)
-            _interp_from_cell_ids_rpa(q_rpa, cell_ids_rpa, fill, self.tree._cell_bounds, self._interp_state)
+            _interp_from_cell_ids_rpa(
+                q_rpa,
+                cell_ids_xyz,
+                fill,
+                self.tree._cell_bounds,
+                self.tree._interp_corners,
+                self.tree._interp_bin_to_corner,
+                self._point_values_2d,
+                self._interp_state,
+            )
+            _interp_from_cell_ids_rpa(
+                q_rpa,
+                cell_ids_rpa,
+                fill,
+                self.tree._cell_bounds,
+                self.tree._interp_corners,
+                self.tree._interp_bin_to_corner,
+                self._point_values_2d,
+                self._interp_state,
+            )
             return
         _q_local, cell_ids_xyz = self.tree._lookup_points_local(q_xyz, coord="xyz")
         _interp_from_cell_ids_xyz_cartesian(
@@ -388,7 +433,9 @@ class OctreeInterpolator:
             cell_ids_xyz,
             fill,
             self.tree._cell_bounds,
-            self._interp_state,
+            self.tree._interp_corners,
+            self.tree._interp_bin_to_corner,
+            self._point_values_2d,
         )
 
     @staticmethod
@@ -471,7 +518,16 @@ class OctreeInterpolator:
             q_local, cell_ids = self.tree._lookup_points_local(q_array, coord=qs)
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-rpa")
-            out2d = _interp_from_cell_ids_rpa(q_local, cell_ids, fill, self.tree._cell_bounds, self._interp_state)
+            out2d = _interp_from_cell_ids_rpa(
+                q_local,
+                cell_ids,
+                fill,
+                self.tree._cell_bounds,
+                self.tree._interp_corners,
+                self.tree._interp_bin_to_corner,
+                self._point_values_2d,
+                self._interp_state,
+            )
         else:
             _q_local, cell_ids = self.tree._lookup_points_local(q_array, coord="xyz")
             if debug_timing:
@@ -481,7 +537,9 @@ class OctreeInterpolator:
                 cell_ids,
                 fill,
                 self.tree._cell_bounds,
-                self._interp_state,
+                self.tree._interp_corners,
+                self.tree._interp_bin_to_corner,
+                self._point_values_2d,
             )
         t_after_kernel = perf_counter() if debug_timing else 0.0
 
