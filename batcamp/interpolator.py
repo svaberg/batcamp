@@ -26,14 +26,14 @@ _TWO_PI = 2.0 * math.pi
 @njit(cache=True)
 def _trilinear_from_cell_rpa(
     out_row: np.ndarray,
-    cell_id: int,
+    node_id: int,
     r: float,
     polar: float,
     azimuth: float,
     interp_state: SphericalInterpKernelState,
 ) -> None:
-    """Write one interpolated value row for one spherical query in one cell."""
-    cid = int(cell_id)
+    """Write one interpolated value row for one spherical query in one leaf node."""
+    cid = int(node_id)
 
     u = (r - interp_state.cell_r0[cid]) / interp_state.cell_rden[cid]
     if u < 0.0:
@@ -98,14 +98,14 @@ def _trilinear_from_cell_rpa(
 @njit(cache=True)
 def _trilinear_from_cell(
     out_row: np.ndarray,
-    cell_id: int,
+    node_id: int,
     x: float,
     y: float,
     z: float,
     interp_state: CartesianInterpKernelState,
 ) -> None:
-    """Write one Cartesian trilinear interpolation result row for one cell."""
-    cid = int(cell_id)
+    """Write one Cartesian trilinear interpolation result row for one leaf node."""
+    cid = int(node_id)
     u = (x - interp_state.cell_x0[cid]) / interp_state.cell_xden[cid]
     if u < 0.0:
         u = 0.0
@@ -155,19 +155,19 @@ def _trilinear_from_cell(
 
 
 @njit(cache=True, parallel=True)
-def _interp_from_cell_ids_rpa(
+def _interp_from_node_ids_rpa(
     queries_rpa: np.ndarray,
-    cell_ids: np.ndarray,
+    node_ids: np.ndarray,
     fill_values: np.ndarray,
     interp_state: SphericalInterpKernelState,
     ) -> np.ndarray:
-    """Evaluate spherical-tree interpolation for spherical queries with known cell ids."""
+    """Evaluate spherical-tree interpolation for spherical queries with known leaf node ids."""
     n_query = queries_rpa.shape[0]
     ncomp = interp_state.point_values_2d.shape[1]
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
-        cid = int(cell_ids[i])
+        cid = int(node_ids[i])
         if cid < 0:
             continue
         _trilinear_from_cell_rpa(
@@ -182,13 +182,13 @@ def _interp_from_cell_ids_rpa(
 
 
 @njit(cache=True, parallel=True)
-def _interp_from_cell_ids_xyz_cartesian(
+def _interp_from_node_ids_xyz_cartesian(
     queries_xyz: np.ndarray,
-    cell_ids: np.ndarray,
+    node_ids: np.ndarray,
     fill_values: np.ndarray,
     interp_state: CartesianInterpKernelState,
     ) -> np.ndarray:
-    """Evaluate Cartesian-tree interpolation for Cartesian queries with known cell ids.
+    """Evaluate Cartesian-tree interpolation for Cartesian queries with known leaf node ids.
 
     Assumes the Cartesian backend cell model (axis-aligned per-cell bounds).
     """
@@ -197,7 +197,7 @@ def _interp_from_cell_ids_xyz_cartesian(
     out = np.empty((n_query, ncomp), dtype=interp_state.point_values_2d.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
-        cid = int(cell_ids[i])
+        cid = int(node_ids[i])
         if cid < 0:
             continue
         _trilinear_from_cell(
@@ -354,15 +354,15 @@ class OctreeInterpolator:
             q_xyz = np.column_stack(tuple(np.asarray(self._ds[name][:1], dtype=np.float64) for name in XYZ_VARS))
         fill = self._fill_value_vector()
         if self._tree_coord == "rpa":
-            q_rpa, cell_ids_xyz = self.tree._lookup_points_local(q_xyz, coord="xyz")
-            _q_rpa_direct, cell_ids_rpa = self.tree._lookup_points_local(q_rpa, coord="rpa")
-            _interp_from_cell_ids_rpa(q_rpa, cell_ids_xyz, fill, self._interp_state)
-            _interp_from_cell_ids_rpa(q_rpa, cell_ids_rpa, fill, self._interp_state)
+            q_rpa, node_ids_xyz = self.tree._lookup_points_local(q_xyz, coord="xyz")
+            _q_rpa_direct, node_ids_rpa = self.tree._lookup_points_local(q_rpa, coord="rpa")
+            _interp_from_node_ids_rpa(q_rpa, node_ids_xyz, fill, self._interp_state)
+            _interp_from_node_ids_rpa(q_rpa, node_ids_rpa, fill, self._interp_state)
             return
-        cell_ids_xyz = self.tree.lookup_points(q_xyz, coord="xyz").reshape(-1)
-        _interp_from_cell_ids_xyz_cartesian(
+        _q_local, node_ids_xyz = self.tree._lookup_points_local(q_xyz, coord="xyz")
+        _interp_from_node_ids_xyz_cartesian(
             q_xyz,
-            cell_ids_xyz,
+            node_ids_xyz,
             fill,
             self._interp_state,
         )
@@ -444,21 +444,26 @@ class OctreeInterpolator:
         t_after_fill = perf_counter() if debug_timing else 0.0
 
         if self._tree_coord == "rpa":
-            q_local, cell_ids = self.tree._lookup_points_local(q_array, coord=qs)
+            q_local, node_ids = self.tree._lookup_points_local(q_array, coord=qs)
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-rpa")
-            out2d = _interp_from_cell_ids_rpa(q_local, cell_ids, fill, self._interp_state)
+            out2d = _interp_from_node_ids_rpa(q_local, node_ids, fill, self._interp_state)
         else:
-            cell_ids = self.tree.lookup_points(q_array, coord="xyz").reshape(-1)
+            _q_local, node_ids = self.tree._lookup_points_local(q_array, coord="xyz")
             if debug_timing:
                 logger.debug("Interpolation kernel mode: compiled-xyz")
-            out2d = _interp_from_cell_ids_xyz_cartesian(
+            out2d = _interp_from_node_ids_xyz_cartesian(
                 q_array,
-                cell_ids,
+                node_ids,
                 fill,
                 self._interp_state,
             )
         t_after_kernel = perf_counter() if debug_timing else 0.0
+
+        cell_ids = np.full(node_ids.shape, -1, dtype=np.int64)
+        hits = node_ids >= 0
+        if np.any(hits):
+            cell_ids[hits] = self.tree._node_value[node_ids[hits]]
 
         misses = int(np.count_nonzero(cell_ids < 0))
         if log_outside_domain:
@@ -492,10 +497,10 @@ class OctreeInterpolator:
     def trilinear_corner_count(self, cell_id: int) -> int:
         """Return number of unique mapped corners used for one cell interpolation map."""
         cid = int(cell_id)
-        n_cells = int(self.tree._interp_bin_to_corner.shape[0])
-        if cid < 0 or cid >= n_cells:
-            raise ValueError(f"Invalid cell_id {cid}; expected [0, {n_cells - 1}].")
-        return int(np.unique(self.tree._interp_bin_to_corner[cid]).size)
+        node_ids = np.flatnonzero(self.tree._node_value == cid)
+        if node_ids.size != 1:
+            raise ValueError(f"Invalid cell_id {cid}.")
+        return int(np.unique(self.tree._interp_bin_to_corner[int(node_ids[0])]).size)
 
     def cell_has_full_trilinear_corner_map(self, cell_id: int) -> bool:
         """Return whether one cell maps to all 8 logical trilinear corners."""
