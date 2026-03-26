@@ -9,7 +9,6 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp.constants import XYZ_VARS
-from batcamp.face_neighbors import build_face_neighbors
 from batcamp.face_neighbors import OctreeFaceNeighbors
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
@@ -159,7 +158,7 @@ def _build_face_neighbors_timed(
 ) -> tuple[OctreeFaceNeighbors, float]:
     """Private test helper: build face neighbors and emit a small timing line."""
     t0 = time.perf_counter()
-    topo = build_face_neighbors(tree, max_level=max_level)
+    topo = tree.face_neighbors(max_level=max_level)
     elapsed_s = time.perf_counter() - t0
     print(
         f"face-neighbors {label}: {elapsed_s * 1.0e3:.2f} ms, "
@@ -177,8 +176,8 @@ def _time_call(func, /, *args, **kwargs):
 @pytest.fixture(scope="session", autouse=True)
 def _warm_topology_numba() -> None:
     """Private test helper: compile face-neighbors kernels before timing assertions/prints."""
-    build_face_neighbors(_build_cartesian_uniform_tree())
-    build_face_neighbors(_build_spherical_uniform_tree())
+    _build_cartesian_uniform_tree().face_neighbors()
+    _build_spherical_uniform_tree().face_neighbors()
 
 
 @pytest.mark.parametrize(
