@@ -389,11 +389,7 @@ class Octree:
         self._tree_coord = resolved_tree_coord
         leaf_levels = np.asarray(cell_levels, dtype=np.int64)
         leaf_ijk = np.asarray(cell_ijk, dtype=np.int64)
-
-        valid_levels = leaf_levels[leaf_levels >= 0]
-        if valid_levels.size == 0:
-            raise ValueError("Octree state requires at least one valid cell level.")
-        max_level = int(np.max(valid_levels))
+        max_level = int(np.max(leaf_levels))
         (
             self._cell_depth,
             self._cell_ijk,
