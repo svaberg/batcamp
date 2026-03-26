@@ -399,16 +399,8 @@ def _build_face_neighbors(
         max_level=target_max_level,
     )
     min_level = int(np.min(levels))
-    level_shapes = np.empty((target_max_level - min_level + 1, 3), dtype=np.int64)
-    root0 = int(tree.root_shape[0])
-    root1 = int(tree.root_shape[1])
-    root2 = int(tree.root_shape[2])
-    for level in range(min_level, target_max_level + 1):
-        scale = 1 << int(level)
-        row = level - min_level
-        level_shapes[row, 0] = root0 * scale
-        level_shapes[row, 1] = root1 * scale
-        level_shapes[row, 2] = root2 * scale
+    scales = (1 << np.arange(min_level, target_max_level + 1, dtype=np.int64))[:, None]
+    level_shapes = np.asarray(tree.root_shape, dtype=np.int64)[None, :] * scales
     periodic_i2 = str(tree.tree_coord) == "rpa"
 
     face_counts, face_offsets, face_neighbors = build_face_neighbors_kernel(
