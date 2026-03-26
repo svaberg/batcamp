@@ -6,7 +6,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import NamedTuple
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -33,26 +32,6 @@ AXIS1 = 1  # Packed bounds axis index for the second tree coordinate.
 AXIS2 = 2  # Packed bounds axis index for the third tree coordinate.
 START = 0  # Packed bounds slot index for interval start.
 WIDTH = 1  # Packed bounds slot index for interval width.
-
-class SphericalInterpKernelState(NamedTuple):
-    """Packed spherical interpolation arrays for compiled flat trilinear kernels."""
-
-    point_values: np.ndarray  # Shape `(n_points, n_components)`.
-
-    corners: np.ndarray  # Shape `(n_cells, 8)`. Corner point ids for leaf cells; non-leaf rows are `-1`.
-    bin_to_corner: np.ndarray  # Shape `(n_cells, 8)`. Logical trilinear corner order -> row-local corner index.
-
-    cell_a_full: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively the full circle.
-    cell_a_tiny: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively zero.
-
-
-class CartesianInterpKernelState(NamedTuple):
-    """Packed Cartesian interpolation arrays for compiled flat trilinear kernels."""
-
-    point_values: np.ndarray  # Shape `(n_points, n_components)`.
-
-    corners: np.ndarray  # Shape `(n_cells, 8)`. Corner point ids for leaf cells; non-leaf rows are `-1`.
-    bin_to_corner: np.ndarray  # Shape `(n_cells, 8)`. Logical trilinear corner order -> row-local corner index.
 
 
 _TRILINEAR_TARGET_BITS = np.array(
@@ -1069,25 +1048,6 @@ class Octree:
             self._domain_bounds,
             self._axis2_period,
             self._axis2_periodic,
-        )
-
-    def _interp_state_from_values(
-        self,
-        point_values: np.ndarray,
-    ) -> CartesianInterpKernelState | SphericalInterpKernelState:
-        """Pack one interpolation state for the given per-point values."""
-        if str(self.tree_coord) == "xyz":
-            return CartesianInterpKernelState(
-                point_values=point_values,
-                corners=self._interp_corners,
-                bin_to_corner=self._interp_bin_to_corner,
-            )
-        return SphericalInterpKernelState(
-            point_values=point_values,
-            corners=self._interp_corners,
-            bin_to_corner=self._interp_bin_to_corner,
-            cell_a_full=self._interp_axis2_full,
-            cell_a_tiny=self._interp_axis2_tiny,
         )
 
     def _frontier_cells(self, max_level: int) -> tuple[np.ndarray, ...]:
