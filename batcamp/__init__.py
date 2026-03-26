@@ -28,18 +28,10 @@ __all__ = [
     "LookupHit",
     "Octree",
     "OctreeInterpolator",
-    "OctreeRayTracer",
-    "OctreeRayInterpolator",
-    "FlatCamera",
-    "FovCamera",
 ]
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "OctreeInterpolator": (".interpolator", "OctreeInterpolator"),
-    "OctreeRayTracer": (".ray", "OctreeRayTracer"),
-    "OctreeRayInterpolator": (".ray", "OctreeRayInterpolator"),
-    "FlatCamera": (".ray", "FlatCamera"),
-    "FovCamera": (".ray", "FovCamera"),
 }
 
 

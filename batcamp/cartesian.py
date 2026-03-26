@@ -3,7 +3,7 @@
 
 Important modeling assumption for ``tree_coord="xyz"``:
 leaf cells are treated as axis-aligned Cartesian slabs from
-per-cell corner min/max values. Lookup/ray/interpolation kernels in the
+per-cell corner min/max values. Lookup/interpolation kernels in the
 Cartesian backend are exact under this axis-aligned representation.
 """
 
@@ -11,9 +11,13 @@ from __future__ import annotations
 import numpy as np
 
 from .constants import XYZ_VARS
+from .octree import AXIS0
+from .octree import AXIS1
+from .octree import AXIS2
 from .octree import _coord_state_inputs
-from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
+from .octree import START
+from .octree import WIDTH
 
 _LOOKUP_CONTAIN_TOL = 1e-10
 
@@ -21,90 +25,78 @@ _LOOKUP_CONTAIN_TOL = 1e-10
 class _CartesianCoordSupport:
     """Cartesian geometry support for octree lookup on axis-aligned slab cells."""
 
-    def _attach_coord_state(self) -> None:
-        """Derive and attach Cartesian runtime state from the bound dataset."""
-        corners, x, y, z, cell_levels = _coord_state_inputs(self)
+    def _attach_coord_state(self, ds, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+        """Derive Cartesian cell bounds, domain bounds, and axis-2 periodic metadata from the bound dataset."""
+        corners, x, y, z, cell_levels = _coord_state_inputs(self, ds, corners)
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
-        self._cell_x_min = np.min(cell_x, axis=1)
-        self._cell_x_max = np.max(cell_x, axis=1)
-        self._cell_y_min = np.min(cell_y, axis=1)
-        self._cell_y_max = np.max(cell_y, axis=1)
-        self._cell_z_min = np.min(cell_z, axis=1)
-        self._cell_z_max = np.max(cell_z, axis=1)
+        cell_x_min = np.min(cell_x, axis=1)
+        cell_x_max = np.max(cell_x, axis=1)
+        cell_y_min = np.min(cell_y, axis=1)
+        cell_y_max = np.max(cell_y, axis=1)
+        cell_z_min = np.min(cell_z, axis=1)
+        cell_z_max = np.max(cell_z, axis=1)
 
-        cell_valid = cell_levels >= 0
-        n_nodes = int(self._node_value.shape[0])
-        self._node_x_min = np.full(n_nodes, np.inf, dtype=np.float64)
-        self._node_x_max = np.full(n_nodes, -np.inf, dtype=np.float64)
-        self._node_y_min = np.full(n_nodes, np.inf, dtype=np.float64)
-        self._node_y_max = np.full(n_nodes, -np.inf, dtype=np.float64)
-        self._node_z_min = np.full(n_nodes, np.inf, dtype=np.float64)
-        self._node_z_max = np.full(n_nodes, -np.inf, dtype=np.float64)
-        leaf_mask = self._node_value >= 0
-        leaf_node_ids = np.flatnonzero(leaf_mask)
-        leaf_cell_ids = self._node_value[leaf_mask]
-        self._node_x_min[leaf_node_ids] = self._cell_x_min[leaf_cell_ids]
-        self._node_x_max[leaf_node_ids] = self._cell_x_max[leaf_cell_ids]
-        self._node_y_min[leaf_node_ids] = self._cell_y_min[leaf_cell_ids]
-        self._node_y_max[leaf_node_ids] = self._cell_y_max[leaf_cell_ids]
-        self._node_z_min[leaf_node_ids] = self._cell_z_min[leaf_cell_ids]
-        self._node_z_max[leaf_node_ids] = self._cell_z_max[leaf_cell_ids]
-        for nid in range(n_nodes - 1, -1, -1):
-            parent = int(self._node_parent[nid])
+        leaf_cell_ids = np.flatnonzero(cell_levels >= 0)
+        n_cells = int(self._cell_depth.shape[0])
+        octree_cell_x_min = np.full(n_cells, np.inf, dtype=np.float64)
+        octree_cell_x_max = np.full(n_cells, -np.inf, dtype=np.float64)
+        octree_cell_y_min = np.full(n_cells, np.inf, dtype=np.float64)
+        octree_cell_y_max = np.full(n_cells, -np.inf, dtype=np.float64)
+        octree_cell_z_min = np.full(n_cells, np.inf, dtype=np.float64)
+        octree_cell_z_max = np.full(n_cells, -np.inf, dtype=np.float64)
+        octree_cell_x_min[leaf_cell_ids] = cell_x_min[leaf_cell_ids]
+        octree_cell_x_max[leaf_cell_ids] = cell_x_max[leaf_cell_ids]
+        octree_cell_y_min[leaf_cell_ids] = cell_y_min[leaf_cell_ids]
+        octree_cell_y_max[leaf_cell_ids] = cell_y_max[leaf_cell_ids]
+        octree_cell_z_min[leaf_cell_ids] = cell_z_min[leaf_cell_ids]
+        octree_cell_z_max[leaf_cell_ids] = cell_z_max[leaf_cell_ids]
+        occupied_ids = np.flatnonzero(self._cell_depth >= 0)
+        occupied_ids = occupied_ids[np.argsort(self._cell_depth[occupied_ids])[::-1]]
+        for cid in occupied_ids:
+            parent = int(self._cell_parent[cid])
             if parent < 0:
                 continue
-            self._node_x_min[parent] = min(self._node_x_min[parent], self._node_x_min[nid])
-            self._node_x_max[parent] = max(self._node_x_max[parent], self._node_x_max[nid])
-            self._node_y_min[parent] = min(self._node_y_min[parent], self._node_y_min[nid])
-            self._node_y_max[parent] = max(self._node_y_max[parent], self._node_y_max[nid])
-            self._node_z_min[parent] = min(self._node_z_min[parent], self._node_z_min[nid])
-            self._node_z_max[parent] = max(self._node_z_max[parent], self._node_z_max[nid])
-        root_ids = self._root_node_ids
-        self._xyz_min = np.array(
+            octree_cell_x_min[parent] = min(octree_cell_x_min[parent], octree_cell_x_min[cid])
+            octree_cell_x_max[parent] = max(octree_cell_x_max[parent], octree_cell_x_max[cid])
+            octree_cell_y_min[parent] = min(octree_cell_y_min[parent], octree_cell_y_min[cid])
+            octree_cell_y_max[parent] = max(octree_cell_y_max[parent], octree_cell_y_max[cid])
+            octree_cell_z_min[parent] = min(octree_cell_z_min[parent], octree_cell_z_min[cid])
+            octree_cell_z_max[parent] = max(octree_cell_z_max[parent], octree_cell_z_max[cid])
+        root_ids = self._root_cell_ids
+        xyz_min = np.array(
             [
-                float(np.min(self._node_x_min[root_ids])),
-                float(np.min(self._node_y_min[root_ids])),
-                float(np.min(self._node_z_min[root_ids])),
+                float(np.min(octree_cell_x_min[root_ids])),
+                float(np.min(octree_cell_y_min[root_ids])),
+                float(np.min(octree_cell_z_min[root_ids])),
             ],
             dtype=np.float64,
         )
-        self._xyz_max = np.array(
+        xyz_max = np.array(
             [
-                float(np.max(self._node_x_max[root_ids])),
-                float(np.max(self._node_y_max[root_ids])),
-                float(np.max(self._node_z_max[root_ids])),
+                float(np.max(octree_cell_x_max[root_ids])),
+                float(np.max(octree_cell_y_max[root_ids])),
+                float(np.max(octree_cell_z_max[root_ids])),
             ],
             dtype=np.float64,
         )
-        self._coord_state = _pack_coord_state(
-            self,
-            cell_axis0_start=self._cell_x_min,
-            cell_axis0_width=self._cell_x_max - self._cell_x_min,
-            cell_axis1_start=self._cell_y_min,
-            cell_axis1_width=self._cell_y_max - self._cell_y_min,
-            cell_axis2_start=self._cell_z_min,
-            cell_axis2_width=self._cell_z_max - self._cell_z_min,
-            cell_valid=cell_valid,
-            domain_axis0_start=float(self._xyz_min[0]),
-            domain_axis0_width=float(self._xyz_max[0] - self._xyz_min[0]),
-            domain_axis1_start=float(self._xyz_min[1]),
-            domain_axis1_width=float(self._xyz_max[1] - self._xyz_min[1]),
-            domain_axis2_start=float(self._xyz_min[2]),
-            domain_axis2_width=float(self._xyz_max[2] - self._xyz_min[2]),
-            axis2_period=0.0,
-            axis2_periodic=False,
-            node_axis0_start=self._node_x_min,
-            node_axis0_width=self._node_x_max - self._node_x_min,
-            node_axis1_start=self._node_y_min,
-            node_axis1_width=self._node_y_max - self._node_y_min,
-            node_axis2_start=self._node_z_min,
-            node_axis2_width=self._node_z_max - self._node_z_min,
-        )
+        cell_bounds = np.empty((n_cells, 3, 2), dtype=np.float64)
+        cell_bounds[:, AXIS0, START] = octree_cell_x_min
+        cell_bounds[:, AXIS0, WIDTH] = octree_cell_x_max - octree_cell_x_min
+        cell_bounds[:, AXIS1, START] = octree_cell_y_min
+        cell_bounds[:, AXIS1, WIDTH] = octree_cell_y_max - octree_cell_y_min
+        cell_bounds[:, AXIS2, START] = octree_cell_z_min
+        cell_bounds[:, AXIS2, WIDTH] = octree_cell_z_max - octree_cell_z_min
+        domain_bounds = np.empty((3, 2), dtype=np.float64)
+        domain_bounds[:, START] = xyz_min
+        domain_bounds[:, WIDTH] = xyz_max - xyz_min
+        return cell_bounds, domain_bounds, 0.0, False
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
-        return self._xyz_min, self._xyz_max
+        lo = np.array(self._domain_bounds[:, START], dtype=float)
+        hi = np.array(self._domain_bounds[:, START] + self._domain_bounds[:, WIDTH], dtype=float)
+        return lo, hi
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
         pts = np.column_stack(
@@ -138,7 +130,10 @@ class _CartesianCoordSupport:
                 float(x),
                 float(y),
                 float(z),
-                self._coord_state,
+                self._cell_is_leaf,
+                self._cell_bounds,
+                self._axis2_period,
+                self._axis2_periodic,
                 float(tol),
             )
         )

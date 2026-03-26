@@ -24,11 +24,6 @@ _NOTEBOOK_CASES = [
         id="octree_notebook_exec",
         marks=(pytest.mark.slow, pytest.mark.pooch),
     ),
-    pytest.param(
-        "ray.ipynb",
-        id="ray_notebook_exec",
-        marks=(pytest.mark.slow, pytest.mark.pooch),
-    ),
 ]
 
 

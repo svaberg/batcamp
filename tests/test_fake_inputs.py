@@ -8,6 +8,7 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.octree import _normalize_bound_dataset
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -103,10 +104,9 @@ def test_interpolator_fill_for_invalid_points() -> None:
 
 
 def test_bind_without_corners_rejected() -> None:
-    """Binding a tree to a dataset with missing corners should fail clearly."""
+    """Bound dataset validation should reject missing corners clearly."""
     ds = _build_regular_fake_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
     ds_no_corners = _FakeDataset(ds.points, None, ds._variables)
 
     with pytest.raises(ValueError, match="Dataset has no corners"):
-        tree._bind(ds_no_corners)
+        _normalize_bound_dataset(ds_no_corners)

@@ -153,7 +153,10 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
         },
     )
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
-    lookup_state = tree._coord_state
+    cell_is_leaf = tree._cell_is_leaf
+    cell_child = tree._cell_child
+    cell_parent = tree._cell_parent
+    tree_cell_bounds = tree._cell_bounds
 
     q0 = np.array([0.5, -0.5, -0.5], dtype=float)
     q1 = np.array([1.5, -0.5, -0.5], dtype=float)
@@ -163,15 +166,31 @@ def test_cartesian_lookup_reuses_ancestor_from_previous_cell() -> None:
     assert hit1 is not None
     assert int(hit0.cell_id) != int(hit1.cell_id)
 
-    state_no_roots = lookup_state._replace(root_node_ids=np.empty((0,), dtype=np.int64))
-    cid = _lookup_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
+    root_cell_ids = np.empty((0,), dtype=np.int64)
+    cid = _lookup_cell_id_kernel(
+        float(q1[0]),
+        float(q1[1]),
+        float(q1[2]),
+        cell_is_leaf,
+        cell_child,
+        root_cell_ids,
+        cell_parent,
+        tree_cell_bounds,
+        tree._domain_bounds,
+        tree._axis2_period,
+        tree._axis2_periodic,
+        int(hit0.cell_id),
+    )
     assert int(cid) == int(hit1.cell_id)
 
 def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     """Spherical lookup should climb ancestors from `prev_cid` instead of requiring root restart."""
     ds = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
-    lookup_state = tree._coord_state
+    cell_is_leaf = tree._cell_is_leaf
+    cell_child = tree._cell_child
+    cell_parent = tree._cell_parent
+    tree_cell_bounds = tree._cell_bounds
 
     lo0, hi0 = cell_bounds(tree, 0, coord="rpa")
     lo1, hi1 = cell_bounds(tree, 1, coord="rpa")
@@ -191,8 +210,21 @@ def test_spherical_lookup_reuses_ancestor_from_previous_cell() -> None:
     assert hit1 is not None
     assert int(hit0.cell_id) != int(hit1.cell_id)
 
-    state_no_roots = lookup_state._replace(root_node_ids=np.empty((0,), dtype=np.int64))
-    cid = _lookup_cell_id_kernel(float(q1[0]), float(q1[1]), float(q1[2]), state_no_roots, int(hit0.cell_id))
+    root_cell_ids = np.empty((0,), dtype=np.int64)
+    cid = _lookup_cell_id_kernel(
+        float(q1[0]),
+        float(q1[1]),
+        float(q1[2]),
+        cell_is_leaf,
+        cell_child,
+        root_cell_ids,
+        cell_parent,
+        tree_cell_bounds,
+        tree._domain_bounds,
+        tree._axis2_period,
+        tree._axis2_periodic,
+        int(hit0.cell_id),
+    )
     assert int(cid) == int(hit1.cell_id)
 
 def test_call_rejects_invalid_query_coord() -> None:

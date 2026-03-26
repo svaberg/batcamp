@@ -388,10 +388,10 @@ def _build_face_neighbors_from_frontier(
     root_shape: GridShape,
     tree_coord: TreeCoord,
     target_max_level: int,
-    frontier_nodes: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    frontier_cells: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
 ) -> OctreeFaceNeighbors:
     """Build one face-neighbor graph from already-resolved frontier nodes."""
-    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = frontier_nodes
+    levels, i0, i1, i2, node_cell_ids, cell_to_node_id = frontier_cells
     min_level = int(np.min(levels))
     level_shapes = _level_shapes_for_cutoff(root_shape, min_level, target_max_level)
     periodic_i2 = str(tree_coord) == "rpa"
