@@ -268,6 +268,49 @@ def _contains_lookup_interval(
 
 
 @njit(cache=True)
+def _contains_lookup_coords(
+    q0: float,
+    q1: float,
+    q2: float,
+    axis0_start: float,
+    axis0_width: float,
+    axis1_start: float,
+    axis1_width: float,
+    axis2_start: float,
+    axis2_width: float,
+    lookup_state: LookupKernelState,
+    tol: float,
+) -> bool:
+    """Return whether one query lies inside one axis-0/1/2 box."""
+    if not _contains_lookup_interval(
+        q0,
+        axis0_start,
+        axis0_width,
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    if not _contains_lookup_interval(
+        q1,
+        axis1_start,
+        axis1_width,
+        periodic=False,
+        period=0.0,
+        tol=tol,
+    ):
+        return False
+    return _contains_lookup_interval(
+        q2,
+        axis2_start,
+        axis2_width,
+        periodic=bool(lookup_state.axis2_periodic),
+        period=float(lookup_state.axis2_period),
+        tol=tol,
+    )
+
+
+@njit(cache=True)
 def _contains_lookup_cell(
     cid: int,
     q0: float,
@@ -279,30 +322,17 @@ def _contains_lookup_cell(
     """Return whether one query lies inside one leaf cell geometry."""
     if not lookup_state.cell_valid[cid]:
         return False
-    if not _contains_lookup_interval(
+    return _contains_lookup_coords(
         q0,
+        q1,
+        q2,
         float(lookup_state.cell_axis0_start[cid]),
         float(lookup_state.cell_axis0_width[cid]),
-        periodic=False,
-        period=0.0,
-        tol=tol,
-    ):
-        return False
-    if not _contains_lookup_interval(
-        q1,
         float(lookup_state.cell_axis1_start[cid]),
         float(lookup_state.cell_axis1_width[cid]),
-        periodic=False,
-        period=0.0,
-        tol=tol,
-    ):
-        return False
-    return _contains_lookup_interval(
-        q2,
         float(lookup_state.cell_axis2_start[cid]),
         float(lookup_state.cell_axis2_width[cid]),
-        periodic=bool(lookup_state.axis2_periodic),
-        period=float(lookup_state.axis2_period),
+        lookup_state,
         tol=tol,
     )
 
@@ -318,30 +348,17 @@ def _contains_lookup_node(
 ) -> bool:
     """Return whether one query lies inside one occupied node geometry."""
     nid = int(node_id)
-    if not _contains_lookup_interval(
+    return _contains_lookup_coords(
         q0,
+        q1,
+        q2,
         float(lookup_state.node_axis0_start[nid]),
         float(lookup_state.node_axis0_width[nid]),
-        periodic=False,
-        period=0.0,
-        tol=tol,
-    ):
-        return False
-    if not _contains_lookup_interval(
-        q1,
         float(lookup_state.node_axis1_start[nid]),
         float(lookup_state.node_axis1_width[nid]),
-        periodic=False,
-        period=0.0,
-        tol=tol,
-    ):
-        return False
-    return _contains_lookup_interval(
-        q2,
         float(lookup_state.node_axis2_start[nid]),
         float(lookup_state.node_axis2_width[nid]),
-        periodic=bool(lookup_state.axis2_periodic),
-        period=float(lookup_state.axis2_period),
+        lookup_state,
         tol=tol,
     )
 
@@ -355,30 +372,17 @@ def _contains_lookup_domain(
     tol: float = 0.0,
 ) -> bool:
     """Return whether one query lies inside the global lookup domain."""
-    if not _contains_lookup_interval(
+    return _contains_lookup_coords(
         q0,
+        q1,
+        q2,
         float(lookup_state.domain_axis0_start),
         float(lookup_state.domain_axis0_width),
-        periodic=False,
-        period=0.0,
-        tol=tol,
-    ):
-        return False
-    if not _contains_lookup_interval(
-        q1,
         float(lookup_state.domain_axis1_start),
         float(lookup_state.domain_axis1_width),
-        periodic=False,
-        period=0.0,
-        tol=tol,
-    ):
-        return False
-    return _contains_lookup_interval(
-        q2,
         float(lookup_state.domain_axis2_start),
         float(lookup_state.domain_axis2_width),
-        periodic=bool(lookup_state.axis2_periodic),
-        period=float(lookup_state.axis2_period),
+        lookup_state,
         tol=tol,
     )
 
@@ -925,22 +929,8 @@ class Octree:
                 raise ValueError("points must have shape (..., 3).")
             shape = q.shape[:-1]
             q = q.reshape(-1, 3)
-
-        resolved_coord = str(coord)
-        if resolved_coord not in SUPPORTED_TREE_COORDS:
-            raise ValueError(
-                f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-            )
-        if str(self.tree_coord) == "xyz":
-            if resolved_coord != "xyz":
-                raise ValueError("Cartesian lookup supports only coord='xyz'.")
-            cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
-        elif resolved_coord == "xyz":
-            from .spherical import _lookup_xyz_cell_ids_for_rpa_tree_kernel
-
-            cell_ids = _lookup_xyz_cell_ids_for_rpa_tree_kernel(q, self._coord_state)
-        else:
-            cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
+        q = self._query_points_in_tree_coords(q, coord=coord)
+        cell_ids = _lookup_cell_ids_kernel(q, self._coord_state)
         return cell_ids.reshape(shape)
 
     def _query_points_in_tree_coords(self, points: np.ndarray, *, coord: TreeCoord) -> np.ndarray:
@@ -959,9 +949,10 @@ class Octree:
             return q
         if resolved_coord == "rpa":
             return q
-        from .spherical import _xyz_array_to_rpa
+        from .spherical import _xyz_arrays_to_rpa
 
-        return _xyz_array_to_rpa(q)
+        axis0, axis1, axis2 = _xyz_arrays_to_rpa(q[:, 0], q[:, 1], q[:, 2])
+        return np.column_stack((axis0, axis1, axis2))
 
     def _prepare_interpolation_geometry(self) -> None:
         """Build the per-cell trilinear corner map from the bound dataset."""
