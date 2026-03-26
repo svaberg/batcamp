@@ -240,7 +240,7 @@ class OctreeBuilder:
     ) -> Octree:
         """Build and bind an octree from a dataset.
 
-        The returned tree is ready for lookup and ray methods.
+        The returned tree is ready for lookup.
         """
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot build octree.")

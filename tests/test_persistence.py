@@ -53,10 +53,12 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert np.array_equal(np.asarray(loaded._i0, dtype=np.int64), np.asarray(tree._i0, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._i1, dtype=np.int64), np.asarray(tree._i1, dtype=np.int64))
     assert np.array_equal(np.asarray(loaded._i2, dtype=np.int64), np.asarray(tree._i2, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._node_depth, dtype=np.int64), np.asarray(tree._node_depth, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._node_value, dtype=np.int64), np.asarray(tree._node_value, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._node_child, dtype=np.int64), np.asarray(tree._node_child, dtype=np.int64))
-    assert np.array_equal(np.asarray(loaded._root_node_ids, dtype=np.int64), np.asarray(tree._root_node_ids, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._cell_depth, dtype=np.int64), np.asarray(tree._cell_depth, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._cell_i0, dtype=np.int64), np.asarray(tree._cell_i0, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._cell_i1, dtype=np.int64), np.asarray(tree._cell_i1, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._cell_i2, dtype=np.int64), np.asarray(tree._cell_i2, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._cell_child, dtype=np.int64), np.asarray(tree._cell_child, dtype=np.int64))
+    assert np.array_equal(np.asarray(loaded._root_cell_ids, dtype=np.int64), np.asarray(tree._root_cell_ids, dtype=np.int64))
 
     q_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
     hit_tree = tree.lookup_point(q_xyz, coord="xyz")
@@ -65,14 +67,33 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert hit_loaded is not None
     assert int(hit_tree.cell_id) == int(hit_loaded.cell_id)
     assert np.array_equal(np.asarray(loaded._radial_edges, dtype=float), np.asarray(tree._radial_edges, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_r_min, dtype=float), np.asarray(tree._cell_r_min, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_r_max, dtype=float), np.asarray(tree._cell_r_max, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_theta_min, dtype=float), np.asarray(tree._cell_theta_min, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_theta_max, dtype=float), np.asarray(tree._cell_theta_max, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_phi_start, dtype=float), np.asarray(tree._cell_phi_start, dtype=float))
-    assert np.allclose(np.asarray(loaded._cell_phi_width, dtype=float), np.asarray(tree._cell_phi_width, dtype=float))
-    assert float(loaded._r_min) == pytest.approx(float(tree._r_min))
-    assert float(loaded._r_max) == pytest.approx(float(tree._r_max))
+    assert np.array_equal(np.asarray(loaded._cell_is_leaf, dtype=bool), np.asarray(tree._cell_is_leaf, dtype=bool))
+    assert np.allclose(
+        np.asarray(loaded._cell_bounds[:, 0, 0], dtype=float),
+        np.asarray(tree._cell_bounds[:, 0, 0], dtype=float),
+    )
+    assert np.allclose(
+        np.asarray(loaded._cell_bounds[:, 0, 1], dtype=float),
+        np.asarray(tree._cell_bounds[:, 0, 1], dtype=float),
+    )
+    assert np.allclose(
+        np.asarray(loaded._cell_bounds[:, 1, 0], dtype=float),
+        np.asarray(tree._cell_bounds[:, 1, 0], dtype=float),
+    )
+    assert np.allclose(
+        np.asarray(loaded._cell_bounds[:, 1, 1], dtype=float),
+        np.asarray(tree._cell_bounds[:, 1, 1], dtype=float),
+    )
+    assert np.allclose(
+        np.asarray(loaded._cell_bounds[:, 2, 0], dtype=float),
+        np.asarray(tree._cell_bounds[:, 2, 0], dtype=float),
+    )
+    assert np.allclose(
+        np.asarray(loaded._cell_bounds[:, 2, 1], dtype=float),
+        np.asarray(tree._cell_bounds[:, 2, 1], dtype=float),
+    )
+    assert float(loaded._domain_bounds[0, 0]) == pytest.approx(float(tree._domain_bounds[0, 0]))
+    assert float(loaded._domain_bounds[0, 1]) == pytest.approx(float(tree._domain_bounds[0, 1]))
 
 
 @pytest.mark.slow

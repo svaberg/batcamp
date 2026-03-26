@@ -9,9 +9,13 @@ from numba import njit
 import numpy as np
 
 from .constants import XYZ_VARS
+from .octree import AXIS0
+from .octree import AXIS1
+from .octree import AXIS2
 from .octree import _coord_state_inputs
-from .octree import _pack_coord_state
 from .octree import _contains_lookup_cell
+from .octree import START
+from .octree import WIDTH
 
 _TWO_PI = 2.0 * math.pi
 _LOOKUP_CONTAIN_TOL = 1e-10
@@ -19,12 +23,11 @@ _LOOKUP_CONTAIN_TOL = 1e-10
 class _SphericalCoordSupport:
     """Spherical geometry support for octree lookup."""
 
-    def _attach_coord_state(self) -> None:
-        """Derive and attach spherical runtime state from the bound dataset."""
-        corners, x, y, z, cell_levels = _coord_state_inputs(self)
+    def _attach_coord_state(self, ds, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+        """Derive spherical cell bounds, domain bounds, and axis-2 periodic metadata from the bound dataset."""
+        corners, x, y, z, cell_levels = _coord_state_inputs(self, ds, corners)
         n_cells = int(corners.shape[0])
-        cell_valid = cell_levels >= 0
-        valid_ids = np.flatnonzero(cell_valid)
+        valid_ids = np.flatnonzero(cell_levels >= 0)
         shifts = int(self.max_level) - cell_levels[valid_ids]
         width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
         r0_f = np.left_shift(self._i0[valid_ids], shifts)
@@ -45,67 +48,44 @@ class _SphericalCoordSupport:
             missing_edge = int(np.flatnonzero(radial_count == 0)[0])
             raise ValueError(f"Spherical lookup could not reconstruct radial edge {missing_edge}.")
         self._radial_edges = radial_sum / radial_count
-        self._r_min = float(self._radial_edges[0])
-        self._r_max = float(self._radial_edges[-1])
-        self._cell_r_min = np.empty(n_cells, dtype=np.float64)
-        self._cell_r_max = np.empty(n_cells, dtype=np.float64)
-        self._cell_theta_min = np.empty(n_cells, dtype=np.float64)
-        self._cell_theta_max = np.empty(n_cells, dtype=np.float64)
-        self._cell_phi_start = np.empty(n_cells, dtype=np.float64)
-        self._cell_phi_width = np.empty(n_cells, dtype=np.float64)
-        self._cell_r_min.fill(np.nan)
-        self._cell_r_max.fill(np.nan)
-        self._cell_theta_min.fill(np.nan)
-        self._cell_theta_max.fill(np.nan)
-        self._cell_phi_start.fill(np.nan)
-        self._cell_phi_width.fill(np.nan)
+        r_min = float(self._radial_edges[0])
+        r_max = float(self._radial_edges[-1])
         d_theta_f = math.pi / float(int(self.leaf_shape[1]))
         d_phi_f = (2.0 * math.pi) / float(int(self.leaf_shape[2]))
         fine_i1 = np.left_shift(self._i1[valid_ids], shifts)
         fine_i2 = np.left_shift(self._i2[valid_ids], shifts)
-        self._cell_r_min[valid_ids] = self._radial_edges[r0_f]
-        self._cell_r_max[valid_ids] = self._radial_edges[r1_f]
-        self._cell_theta_min[valid_ids] = fine_i1 * d_theta_f
-        self._cell_theta_max[valid_ids] = (fine_i1 + width_units) * d_theta_f
-        self._cell_phi_start[valid_ids] = np.mod(fine_i2 * d_phi_f, 2.0 * math.pi)
-        self._cell_phi_width[valid_ids] = width_units * d_phi_f
-        node_shift = int(self.max_level) - self._node_depth
-        node_width = np.left_shift(np.ones_like(node_shift, dtype=np.int64), node_shift)
-        node_r0_f = np.left_shift(self._node_i0, node_shift)
-        node_r1_f = node_r0_f + node_width
-        node_t0_f = np.left_shift(self._node_i1, node_shift)
-        node_t1_f = node_t0_f + node_width
-        node_p0_f = np.left_shift(self._node_i2, node_shift)
-        self._node_r_min = self._radial_edges[node_r0_f]
-        self._node_r_max = self._radial_edges[node_r1_f]
-        self._node_theta_min = node_t0_f * d_theta_f
-        self._node_theta_max = node_t1_f * d_theta_f
-        self._node_phi_start = np.mod(node_p0_f * d_phi_f, 2.0 * math.pi)
-        self._node_phi_width = node_width * d_phi_f
-        self._coord_state = _pack_coord_state(
-            self,
-            cell_axis0_start=self._cell_r_min,
-            cell_axis0_width=self._cell_r_max - self._cell_r_min,
-            cell_axis1_start=self._cell_theta_min,
-            cell_axis1_width=self._cell_theta_max - self._cell_theta_min,
-            cell_axis2_start=self._cell_phi_start,
-            cell_axis2_width=self._cell_phi_width,
-            cell_valid=cell_valid,
-            domain_axis0_start=float(self._r_min),
-            domain_axis0_width=float(self._r_max - self._r_min),
-            domain_axis1_start=0.0,
-            domain_axis1_width=float(math.pi),
-            domain_axis2_start=0.0,
-            domain_axis2_width=float(_TWO_PI),
-            axis2_period=float(_TWO_PI),
-            axis2_periodic=True,
-            node_axis0_start=self._node_r_min,
-            node_axis0_width=self._node_r_max - self._node_r_min,
-            node_axis1_start=self._node_theta_min,
-            node_axis1_width=self._node_theta_max - self._node_theta_min,
-            node_axis2_start=self._node_phi_start,
-            node_axis2_width=self._node_phi_width,
-        )
+        n_octree_cells = int(self._cell_depth.shape[0])
+        octree_cell_r_min = np.full(n_octree_cells, np.nan, dtype=np.float64)
+        octree_cell_r_max = np.full(n_octree_cells, np.nan, dtype=np.float64)
+        octree_cell_theta_min = np.full(n_octree_cells, np.nan, dtype=np.float64)
+        octree_cell_theta_max = np.full(n_octree_cells, np.nan, dtype=np.float64)
+        octree_cell_phi_start = np.full(n_octree_cells, np.nan, dtype=np.float64)
+        octree_cell_phi_width = np.full(n_octree_cells, np.nan, dtype=np.float64)
+        occupied_ids = np.flatnonzero(self._cell_depth >= 0)
+        cell_shift = int(self.max_level) - self._cell_depth[occupied_ids]
+        cell_width = np.left_shift(np.ones_like(cell_shift, dtype=np.int64), cell_shift)
+        cell_r0_f = np.left_shift(self._cell_i0[occupied_ids], cell_shift)
+        cell_r1_f = cell_r0_f + cell_width
+        cell_t0_f = np.left_shift(self._cell_i1[occupied_ids], cell_shift)
+        cell_t1_f = cell_t0_f + cell_width
+        cell_p0_f = np.left_shift(self._cell_i2[occupied_ids], cell_shift)
+        octree_cell_r_min[occupied_ids] = self._radial_edges[cell_r0_f]
+        octree_cell_r_max[occupied_ids] = self._radial_edges[cell_r1_f]
+        octree_cell_theta_min[occupied_ids] = cell_t0_f * d_theta_f
+        octree_cell_theta_max[occupied_ids] = cell_t1_f * d_theta_f
+        octree_cell_phi_start[occupied_ids] = np.mod(cell_p0_f * d_phi_f, 2.0 * math.pi)
+        octree_cell_phi_width[occupied_ids] = cell_width * d_phi_f
+        cell_bounds = np.empty((n_octree_cells, 3, 2), dtype=np.float64)
+        cell_bounds[:, AXIS0, START] = octree_cell_r_min
+        cell_bounds[:, AXIS0, WIDTH] = octree_cell_r_max - octree_cell_r_min
+        cell_bounds[:, AXIS1, START] = octree_cell_theta_min
+        cell_bounds[:, AXIS1, WIDTH] = octree_cell_theta_max - octree_cell_theta_min
+        cell_bounds[:, AXIS2, START] = octree_cell_phi_start
+        cell_bounds[:, AXIS2, WIDTH] = octree_cell_phi_width
+        domain_bounds = np.empty((3, 2), dtype=np.float64)
+        domain_bounds[:, START] = np.array([r_min, 0.0, 0.0], dtype=np.float64)
+        domain_bounds[:, WIDTH] = np.array([float(r_max - r_min), float(math.pi), float(_TWO_PI)], dtype=np.float64)
+        return cell_bounds, domain_bounds, float(_TWO_PI), True
 
     def _domain_bounds_xyz(self) -> tuple[np.ndarray, np.ndarray]:
         pts = np.column_stack(
@@ -118,7 +98,9 @@ class _SphericalCoordSupport:
         return np.min(pts, axis=0), np.max(pts, axis=0)
 
     def _domain_bounds_rpa(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.array([self._r_min, 0.0, 0.0], dtype=float), np.array([self._r_max, np.pi, 2.0 * np.pi], dtype=float)
+        lo = np.array(self._domain_bounds[:, START], dtype=float)
+        hi = np.array(self._domain_bounds[:, START] + self._domain_bounds[:, WIDTH], dtype=float)
+        return lo, hi
 
     def _contains_xyz_cell(self, cell_id: int, x: float, y: float, z: float, *, tol: float = 1e-10) -> bool:
         """Return whether one Cartesian point lies inside one cell."""
@@ -133,7 +115,10 @@ class _SphericalCoordSupport:
                 float(r),
                 float(polar),
                 float(azimuth) % _TWO_PI,
-                self._coord_state,
+                self._cell_is_leaf,
+                self._cell_bounds,
+                self._axis2_period,
+                self._axis2_periodic,
                 float(tol),
             )
         )

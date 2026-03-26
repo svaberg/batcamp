@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Core octree data structures and shared lookup/ray utilities."""
+"""Core octree data structures and shared lookup/interpolation utilities."""
 
 from __future__ import annotations
 
@@ -28,66 +28,31 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .face_neighbors import OctreeFaceNeighbors
 
-
-class LookupKernelState(NamedTuple):
-    """Shared packed lookup arrays for compiled tree descent and leaf geometry."""
-
-    cell_axis0_start: np.ndarray
-    cell_axis0_width: np.ndarray
-    cell_axis1_start: np.ndarray
-    cell_axis1_width: np.ndarray
-    cell_axis2_start: np.ndarray
-    cell_axis2_width: np.ndarray
-    cell_valid: np.ndarray
-    domain_axis0_start: float
-    domain_axis0_width: float
-    domain_axis1_start: float
-    domain_axis1_width: float
-    domain_axis2_start: float
-    domain_axis2_width: float
-    axis2_period: float
-    axis2_periodic: bool
-    node_value: np.ndarray
-    node_child: np.ndarray
-    root_node_ids: np.ndarray
-    node_parent: np.ndarray
-    node_axis0_start: np.ndarray
-    node_axis0_width: np.ndarray
-    node_axis1_start: np.ndarray
-    node_axis1_width: np.ndarray
-    node_axis2_start: np.ndarray
-    node_axis2_width: np.ndarray
-
+AXIS0 = 0  # Packed bounds axis index for the first tree coordinate.
+AXIS1 = 1  # Packed bounds axis index for the second tree coordinate.
+AXIS2 = 2  # Packed bounds axis index for the third tree coordinate.
+START = 0  # Packed bounds slot index for interval start.
+WIDTH = 1  # Packed bounds slot index for interval width.
 
 class SphericalInterpKernelState(NamedTuple):
-    """Packed spherical interpolation arrays for compiled trilinear kernels."""
+    """Packed spherical interpolation arrays for compiled flat trilinear kernels."""
 
-    point_values_2d: np.ndarray
-    corners: np.ndarray
-    bin_to_corner: np.ndarray
-    cell_r0: np.ndarray
-    cell_rden: np.ndarray
-    cell_t0: np.ndarray
-    cell_tden: np.ndarray
-    cell_p_start: np.ndarray
-    cell_p_width: np.ndarray
-    cell_pden: np.ndarray
-    cell_phi_full: np.ndarray
-    cell_phi_tiny: np.ndarray
+    point_values: np.ndarray  # Shape `(n_points, n_components)`.
+
+    corners: np.ndarray  # Shape `(n_cells, 8)`. Corner point ids for leaf cells; non-leaf rows are `-1`.
+    bin_to_corner: np.ndarray  # Shape `(n_cells, 8)`. Logical trilinear corner order -> row-local corner index.
+
+    cell_a_full: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively the full circle.
+    cell_a_tiny: np.ndarray  # Shape `(n_cells,)`. `True` where the azimuth span is effectively zero.
 
 
 class CartesianInterpKernelState(NamedTuple):
-    """Packed Cartesian interpolation arrays for compiled trilinear kernels."""
+    """Packed Cartesian interpolation arrays for compiled flat trilinear kernels."""
 
-    point_values_2d: np.ndarray
-    corners: np.ndarray
-    bin_to_corner: np.ndarray
-    cell_x0: np.ndarray
-    cell_xden: np.ndarray
-    cell_y0: np.ndarray
-    cell_yden: np.ndarray
-    cell_z0: np.ndarray
-    cell_zden: np.ndarray
+    point_values: np.ndarray  # Shape `(n_points, n_components)`.
+
+    corners: np.ndarray  # Shape `(n_cells, 8)`. Corner point ids for leaf cells; non-leaf rows are `-1`.
+    bin_to_corner: np.ndarray  # Shape `(n_cells, 8)`. Logical trilinear corner order -> row-local corner index.
 
 
 _TRILINEAR_TARGET_BITS = np.array(
@@ -95,7 +60,11 @@ _TRILINEAR_TARGET_BITS = np.array(
     dtype=np.int8,
 )
 
-def _coord_state_inputs(tree: "Octree") -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _coord_state_inputs(
+    tree: "Octree",
+    ds: Dataset,
+    corners: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return the bound dataset arrays and exact leaf levels needed for coordinate state."""
     missing = [
         name
@@ -103,80 +72,23 @@ def _coord_state_inputs(tree: "Octree") -> tuple[np.ndarray, np.ndarray, np.ndar
             "_i0",
             "_i1",
             "_i2",
-            "_node_depth",
-            "_node_i0",
-            "_node_i1",
-            "_node_i2",
-            "_node_value",
-            "_node_child",
-            "_root_node_ids",
-            "_node_parent",
+            "_cell_depth",
+            "_cell_i0",
+            "_cell_i1",
+            "_cell_i2",
+            "_cell_child",
+            "_root_cell_ids",
+            "_cell_parent",
         )
         if not hasattr(tree, name)
     ]
     if missing:
         raise ValueError(f"Lookup requires exact tree state: missing {missing}.")
-    corners = np.asarray(tree.ds.corners, dtype=np.int64)
-    x, y, z = (np.asarray(tree.ds[name], dtype=np.float64) for name in XYZ_VARS)
+    x, y, z = (np.asarray(ds[name], dtype=np.float64) for name in XYZ_VARS)
     cell_levels = tree.cell_levels
     if cell_levels is None or int(cell_levels.shape[0]) != int(corners.shape[0]):
         raise ValueError("Lookup requires exact cell_levels.")
     return corners, x, y, z, cell_levels
-
-
-def _pack_coord_state(
-    tree: "Octree",
-    *,
-    cell_axis0_start: np.ndarray,
-    cell_axis0_width: np.ndarray,
-    cell_axis1_start: np.ndarray,
-    cell_axis1_width: np.ndarray,
-    cell_axis2_start: np.ndarray,
-    cell_axis2_width: np.ndarray,
-    cell_valid: np.ndarray,
-    domain_axis0_start: float,
-    domain_axis0_width: float,
-    domain_axis1_start: float,
-    domain_axis1_width: float,
-    domain_axis2_start: float,
-    domain_axis2_width: float,
-    axis2_period: float,
-    axis2_periodic: bool,
-    node_axis0_start: np.ndarray,
-    node_axis0_width: np.ndarray,
-    node_axis1_start: np.ndarray,
-    node_axis1_width: np.ndarray,
-    node_axis2_start: np.ndarray,
-    node_axis2_width: np.ndarray,
-) -> LookupKernelState:
-    """Pack one shared lookup state from topology plus coordinate-specific geometry."""
-    return LookupKernelState(
-        cell_axis0_start=cell_axis0_start,
-        cell_axis0_width=cell_axis0_width,
-        cell_axis1_start=cell_axis1_start,
-        cell_axis1_width=cell_axis1_width,
-        cell_axis2_start=cell_axis2_start,
-        cell_axis2_width=cell_axis2_width,
-        cell_valid=cell_valid,
-        domain_axis0_start=domain_axis0_start,
-        domain_axis0_width=domain_axis0_width,
-        domain_axis1_start=domain_axis1_start,
-        domain_axis1_width=domain_axis1_width,
-        domain_axis2_start=domain_axis2_start,
-        domain_axis2_width=domain_axis2_width,
-        axis2_period=axis2_period,
-        axis2_periodic=axis2_periodic,
-        node_value=tree._node_value,
-        node_child=tree._node_child,
-        root_node_ids=tree._root_node_ids,
-        node_parent=tree._node_parent,
-        node_axis0_start=node_axis0_start,
-        node_axis0_width=node_axis0_width,
-        node_axis1_start=node_axis1_start,
-        node_axis1_width=node_axis1_width,
-        node_axis2_start=node_axis2_start,
-        node_axis2_width=node_axis2_width,
-    )
 
 
 def _build_interp_bin_to_corner(
@@ -194,9 +106,6 @@ def _build_interp_bin_to_corner(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build logical trilinear corner indices from per-corner axis coordinates."""
     tiny = np.finfo(float).tiny
-    axis0_den = np.maximum(axis0_width, tiny)
-    axis1_den = np.maximum(axis1_width, tiny)
-    axis2_den = np.maximum(axis2_width, tiny)
 
     axis0_mid = axis0_start[:, None] + 0.5 * axis0_width[:, None]
     axis1_mid = axis1_start[:, None] + 0.5 * axis1_width[:, None]
@@ -235,7 +144,11 @@ def _build_interp_bin_to_corner(
             d = np.sum((bit_trip[missing] - _TRILINEAR_TARGET_BITS[k]) ** 2, axis=2)
             pick[missing] = np.argmin(d, axis=1)
         bin_to_corner[:, k] = pick
-    return bin_to_corner, axis0_den, axis1_den, axis2_den, axis2_full, axis2_tiny
+    return (
+        bin_to_corner,
+        axis2_full,
+        axis2_tiny,
+    )
 
 
 @njit(cache=True)
@@ -267,7 +180,8 @@ def _contains_lookup_coords(
     axis1_width: float,
     axis2_start: float,
     axis2_width: float,
-    lookup_state: LookupKernelState,
+    axis2_period: float,
+    axis2_periodic: bool,
     tol: float,
 ) -> bool:
     """Return whether one query lies inside one axis-0/1/2 box."""
@@ -293,8 +207,8 @@ def _contains_lookup_coords(
         q2,
         axis2_start,
         axis2_width,
-        periodic=bool(lookup_state.axis2_periodic),
-        period=float(lookup_state.axis2_period),
+        periodic=bool(axis2_periodic),
+        period=float(axis2_period),
         tol=tol,
     )
 
@@ -305,49 +219,43 @@ def _contains_lookup_cell(
     q0: float,
     q1: float,
     q2: float,
-    lookup_state: LookupKernelState,
+    cell_is_leaf: np.ndarray,
+    cell_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
     tol: float,
 ) -> bool:
     """Return whether one query lies inside one leaf cell geometry."""
-    if not lookup_state.cell_valid[cid]:
+    if not cell_is_leaf[cid]:
         return False
-    return _contains_lookup_coords(
-        q0,
-        q1,
-        q2,
-        float(lookup_state.cell_axis0_start[cid]),
-        float(lookup_state.cell_axis0_width[cid]),
-        float(lookup_state.cell_axis1_start[cid]),
-        float(lookup_state.cell_axis1_width[cid]),
-        float(lookup_state.cell_axis2_start[cid]),
-        float(lookup_state.cell_axis2_width[cid]),
-        lookup_state,
-        tol=tol,
-    )
+    return _contains_octree_cell(cid, q0, q1, q2, cell_bounds, axis2_period, axis2_periodic, tol)
 
 
 @njit(cache=True)
-def _contains_lookup_node(
-    node_id: int,
+def _contains_octree_cell(
+    cell_id: int,
     q0: float,
     q1: float,
     q2: float,
-    lookup_state: LookupKernelState,
+    cell_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
     tol: float,
 ) -> bool:
-    """Return whether one query lies inside one occupied node geometry."""
-    nid = int(node_id)
+    """Return whether one query lies inside one occupied octree cell."""
+    cid = int(cell_id)
     return _contains_lookup_coords(
         q0,
         q1,
         q2,
-        float(lookup_state.node_axis0_start[nid]),
-        float(lookup_state.node_axis0_width[nid]),
-        float(lookup_state.node_axis1_start[nid]),
-        float(lookup_state.node_axis1_width[nid]),
-        float(lookup_state.node_axis2_start[nid]),
-        float(lookup_state.node_axis2_width[nid]),
-        lookup_state,
+        float(cell_bounds[cid, AXIS0, START]),
+        float(cell_bounds[cid, AXIS0, WIDTH]),
+        float(cell_bounds[cid, AXIS1, START]),
+        float(cell_bounds[cid, AXIS1, WIDTH]),
+        float(cell_bounds[cid, AXIS2, START]),
+        float(cell_bounds[cid, AXIS2, WIDTH]),
+        axis2_period,
+        axis2_periodic,
         tol=tol,
     )
 
@@ -357,7 +265,9 @@ def _contains_lookup_domain(
     q0: float,
     q1: float,
     q2: float,
-    lookup_state: LookupKernelState,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
     tol: float = 0.0,
 ) -> bool:
     """Return whether one query lies inside the global lookup domain."""
@@ -365,79 +275,74 @@ def _contains_lookup_domain(
         q0,
         q1,
         q2,
-        float(lookup_state.domain_axis0_start),
-        float(lookup_state.domain_axis0_width),
-        float(lookup_state.domain_axis1_start),
-        float(lookup_state.domain_axis1_width),
-        float(lookup_state.domain_axis2_start),
-        float(lookup_state.domain_axis2_width),
-        lookup_state,
+        domain_bounds[AXIS0, START],
+        domain_bounds[AXIS0, WIDTH],
+        domain_bounds[AXIS1, START],
+        domain_bounds[AXIS1, WIDTH],
+        domain_bounds[AXIS2, START],
+        domain_bounds[AXIS2, WIDTH],
+        axis2_period,
+        axis2_periodic,
         tol=tol,
     )
 
 
 @njit(cache=True)
-def _leaf_node_id_from_cell_id(
-    cell_id: int,
-    lookup_state: LookupKernelState,
-) -> int:
-    """Return the leaf node id for one cell id, or `-1` if not present."""
-    target = int(cell_id)
-    for node_id in range(int(lookup_state.node_value.shape[0])):
-        if int(lookup_state.node_value[node_id]) == target:
-            return node_id
-    return -1
-
-
-@njit(cache=True)
-def _lookup_hint_node(
-    prev_node_id: int,
+def _lookup_hint_cell(
+    prev_cell_id: int,
     q0: float,
     q1: float,
     q2: float,
-    lookup_state: LookupKernelState,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
     tol: float,
 ) -> int:
-    """Return the nearest ancestor hint node containing one query, or `-1`."""
-    current = int(prev_node_id)
+    """Return the nearest ancestor hint cell containing one query, or `-1`."""
+    current = int(prev_cell_id)
     while current >= 0:
-        if _contains_lookup_node(current, q0, q1, q2, lookup_state, tol):
+        if _contains_octree_cell(current, q0, q1, q2, cell_bounds, axis2_period, axis2_periodic, tol):
             return current
-        current = int(lookup_state.node_parent[current])
+        current = int(cell_parent[current])
     return -1
 
 
 @njit(cache=True)
-def _lookup_descend_to_leaf(
+def _lookup_descend_to_leaf_cell(
     q0: float,
     q1: float,
     q2: float,
-    start_node_id: int,
-    lookup_state: LookupKernelState,
+    start_cell_id: int,
+    cell_is_leaf: np.ndarray,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
     tol: float,
 ) -> int:
-    """Descend one sparse tree from a containing node hint, or from the roots."""
-    current = int(start_node_id)
+    """Descend one sparse tree from a containing cell hint, or from the roots."""
+    current = int(start_cell_id)
     if current < 0:
-        for root_pos in range(int(lookup_state.root_node_ids.shape[0])):
-            node_id = int(lookup_state.root_node_ids[root_pos])
-            if _contains_lookup_node(node_id, q0, q1, q2, lookup_state, tol):
-                current = node_id
+        for root_pos in range(int(root_cell_ids.shape[0])):
+            cell_id = int(root_cell_ids[root_pos])
+            if _contains_octree_cell(cell_id, q0, q1, q2, cell_bounds, axis2_period, axis2_periodic, tol):
+                current = cell_id
                 break
     if current < 0:
         return -1
 
     while True:
-        value = int(lookup_state.node_value[current])
-        if value >= 0:
+        if cell_is_leaf[current]:
             return int(current)
 
         found_child = False
         for child_ord in range(8):
-            child_id = int(lookup_state.node_child[current, child_ord])
+            child_id = int(cell_child[current, child_ord])
             if child_id < 0:
                 continue
-            if _contains_lookup_node(child_id, q0, q1, q2, lookup_state, tol):
+            if _contains_octree_cell(child_id, q0, q1, q2, cell_bounds, axis2_period, axis2_periodic, tol):
                 current = child_id
                 found_child = True
                 break
@@ -446,63 +351,96 @@ def _lookup_descend_to_leaf(
 
 
 @njit(cache=True)
-def _lookup_leaf_node_id_kernel(
+def _lookup_leaf_cell_id_kernel(
     q0: float,
     q1: float,
     q2: float,
-    lookup_state: LookupKernelState,
-    prev_node_id: int = -1,
+    cell_is_leaf: np.ndarray,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+    prev_cell_id: int = -1,
     tol: float = 1.0e-10,
 ) -> int:
-    """Resolve one query to a leaf node id by sparse-tree descent."""
+    """Resolve one query to a leaf cell id by sparse-tree descent."""
     if not (np.isfinite(q0) and np.isfinite(q1) and np.isfinite(q2)):
         return -1
-    if prev_node_id >= 0 and _contains_lookup_node(int(prev_node_id), q0, q1, q2, lookup_state, tol):
-        value = int(lookup_state.node_value[int(prev_node_id)])
-        if value >= 0:
-            return int(prev_node_id)
-    if not _contains_lookup_domain(q0, q1, q2, lookup_state):
+    if prev_cell_id >= 0 and _contains_octree_cell(
+        int(prev_cell_id), q0, q1, q2, cell_bounds, axis2_period, axis2_periodic, tol
+    ):
+        if cell_is_leaf[int(prev_cell_id)]:
+            return int(prev_cell_id)
+    if not _contains_lookup_domain(q0, q1, q2, domain_bounds, axis2_period, axis2_periodic):
         return -1
-    current = _lookup_hint_node(
-        prev_node_id,
+    current = _lookup_hint_cell(
+        prev_cell_id,
         q0,
         q1,
         q2,
-        lookup_state,
+        cell_parent,
+        cell_bounds,
+        axis2_period,
+        axis2_periodic,
         tol,
     )
-    return _lookup_descend_to_leaf(
+    return _lookup_descend_to_leaf_cell(
         q0,
         q1,
         q2,
         current,
-        lookup_state,
+        cell_is_leaf,
+        cell_child,
+        root_cell_ids,
+        cell_bounds,
+        axis2_period,
+        axis2_periodic,
         tol,
     )
 
 
 @njit(cache=True, parallel=True)
-def _lookup_leaf_node_ids_kernel(queries: np.ndarray, lookup_state: LookupKernelState) -> np.ndarray:
-    """Resolve a batch of same-coordinate queries to leaf node ids."""
+def _lookup_leaf_cell_ids_kernel(
+    queries: np.ndarray,
+    cell_is_leaf: np.ndarray,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> np.ndarray:
+    """Resolve a batch of same-coordinate queries to leaf cell ids."""
     n_query = int(queries.shape[0])
-    node_ids = np.full(n_query, -1, dtype=np.int64)
+    cell_ids = np.full(n_query, -1, dtype=np.int64)
     chunk_size = 1024
     n_chunks = (n_query + chunk_size - 1) // chunk_size
     for chunk_id in prange(n_chunks):
         start = chunk_id * chunk_size
         end = min(n_query, start + chunk_size)
-        hint_node_id = -1
+        hint_cell_id = -1
         for i in range(start, end):
-            node_id = _lookup_leaf_node_id_kernel(
+            cell_id = _lookup_leaf_cell_id_kernel(
                 queries[i, 0],
                 queries[i, 1],
                 queries[i, 2],
-                lookup_state,
-                hint_node_id,
+                cell_is_leaf,
+                cell_child,
+                root_cell_ids,
+                cell_parent,
+                cell_bounds,
+                domain_bounds,
+                axis2_period,
+                axis2_periodic,
+                hint_cell_id,
             )
-            node_ids[i] = node_id
-            hint_node_id = int(node_id) if node_id >= 0 else -1
-    return node_ids
+            cell_ids[i] = cell_id
+            hint_cell_id = int(cell_id) if cell_id >= 0 else -1
+    return cell_ids
 
 
 @njit(cache=True)
@@ -510,23 +448,34 @@ def _lookup_cell_id_kernel(
     q0: float,
     q1: float,
     q2: float,
-    lookup_state: LookupKernelState,
+    cell_is_leaf: np.ndarray,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
     prev_cid: int = -1,
     tol: float = 1.0e-10,
 ) -> int:
     """Resolve one query to a cell id by sparse-tree descent."""
-    prev_node_id = _leaf_node_id_from_cell_id(int(prev_cid), lookup_state) if prev_cid >= 0 else -1
-    node_id = _lookup_leaf_node_id_kernel(
+    cell_id = _lookup_leaf_cell_id_kernel(
         q0,
         q1,
         q2,
-        lookup_state,
-        prev_node_id,
+        cell_is_leaf,
+        cell_child,
+        root_cell_ids,
+        cell_parent,
+        cell_bounds,
+        domain_bounds,
+        axis2_period,
+        axis2_periodic,
+        int(prev_cid),
         tol,
     )
-    if node_id < 0:
-        return -1
-    return int(lookup_state.node_value[int(node_id)])
+    return int(cell_id)
 
 
 def _level_metadata_from_leaves(
@@ -556,7 +505,7 @@ def _level_metadata_from_leaves(
     return leaf_shape, bool(is_full), level_counts, min_level, max_level
 
 
-def _build_node_arrays(
+def _build_cell_arrays(
     depths: np.ndarray,
     i0: np.ndarray,
     i1: np.ndarray,
@@ -565,20 +514,20 @@ def _build_node_arrays(
     *,
     tree_depth: int,
     label: str,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Build sorted occupied-node arrays from exact leaf addresses."""
-    leaf_depth = np.asarray(depths, dtype=np.int64)
-    leaf_i0 = np.asarray(i0, dtype=np.int64)
-    leaf_i1 = np.asarray(i1, dtype=np.int64)
-    leaf_i2 = np.asarray(i2, dtype=np.int64)
+    n_leaf_slots: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build rebuilt octree cell arrays from exact leaf addresses."""
+    leaf_depth_raw = np.asarray(depths, dtype=np.int64)
+    leaf_i0_raw = np.asarray(i0, dtype=np.int64)
+    leaf_i1_raw = np.asarray(i1, dtype=np.int64)
+    leaf_i2_raw = np.asarray(i2, dtype=np.int64)
     leaf_value_arr = np.asarray(leaf_value, dtype=np.int64)
 
-    leaf_order = np.lexsort((leaf_i2, leaf_i1, leaf_i0, leaf_depth))
-    leaf_depth = leaf_depth[leaf_order]
-    leaf_i0 = leaf_i0[leaf_order]
-    leaf_i1 = leaf_i1[leaf_order]
-    leaf_i2 = leaf_i2[leaf_order]
-    leaf_value_arr = leaf_value_arr[leaf_order]
+    leaf_order = np.lexsort((leaf_i2_raw, leaf_i1_raw, leaf_i0_raw, leaf_depth_raw))
+    leaf_depth = leaf_depth_raw[leaf_order]
+    leaf_i0 = leaf_i0_raw[leaf_order]
+    leaf_i1 = leaf_i1_raw[leaf_order]
+    leaf_i2 = leaf_i2_raw[leaf_order]
 
     same_leaf = (
         (leaf_depth[1:] == leaf_depth[:-1])
@@ -593,17 +542,16 @@ def _build_node_arrays(
             f"{(int(leaf_depth[dup]), int(leaf_i0[dup]), int(leaf_i1[dup]), int(leaf_i2[dup]))}."
         )
 
-    node_depth_parts = [leaf_depth]
-    node_i0_parts = [leaf_i0]
-    node_i1_parts = [leaf_i1]
-    node_i2_parts = [leaf_i2]
-    node_value_parts = [leaf_value_arr]
+    parent_depth_parts: list[np.ndarray] = []
+    parent_i0_parts: list[np.ndarray] = []
+    parent_i1_parts: list[np.ndarray] = []
+    parent_i2_parts: list[np.ndarray] = []
     for parent_depth in range(int(tree_depth)):
         mask = depths > int(parent_depth)
         if not np.any(mask):
             continue
         up = np.asarray(depths[mask] - int(parent_depth), dtype=np.int64)
-        parent_nodes = np.column_stack(
+        parent_cells = np.column_stack(
             (
                 np.full(int(np.count_nonzero(mask)), int(parent_depth), dtype=np.int64),
                 np.right_shift(i0[mask], up),
@@ -611,77 +559,104 @@ def _build_node_arrays(
                 np.right_shift(i2[mask], up),
             )
         )
-        parent_nodes = np.unique(parent_nodes, axis=0)
-        node_depth_parts.append(parent_nodes[:, 0].astype(np.int64, copy=False))
-        node_i0_parts.append(parent_nodes[:, 1].astype(np.int64, copy=False))
-        node_i1_parts.append(parent_nodes[:, 2].astype(np.int64, copy=False))
-        node_i2_parts.append(parent_nodes[:, 3].astype(np.int64, copy=False))
-        node_value_parts.append(np.full(parent_nodes.shape[0], -2, dtype=np.int64))
+        parent_cells = np.unique(parent_cells, axis=0)
+        parent_depth_parts.append(parent_cells[:, 0].astype(np.int64, copy=False))
+        parent_i0_parts.append(parent_cells[:, 1].astype(np.int64, copy=False))
+        parent_i1_parts.append(parent_cells[:, 2].astype(np.int64, copy=False))
+        parent_i2_parts.append(parent_cells[:, 3].astype(np.int64, copy=False))
 
-    node_depth = np.concatenate(node_depth_parts)
-    node_i0 = np.concatenate(node_i0_parts)
-    node_i1 = np.concatenate(node_i1_parts)
-    node_i2 = np.concatenate(node_i2_parts)
-    node_value = np.concatenate(node_value_parts)
-    node_order = np.lexsort((node_i2, node_i1, node_i0, node_depth))
-    node_depth = node_depth[node_order]
-    node_i0 = node_i0[node_order]
-    node_i1 = node_i1[node_order]
-    node_i2 = node_i2[node_order]
-    node_value = node_value[node_order]
+    if parent_depth_parts:
+        internal_depth = np.concatenate(parent_depth_parts)
+        internal_i0 = np.concatenate(parent_i0_parts)
+        internal_i1 = np.concatenate(parent_i1_parts)
+        internal_i2 = np.concatenate(parent_i2_parts)
+        internal_order = np.lexsort((internal_i2, internal_i1, internal_i0, internal_depth))
+        internal_depth = internal_depth[internal_order]
+        internal_i0 = internal_i0[internal_order]
+        internal_i1 = internal_i1[internal_order]
+        internal_i2 = internal_i2[internal_order]
+    else:
+        internal_depth = np.empty(0, dtype=np.int64)
+        internal_i0 = np.empty(0, dtype=np.int64)
+        internal_i1 = np.empty(0, dtype=np.int64)
+        internal_i2 = np.empty(0, dtype=np.int64)
 
-    same_node = (
-        (node_depth[1:] == node_depth[:-1])
-        & (node_i0[1:] == node_i0[:-1])
-        & (node_i1[1:] == node_i1[:-1])
-        & (node_i2[1:] == node_i2[:-1])
+    all_depth = np.concatenate((leaf_depth, internal_depth))
+    all_i0 = np.concatenate((leaf_i0, internal_i0))
+    all_i1 = np.concatenate((leaf_i1, internal_i1))
+    all_i2 = np.concatenate((leaf_i2, internal_i2))
+    all_order = np.lexsort((all_i2, all_i1, all_i0, all_depth))
+    all_depth = all_depth[all_order]
+    all_i0 = all_i0[all_order]
+    all_i1 = all_i1[all_order]
+    all_i2 = all_i2[all_order]
+
+    same_cell = (
+        (all_depth[1:] == all_depth[:-1])
+        & (all_i0[1:] == all_i0[:-1])
+        & (all_i1[1:] == all_i1[:-1])
+        & (all_i2[1:] == all_i2[:-1])
     )
-    if np.any(same_node):
-        dup = int(np.flatnonzero(same_node)[0])
+    if np.any(same_cell):
+        dup = int(np.flatnonzero(same_cell)[0])
         raise ValueError(
             f"{label} cells overlap across parent/child addresses at "
-            f"({int(node_depth[dup])}, {int(node_i0[dup])}, {int(node_i1[dup])}, {int(node_i2[dup])})."
+            f"({int(all_depth[dup])}, {int(all_i0[dup])}, {int(all_i1[dup])}, {int(all_i2[dup])})."
         )
 
-    return node_depth, node_i0, node_i1, node_i2, node_value
+    leaf_slots = int(np.max(leaf_value_arr)) + 1 if n_leaf_slots is None and leaf_value_arr.size else int(n_leaf_slots or 0)
+    n_cells = leaf_slots + int(internal_depth.shape[0])
+    cell_depth = np.full(n_cells, -1, dtype=np.int64)
+    cell_i0 = np.full(n_cells, -1, dtype=np.int64)
+    cell_i1 = np.full(n_cells, -1, dtype=np.int64)
+    cell_i2 = np.full(n_cells, -1, dtype=np.int64)
+    cell_depth[leaf_value_arr] = leaf_depth_raw
+    cell_i0[leaf_value_arr] = leaf_i0_raw
+    cell_i1[leaf_value_arr] = leaf_i1_raw
+    cell_i2[leaf_value_arr] = leaf_i2_raw
+    start = leaf_slots
+    stop = start + int(internal_depth.shape[0])
+    cell_depth[start:stop] = internal_depth
+    cell_i0[start:stop] = internal_i0
+    cell_i1[start:stop] = internal_i1
+    cell_i2[start:stop] = internal_i2
+    return cell_depth, cell_i0, cell_i1, cell_i2
 
 
-def _build_child_table(
-    node_depth: np.ndarray,
-    node_i0: np.ndarray,
-    node_i1: np.ndarray,
-    node_i2: np.ndarray,
-    node_value: np.ndarray,
+def _build_cell_children(
+    cell_depth: np.ndarray,
+    cell_i0: np.ndarray,
+    cell_i1: np.ndarray,
+    cell_i2: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build sparse 8-child references for occupied nodes."""
-    n_nodes = int(np.asarray(node_depth, dtype=np.int64).shape[0])
-    node_child = np.full((n_nodes, 8), -1, dtype=np.int64)
-    node_parent = np.full(n_nodes, -1, dtype=np.int64)
-    key_to_node = {
-        (int(node_depth[idx]), int(node_i0[idx]), int(node_i1[idx]), int(node_i2[idx])): int(idx)
-        for idx in range(n_nodes)
+    """Build sparse 8-child references for occupied rebuilt cells."""
+    n_cells = int(np.asarray(cell_depth, dtype=np.int64).shape[0])
+    cell_child = np.full((n_cells, 8), -1, dtype=np.int64)
+    cell_parent = np.full(n_cells, -1, dtype=np.int64)
+    occupied = np.flatnonzero(cell_depth >= 0).astype(np.int64)
+    key_to_cell = {
+        (int(cell_depth[idx]), int(cell_i0[idx]), int(cell_i1[idx]), int(cell_i2[idx])): int(idx)
+        for idx in occupied
     }
-    for idx in range(n_nodes):
-        if int(node_value[idx]) >= 0:
-            continue
-        depth = int(node_depth[idx])
-        i0 = int(node_i0[idx])
-        i1 = int(node_i1[idx])
-        i2 = int(node_i2[idx])
+    for idx in occupied:
+        depth = int(cell_depth[idx])
+        i0 = int(cell_i0[idx])
+        i1 = int(cell_i1[idx])
+        i2 = int(cell_i2[idx])
         for child_ord in range(8):
             b0 = (child_ord >> 2) & 1
             b1 = (child_ord >> 1) & 1
             b2 = child_ord & 1
             child_key = (depth + 1, 2 * i0 + b0, 2 * i1 + b1, 2 * i2 + b2)
-            child_idx = key_to_node.get(child_key)
+            child_idx = key_to_cell.get(child_key)
             if child_idx is not None:
-                node_child[idx, child_ord] = int(child_idx)
-                node_parent[int(child_idx)] = int(idx)
-    root_node_ids = np.flatnonzero(np.asarray(node_depth, dtype=np.int64) == 0).astype(np.int64)
-    return node_child, root_node_ids, node_parent
+                cell_child[idx, child_ord] = int(child_idx)
+                cell_parent[int(child_idx)] = int(idx)
+    root_cell_ids = np.flatnonzero(np.asarray(cell_depth, dtype=np.int64) == 0).astype(np.int64)
+    return cell_child, root_cell_ids, cell_parent
 
 
-def _node_state_from_leaves(
+def _cell_state_from_leaves(
     cell_levels: np.ndarray,
     cell_i0: np.ndarray,
     cell_i1: np.ndarray,
@@ -689,7 +664,7 @@ def _node_state_from_leaves(
     *,
     max_level: int,
 ) -> tuple[np.ndarray, ...]:
-    """Rebuild exact occupied nonleaves and leaf-node maps from leaf addresses."""
+    """Rebuild exact occupied cells from leaf addresses."""
 
     levels = np.asarray(cell_levels, dtype=np.int64)
     i0_all = np.asarray(cell_i0, dtype=np.int64)
@@ -704,7 +679,7 @@ def _node_state_from_leaves(
     leaf_i0 = np.asarray(i0_all[valid_ids], dtype=np.int64)
     leaf_i1 = np.asarray(i1_all[valid_ids], dtype=np.int64)
     leaf_i2 = np.asarray(i2_all[valid_ids], dtype=np.int64)
-    node_depth, node_i0, node_i1, node_i2, node_value = _build_node_arrays(
+    cell_depth, cell_i0_rt, cell_i1_rt, cell_i2_rt = _build_cell_arrays(
         depths,
         leaf_i0,
         leaf_i1,
@@ -712,19 +687,114 @@ def _node_state_from_leaves(
         valid_ids,
         tree_depth=int(max_level),
         label="Restored",
+        n_leaf_slots=int(levels.shape[0]),
     )
-    node_child, root_node_ids, node_parent = _build_child_table(
-        node_depth,
-        node_i0,
-        node_i1,
-        node_i2,
-        node_value,
+    cell_child, root_cell_ids, cell_parent = _build_cell_children(
+        cell_depth,
+        cell_i0_rt,
+        cell_i1_rt,
+        cell_i2_rt,
     )
-    return node_depth, node_i0, node_i1, node_i2, node_value, node_child, root_node_ids, node_parent
+    return cell_depth, cell_i0_rt, cell_i1_rt, cell_i2_rt, cell_child, root_cell_ids, cell_parent
+
+
+def _normalize_octree_inputs(
+    *,
+    root_shape: GridShape,
+    tree_coord: TreeCoord,
+    cell_levels: np.ndarray,
+    cell_i0: np.ndarray,
+    cell_i1: np.ndarray,
+    cell_i2: np.ndarray,
+) -> tuple[GridShape, TreeCoord, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Normalize constructor inputs to the exact persisted leaf-state arrays."""
+    resolved_tree_coord = str(tree_coord)
+    if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
+        raise ValueError(
+            f"Unsupported tree_coord '{resolved_tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
+        )
+    return (
+        tuple(int(v) for v in root_shape),
+        resolved_tree_coord,
+        np.asarray(cell_levels, dtype=np.int64),
+        np.asarray(cell_i0, dtype=np.int64),
+        np.asarray(cell_i1, dtype=np.int64),
+        np.asarray(cell_i2, dtype=np.int64),
+    )
+
+
+def _normalize_bound_dataset(ds: Dataset) -> np.ndarray:
+    """Validate one bound dataset and return packed corners."""
+    if ds.corners is None:
+        raise ValueError("Dataset has no corners; cannot bind octree lookup.")
+    if not set(XYZ_VARS).issubset(set(ds.variables)):
+        raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
+    return np.asarray(ds.corners, dtype=np.int64)
+
+
+def _build_interpolation_geometry(
+    tree: "Octree",
+    ds: Dataset,
+    corners_all: np.ndarray,
+    cell_bounds: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build the leaf-cell trilinear interpolation arrays from the bound dataset."""
+    leaf_cell_ids = np.flatnonzero(tree.cell_levels >= 0).astype(np.int64)
+    corners = corners_all[leaf_cell_ids]
+    leaf_bounds = cell_bounds[leaf_cell_ids]
+    axis0_start = leaf_bounds[:, AXIS0, START]
+    axis0_width = leaf_bounds[:, AXIS0, WIDTH]
+    axis1_start = leaf_bounds[:, AXIS1, START]
+    axis1_width = leaf_bounds[:, AXIS1, WIDTH]
+    axis2_start = leaf_bounds[:, AXIS2, START]
+    axis2_width = leaf_bounds[:, AXIS2, WIDTH]
+    x = np.asarray(ds[XYZ_VARS[0]], dtype=np.float64)
+    y = np.asarray(ds[XYZ_VARS[1]], dtype=np.float64)
+    z = np.asarray(ds[XYZ_VARS[2]], dtype=np.float64)
+    if str(tree.tree_coord) == "xyz":
+        axis0 = x[corners]
+        axis1 = y[corners]
+        axis2 = z[corners]
+        axis2_periodic = False
+    else:
+        from .spherical import _xyz_arrays_to_rpa
+
+        point_r, point_p, point_a = _xyz_arrays_to_rpa(x, y, z)
+        axis0 = point_r[corners]
+        axis1 = point_p[corners]
+        axis2 = point_a[corners]
+        axis2_periodic = True
+    leaf_bin_to_corner, leaf_axis2_full, leaf_axis2_tiny = _build_interp_bin_to_corner(
+        axis0,
+        axis1,
+        axis2,
+        axis0_start=axis0_start,
+        axis0_width=axis0_width,
+        axis1_start=axis1_start,
+        axis1_width=axis1_width,
+        axis2_start=axis2_start,
+        axis2_width=axis2_width,
+        axis2_periodic=axis2_periodic,
+    )
+    n_cells = int(tree._cell_depth.shape[0])
+    interp_corners = np.full((n_cells, 8), -1, dtype=np.int64)
+    interp_corners[leaf_cell_ids] = corners
+    interp_bin_to_corner = np.zeros((n_cells, 8), dtype=np.int64)
+    interp_bin_to_corner[leaf_cell_ids] = leaf_bin_to_corner
+    interp_axis2_full = np.zeros(n_cells, dtype=np.bool_)
+    interp_axis2_full[leaf_cell_ids] = leaf_axis2_full
+    interp_axis2_tiny = np.zeros(n_cells, dtype=np.bool_)
+    interp_axis2_tiny[leaf_cell_ids] = leaf_axis2_tiny
+    return (
+        interp_corners,
+        interp_bin_to_corner,
+        interp_axis2_full,
+        interp_axis2_tiny,
+    )
 
 
 class Octree:
-    """Adaptive octree summary plus bound lookup/ray-query entrypoints.
+    """Adaptive octree summary plus bound lookup entrypoints.
 
     `level_counts` rows are
     `(level, leaf_count, fine_equivalent_count)`.
@@ -742,39 +812,62 @@ class Octree:
         ds: Dataset,
     ) -> None:
         """Build one octree directly from exact leaf addresses."""
-        resolved_tree_coord = str(tree_coord)
-        if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
-            raise ValueError(
-                f"Unsupported tree_coord '{resolved_tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-            )
-        self.root_shape = tuple(int(v) for v in root_shape)
-        self.tree_coord = resolved_tree_coord
-        self.cell_levels = np.asarray(cell_levels, dtype=np.int64)
+        (
+            self.root_shape,
+            self.tree_coord,
+            self.cell_levels,
+            self._i0,
+            self._i1,
+            self._i2,
+        ) = _normalize_octree_inputs(
+            root_shape=root_shape,
+            tree_coord=tree_coord,
+            cell_levels=cell_levels,
+            cell_i0=cell_i0,
+            cell_i1=cell_i1,
+            cell_i2=cell_i2,
+        )
 
         self.leaf_shape, self.is_full, self.level_counts, self.min_level, self.max_level = _level_metadata_from_leaves(
             self.root_shape,
             self.cell_levels,
         )
-        self._i0 = np.asarray(cell_i0, dtype=np.int64)
-        self._i1 = np.asarray(cell_i1, dtype=np.int64)
-        self._i2 = np.asarray(cell_i2, dtype=np.int64)
         (
-            self._node_depth,
-            self._node_i0,
-            self._node_i1,
-            self._node_i2,
-            self._node_value,
-            self._node_child,
-            self._root_node_ids,
-            self._node_parent,
-        ) = _node_state_from_leaves(
+            self._cell_depth,
+            self._cell_i0,
+            self._cell_i1,
+            self._cell_i2,
+            self._cell_child,
+            self._root_cell_ids,
+            self._cell_parent,
+        ) = _cell_state_from_leaves(
             self.cell_levels,
             self._i0,
             self._i1,
             self._i2,
             max_level=self.max_level,
         )
-        self._bind(ds)
+        corners = _normalize_bound_dataset(ds)
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = self._coord_support(str(self.tree_coord))._attach_coord_state(
+            self, ds, corners
+        )
+        (
+            interp_corners,
+            interp_bin_to_corner,
+            interp_axis2_full,
+            interp_axis2_tiny,
+        ) = _build_interpolation_geometry(self, ds, corners, cell_bounds)
+        self._cell_is_leaf = (self._cell_depth >= 0) & np.all(self._cell_child < 0, axis=1)
+        self.ds = ds
+        self._corners = corners
+        self._cell_bounds = cell_bounds
+        self._domain_bounds = domain_bounds
+        self._axis2_period = float(axis2_period)
+        self._axis2_periodic = bool(axis2_periodic)
+        self._interp_corners = interp_corners
+        self._interp_bin_to_corner = interp_bin_to_corner
+        self._interp_axis2_full = interp_axis2_full
+        self._interp_axis2_tiny = interp_axis2_tiny
 
     @property
     def levels(self) -> tuple[int, ...]:
@@ -794,16 +887,6 @@ class Octree:
         one refinement coordinate system internally.
         """
         return int(self.max_level)
-
-    def _bind(self, ds: Dataset) -> None:
-        """Attach a dataset to this tree so lookup and ray methods can run."""
-        if ds.corners is None:
-            raise ValueError("Dataset has no corners; cannot bind octree lookup.")
-        if not set(XYZ_VARS).issubset(set(ds.variables)):
-            raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
-        self.ds = ds
-        self._coord_support(str(self.tree_coord))._attach_coord_state(self)
-        self._prepare_interpolation_geometry()
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
@@ -934,11 +1017,7 @@ class Octree:
                 raise ValueError("points must have shape (..., 3).")
             shape = q.shape[:-1]
             q = q.reshape(-1, 3)
-        _q_local, node_ids = self._lookup_points_local(q, coord=coord)
-        cell_ids = np.full(node_ids.shape, -1, dtype=np.int64)
-        hits = node_ids >= 0
-        if np.any(hits):
-            cell_ids[hits] = self._node_value[node_ids[hits]]
+        _q_local, cell_ids = self._lookup_points_local(q, coord=coord)
         return cell_ids.reshape(shape)
 
     def _lookup_points_local(self, points: np.ndarray, *, coord: TreeCoord) -> tuple[np.ndarray, np.ndarray]:
@@ -953,111 +1032,66 @@ class Octree:
         if str(self.tree_coord) == "xyz":
             if resolved_coord != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
-            return points, _lookup_leaf_node_ids_kernel(points, self._coord_state)
+            return points, _lookup_leaf_cell_ids_kernel(
+                points,
+                self._cell_is_leaf,
+                self._cell_child,
+                self._root_cell_ids,
+                self._cell_parent,
+                self._cell_bounds,
+                self._domain_bounds,
+                self._axis2_period,
+                self._axis2_periodic,
+            )
         if resolved_coord == "rpa":
-            return points, _lookup_leaf_node_ids_kernel(points, self._coord_state)
+            return points, _lookup_leaf_cell_ids_kernel(
+                points,
+                self._cell_is_leaf,
+                self._cell_child,
+                self._root_cell_ids,
+                self._cell_parent,
+                self._cell_bounds,
+                self._domain_bounds,
+                self._axis2_period,
+                self._axis2_periodic,
+            )
         from .spherical import _xyz_arrays_to_rpa
 
         axis0, axis1, axis2 = _xyz_arrays_to_rpa(points[:, 0], points[:, 1], points[:, 2])
         q_local = np.column_stack((axis0, axis1, axis2))
-        return q_local, _lookup_leaf_node_ids_kernel(q_local, self._coord_state)
-
-    def _prepare_interpolation_geometry(self) -> None:
-        """Build the leaf-node trilinear corner map from the bound dataset."""
-        leaf_node_ids = np.flatnonzero(self._node_value >= 0).astype(np.int64)
-        leaf_cell_ids = self._node_value[leaf_node_ids]
-        corners = np.asarray(self.ds.corners, dtype=np.int64)[leaf_cell_ids]
-        axis0_start = self._coord_state.node_axis0_start[leaf_node_ids]
-        axis0_width = self._coord_state.node_axis0_width[leaf_node_ids]
-        axis1_start = self._coord_state.node_axis1_start[leaf_node_ids]
-        axis1_width = self._coord_state.node_axis1_width[leaf_node_ids]
-        axis2_start = self._coord_state.node_axis2_start[leaf_node_ids]
-        axis2_width = self._coord_state.node_axis2_width[leaf_node_ids]
-        x = np.asarray(self.ds[XYZ_VARS[0]], dtype=np.float64)
-        y = np.asarray(self.ds[XYZ_VARS[1]], dtype=np.float64)
-        z = np.asarray(self.ds[XYZ_VARS[2]], dtype=np.float64)
-        if str(self.tree_coord) == "xyz":
-            axis0 = x[corners]
-            axis1 = y[corners]
-            axis2 = z[corners]
-            axis2_periodic = False
-        else:
-            from .spherical import _xyz_arrays_to_rpa
-
-            point_r, point_theta, point_phi = _xyz_arrays_to_rpa(x, y, z)
-            axis0 = point_r[corners]
-            axis1 = point_theta[corners]
-            axis2 = point_phi[corners]
-            axis2_periodic = True
-        (
-            leaf_bin_to_corner,
-            leaf_axis0_den,
-            leaf_axis1_den,
-            leaf_axis2_den,
-            leaf_axis2_full,
-            leaf_axis2_tiny,
-        ) = _build_interp_bin_to_corner(
-            axis0,
-            axis1,
-            axis2,
-            axis0_start=axis0_start,
-            axis0_width=axis0_width,
-            axis1_start=axis1_start,
-            axis1_width=axis1_width,
-            axis2_start=axis2_start,
-            axis2_width=axis2_width,
-            axis2_periodic=axis2_periodic,
+        return q_local, _lookup_leaf_cell_ids_kernel(
+            q_local,
+            self._cell_is_leaf,
+            self._cell_child,
+            self._root_cell_ids,
+            self._cell_parent,
+            self._cell_bounds,
+            self._domain_bounds,
+            self._axis2_period,
+            self._axis2_periodic,
         )
-        n_nodes = int(self._node_value.shape[0])
-        self._interp_corners = np.full((n_nodes, 8), -1, dtype=np.int64)
-        self._interp_corners[leaf_node_ids] = corners
-        self._interp_bin_to_corner = np.zeros((n_nodes, 8), dtype=np.int64)
-        self._interp_bin_to_corner[leaf_node_ids] = leaf_bin_to_corner
-        self._interp_axis0_den = np.ones(n_nodes, dtype=np.float64)
-        self._interp_axis0_den[leaf_node_ids] = leaf_axis0_den
-        self._interp_axis1_den = np.ones(n_nodes, dtype=np.float64)
-        self._interp_axis1_den[leaf_node_ids] = leaf_axis1_den
-        self._interp_axis2_den = np.ones(n_nodes, dtype=np.float64)
-        self._interp_axis2_den[leaf_node_ids] = leaf_axis2_den
-        self._interp_axis2_full = np.zeros(n_nodes, dtype=np.bool_)
-        self._interp_axis2_full[leaf_node_ids] = leaf_axis2_full
-        self._interp_axis2_tiny = np.zeros(n_nodes, dtype=np.bool_)
-        self._interp_axis2_tiny[leaf_node_ids] = leaf_axis2_tiny
 
     def _interp_state_from_values(
         self,
-        point_values_2d: np.ndarray,
+        point_values: np.ndarray,
     ) -> CartesianInterpKernelState | SphericalInterpKernelState:
         """Pack one interpolation state for the given per-point values."""
         if str(self.tree_coord) == "xyz":
             return CartesianInterpKernelState(
-                point_values_2d=point_values_2d,
+                point_values=point_values,
                 corners=self._interp_corners,
                 bin_to_corner=self._interp_bin_to_corner,
-                cell_x0=self._coord_state.node_axis0_start,
-                cell_xden=self._interp_axis0_den,
-                cell_y0=self._coord_state.node_axis1_start,
-                cell_yden=self._interp_axis1_den,
-                cell_z0=self._coord_state.node_axis2_start,
-                cell_zden=self._interp_axis2_den,
             )
         return SphericalInterpKernelState(
-            point_values_2d=point_values_2d,
+            point_values=point_values,
             corners=self._interp_corners,
             bin_to_corner=self._interp_bin_to_corner,
-            cell_r0=self._coord_state.node_axis0_start,
-            cell_rden=self._interp_axis0_den,
-            cell_t0=self._coord_state.node_axis1_start,
-            cell_tden=self._interp_axis1_den,
-            cell_p_start=self._coord_state.node_axis2_start,
-            cell_p_width=self._coord_state.node_axis2_width,
-            cell_pden=self._interp_axis2_den,
-            cell_phi_full=self._interp_axis2_full,
-            cell_phi_tiny=self._interp_axis2_tiny,
+            cell_a_full=self._interp_axis2_full,
+            cell_a_tiny=self._interp_axis2_tiny,
         )
 
-    def _frontier_nodes(self, max_level: int) -> tuple[np.ndarray, ...]:
-        """Return unique frontier nodes by truncating leaves to one level cutoff."""
+    def _frontier_cells(self, max_level: int) -> tuple[np.ndarray, ...]:
+        """Return unique frontier cells by truncating leaves to one level cutoff."""
         if self.cell_levels is None:
             raise ValueError("Octree has no cell_levels; cannot build frontier nodes.")
         required = ("_i0", "_i1", "_i2")
@@ -1087,19 +1121,19 @@ class Octree:
         keys = np.column_stack((active_levels, active_i0, active_i1, active_i2))
         unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
 
-        node_cell_ids = np.full(unique_keys.shape[0], -1, dtype=np.int64)
-        cell_to_node_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
-        for row, node_id in enumerate(inverse):
-            nid = int(node_id)
-            if node_cell_ids[nid] < 0:
-                node_cell_ids[nid] = int(cell_ids[row])
-            cell_to_node_id[int(cell_ids[row])] = nid
+        frontier_cell_ids = np.full(unique_keys.shape[0], -1, dtype=np.int64)
+        leaf_to_frontier_cell_id = np.full(levels_all.shape[0], -1, dtype=np.int64)
+        for row, frontier_cell_id in enumerate(inverse):
+            cid = int(frontier_cell_id)
+            if frontier_cell_ids[cid] < 0:
+                frontier_cell_ids[cid] = int(cell_ids[row])
+            leaf_to_frontier_cell_id[int(cell_ids[row])] = cid
 
         levels = unique_keys[:, 0]
         i0 = unique_keys[:, 1]
         i1 = unique_keys[:, 2]
         i2 = unique_keys[:, 3]
-        return levels, i0, i1, i2, node_cell_ids, cell_to_node_id
+        return levels, i0, i1, i2, frontier_cell_ids, leaf_to_frontier_cell_id
 
     def face_neighbors(self, *, max_level: int | None = None) -> "OctreeFaceNeighbors":
         """Return the lazily built face-neighbor graph for one level cutoff."""
@@ -1118,12 +1152,12 @@ class Octree:
         if face_neighbors is None:
             from .face_neighbors import _build_face_neighbors_from_frontier
 
-            frontier_nodes = self._frontier_nodes(target_max_level)
+            frontier_cells = self._frontier_cells(target_max_level)
             face_neighbors = _build_face_neighbors_from_frontier(
                 root_shape=self.root_shape,
                 tree_coord=self.tree_coord,
                 target_max_level=target_max_level,
-                frontier_nodes=frontier_nodes,
+                frontier_cells=frontier_cells,
             )
             cache[int(face_neighbors.max_level)] = face_neighbors
         return face_neighbors

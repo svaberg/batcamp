@@ -15,7 +15,7 @@ from batcamp.builder import _resolve_cell_levels
 from batcamp.builder_cartesian import CartesianOctreeBuilder
 from batcamp.builder_spherical import SphericalOctreeBuilder
 from batcamp.constants import XYZ_VARS
-from batcamp.octree import _build_node_arrays
+from batcamp.octree import _build_cell_arrays
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
@@ -526,10 +526,10 @@ def test_resolve_cell_levels_rejects_shape_mismatch() -> None:
         )
 
 
-def test_build_node_arrays_rejects_duplicate_leaf_addresses() -> None:
-    """Sparse-node construction should reject duplicate leaf octree addresses."""
+def test_build_cell_arrays_rejects_duplicate_leaf_addresses() -> None:
+    """Sparse-cell construction should reject duplicate leaf octree addresses."""
     with pytest.raises(ValueError, match="overlap at octree address"):
-        _build_node_arrays(
+        _build_cell_arrays(
             np.array([0, 0], dtype=np.int64),
             np.array([0, 0], dtype=np.int64),
             np.array([0, 0], dtype=np.int64),
@@ -540,10 +540,10 @@ def test_build_node_arrays_rejects_duplicate_leaf_addresses() -> None:
         )
 
 
-def test_build_node_arrays_rejects_parent_child_overlap() -> None:
-    """Sparse-node construction should reject explicit parent/child double occupancy."""
+def test_build_cell_arrays_rejects_parent_child_overlap() -> None:
+    """Sparse-cell construction should reject explicit parent/child double occupancy."""
     with pytest.raises(ValueError, match="overlap across parent/child addresses"):
-        _build_node_arrays(
+        _build_cell_arrays(
             np.array([0, 1], dtype=np.int64),
             np.array([0, 0], dtype=np.int64),
             np.array([0, 0], dtype=np.int64),
@@ -574,17 +574,17 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     xyz_tree = OctreeBuilder()._build(_build_regular_xyz_dataset(), tree_coord="xyz")
     assert xyz_tree.cell_levels is not None
     assert np.asarray(xyz_tree._i0, dtype=np.int64).shape == xyz_tree.cell_levels.shape
-    assert np.asarray(xyz_tree._node_depth, dtype=np.int64).ndim == 1
-    assert np.asarray(xyz_tree._node_child, dtype=np.int64).shape[1] == 8
-    assert np.asarray(xyz_tree._root_node_ids, dtype=np.int64).ndim == 1
+    assert np.asarray(xyz_tree._cell_depth, dtype=np.int64).ndim == 1
+    assert np.asarray(xyz_tree._cell_child, dtype=np.int64).shape[1] == 8
+    assert np.asarray(xyz_tree._root_cell_ids, dtype=np.int64).ndim == 1
     assert not hasattr(xyz_tree, "_radial_edges")
 
     rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa")
     assert rpa_tree.cell_levels is not None
     assert np.asarray(rpa_tree._i0, dtype=np.int64).shape == rpa_tree.cell_levels.shape
-    assert np.asarray(rpa_tree._node_depth, dtype=np.int64).ndim == 1
-    assert np.asarray(rpa_tree._node_child, dtype=np.int64).shape[1] == 8
-    assert np.asarray(rpa_tree._root_node_ids, dtype=np.int64).ndim == 1
+    assert np.asarray(rpa_tree._cell_depth, dtype=np.int64).ndim == 1
+    assert np.asarray(rpa_tree._cell_child, dtype=np.int64).shape[1] == 8
+    assert np.asarray(rpa_tree._root_cell_ids, dtype=np.int64).ndim == 1
     assert hasattr(rpa_tree, "_radial_edges")
 
 

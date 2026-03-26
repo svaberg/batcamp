@@ -6,6 +6,11 @@ import numpy as np
 
 from batcamp import Octree
 from batcamp.constants import XYZ_VARS
+from batcamp.octree import AXIS0
+from batcamp.octree import AXIS1
+from batcamp.octree import AXIS2
+from batcamp.octree import START
+from batcamp.octree import WIDTH
 
 
 def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.ndarray, np.ndarray]:
@@ -21,12 +26,20 @@ def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.n
     if coord == "xyz":
         return np.min(pts, axis=0), np.max(pts, axis=0)
     if coord == "rpa" and str(tree.tree_coord) == "rpa":
-        lo = np.array([tree._cell_r_min[cid], tree._cell_theta_min[cid], tree._cell_phi_start[cid]], dtype=float)
+        lo = np.array(
+            [
+                tree._cell_bounds[cid, AXIS0, START],
+                tree._cell_bounds[cid, AXIS1, START],
+                tree._cell_bounds[cid, AXIS2, START],
+            ],
+            dtype=float,
+        )
         hi = np.array(
             [
-                tree._cell_r_max[cid],
-                tree._cell_theta_max[cid],
-                (tree._cell_phi_start[cid] + tree._cell_phi_width[cid]) % (2.0 * math.pi),
+                tree._cell_bounds[cid, AXIS0, START] + tree._cell_bounds[cid, AXIS0, WIDTH],
+                tree._cell_bounds[cid, AXIS1, START] + tree._cell_bounds[cid, AXIS1, WIDTH],
+                (tree._cell_bounds[cid, AXIS2, START] + tree._cell_bounds[cid, AXIS2, WIDTH])
+                % (2.0 * math.pi),
             ],
             dtype=float,
         )
