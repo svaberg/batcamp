@@ -353,15 +353,16 @@ class OctreeInterpolator:
         q_array = np.array(q, dtype=np.float64, order="C")
         n = q_array.shape[0]
         trailing = self._value_shape_tail
+        n_components = int(self._point_values_2d.shape[1])
         if np.isscalar(self.fill_value):
-            fill = np.full(self.n_value_components, float(self.fill_value), dtype=np.float64)
+            fill = np.full(n_components, float(self.fill_value), dtype=np.float64)
         else:
             fill = np.array(self.fill_value, dtype=np.float64).reshape(-1)
             if fill.size == 1:
-                fill = np.full(self.n_value_components, float(fill[0]), dtype=np.float64)
-            elif fill.size != self.n_value_components:
+                fill = np.full(n_components, float(fill[0]), dtype=np.float64)
+            elif fill.size != n_components:
                 raise ValueError(
-                    f"fill_value has {fill.size} entries but interpolated values require {self.n_value_components} components."
+                    f"fill_value has {fill.size} entries but interpolated values require {n_components} components."
                 )
 
         cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
@@ -397,11 +398,6 @@ class OctreeInterpolator:
             return out, cell_ids.reshape(shape)
         return out
 
-    @property
-    def n_value_components(self) -> int:
-        """Return flattened component count of the interpolated output."""
-        return int(self._point_values_2d.shape[1])
-
     def __str__(self) -> str:
         """Return a compact human-readable interpolator summary."""
         return (
@@ -409,7 +405,7 @@ class OctreeInterpolator:
             f"tree_coord={self.tree.tree_coord}, "
             f"n_points={int(self.tree.ds.points.shape[0])}, "
             f"n_cells={int(self.tree.corners.shape[0])}, "
-            f"n_components={self.n_value_components}"
+            f"n_components={int(self._point_values_2d.shape[1])}"
             ")"
         )
 
