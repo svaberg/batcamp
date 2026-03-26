@@ -140,7 +140,7 @@ class CartesianOctreeBuilder:
                 rtol=max(2e-2, float(self.level_rtol)),
                 atol=max(1e-10, float(self.level_atol)),
             )
-        levels, _min_level, max_level = _resolve_cell_levels(
+        levels, max_level = _resolve_cell_levels(
             inferred_levels=inferred_levels,
             cell_levels=cell_levels,
             expected_shape=dx.shape,

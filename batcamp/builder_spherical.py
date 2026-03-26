@@ -275,7 +275,7 @@ class SphericalOctreeBuilder:
             atol=self.level_atol,
             axis_rho_tol=axis_rho_tol,
         )
-        levels, _min_level, max_level = _resolve_cell_levels(
+        levels, max_level = _resolve_cell_levels(
             inferred_levels=auto_levels,
             cell_levels=cell_levels,
             expected_shape=auto_levels.shape,
