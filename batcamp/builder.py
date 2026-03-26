@@ -16,7 +16,6 @@ from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
 from .octree import Octree
 from .shared_types import GridShape
-from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
@@ -215,8 +214,8 @@ class OctreeBuilder:
         return k
 
     @staticmethod
-    def _full_tree_counts(leaf_shape: GridShape) -> tuple[LevelCountTable, GridShape, int]:
-        """Compute full-tree counts, root shape, and depth from finest leaf shape."""
+    def _root_shape_and_depth(leaf_shape: GridShape) -> tuple[GridShape, int]:
+        """Compute root shape and depth from finest leaf shape."""
         depth = min(
             OctreeBuilder._twos_factor(leaf_shape[0]),
             OctreeBuilder._twos_factor(leaf_shape[1]),
@@ -227,9 +226,7 @@ class OctreeBuilder:
             leaf_shape[1] >> depth,
             leaf_shape[2] >> depth,
         )
-        base = int(root_shape[0] * root_shape[1] * root_shape[2])
-        counts = tuple((level, base * (8**level), base * (8**level)) for level in range(depth + 1))
-        return counts, root_shape, depth
+        return root_shape, depth
 
     def build(
         self,
@@ -287,7 +284,7 @@ class OctreeBuilder:
             )
 
         _warn_if_blocks_aux_mismatch(ds, int(corners_arr.shape[0]))
-        _unused_counts, root_shape, _depth = self._full_tree_counts(leaf_shape)
+        root_shape, _depth = self._root_shape_and_depth(leaf_shape)
         level_offset = int(_depth) - int(max_level)
         if level_offset < 0:
             raise ValueError(
