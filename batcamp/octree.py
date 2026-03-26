@@ -411,9 +411,15 @@ class Octree:
         if not set(XYZ_VARS).issubset(set(ds.variables)):
             raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
         corners = np.asarray(ds.corners, dtype=np.int64)
-        cell_bounds, domain_bounds, axis2_period, axis2_periodic = self._coord_backend(str(self._tree_coord))._attach_coord_state(
-            self, ds, corners
-        )
+        if self._tree_coord == "xyz":
+            from .cartesian import _CartesianCoordSupport
+
+            coord_backend = _CartesianCoordSupport
+        else:
+            from .spherical import _SphericalCoordSupport
+
+            coord_backend = _SphericalCoordSupport
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = coord_backend._attach_coord_state(self, ds, corners)
         interp_corners = _build_trilinear_geometry(self, ds, corners, cell_bounds)
         self._ds = ds
         self._corners = interp_corners
@@ -542,21 +548,6 @@ class Octree:
             ")"
         )
 
-    @staticmethod
-    def _coord_backend(tree_coord: str) -> type:
-        """Return the geometry-specific support class for one tree coordinate."""
-        if tree_coord == "xyz":
-            from .cartesian import _CartesianCoordSupport
-
-            return _CartesianCoordSupport
-        if tree_coord == "rpa":
-            from .spherical import _SphericalCoordSupport
-
-            return _SphericalCoordSupport
-        raise ValueError(
-            f"Unsupported tree_coord '{tree_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
-        )
-
     @property
     def cell_count(self) -> int:
         """Return number of exact persisted leaf rows."""
@@ -626,7 +617,14 @@ class Octree:
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
 
-        backend = self._coord_backend(self.tree_coord)
+        if self.tree_coord == "xyz":
+            from .cartesian import _CartesianCoordSupport
+
+            backend = _CartesianCoordSupport
+        else:
+            from .spherical import _SphericalCoordSupport
+
+            backend = _SphericalCoordSupport
         if resolved_coord == "xyz":
             return backend._domain_bounds_xyz(self)
         return backend._domain_bounds_rpa(self)
