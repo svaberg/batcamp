@@ -12,8 +12,8 @@
 - [x] Reduce complexity in oversized modules (`interpolator.py`) in-place (no new modules for now).
 - [x] Apply default-`xyz` naming consistently in interpolation internals: default path keeps base name, non-default path gets explicit suffix; rename `_trilinear_from_cell` / `_trilinear_from_cell_xyz` accordingly.
 - [x] Align lookup-state type names between backends: `spherical.LookupKernelState` should mirror `cartesian.CartesianLookupKernelState` naming (for example `SphericalLookupKernelState`).
-- [x] Align per-cell index field naming between backends (`_i0/_i1/_i2` in cartesian vs `_ir/_itheta/_iphi` in spherical) to one consistent convention.
-- [x] Align `_path(...)` parameter naming between backends (`i0/i1/i2` vs `ir/itheta/iphi`) with the same convention used for stored index fields.
+- [x] Align per-cell index field naming between backends (`_i0/_i1/_i2` in cartesian vs spherical radial/polar/azimuth index fields) to one consistent convention.
+- [x] Align `_path(...)` parameter naming between backends (`i0/i1/i2` vs spherical radial/polar/azimuth indices) with the same convention used for stored index fields.
 - [x] Align `hit_from_chosen` local index variable names between backends (`cell_i0/i1/i2` vs `cell_ir/cell_ipolar/cell_iazimuth`).
 - [x] Align lookup tuning constant naming between backends (cartesian uses inline literals where spherical uses named constants like `_LOOKUP_CONTAIN_TOL` / `_DEFAULT_LOOKUP_MAX_RADIUS`).
 - [x] Remove implicit coord fallback in `Octree.from_dataset(...)` (when coord is omitted and first build fails); make fallback an explicit opt-in policy instead of hidden behavior.
@@ -26,16 +26,16 @@
 - [ ] Builder inference cleanup: replace the spherical local span tolerances with one inference step that fits the most probable dyadic angular spacing from noisy observed cells.
 - [ ] Builder inference cleanup: infer the likeliest spherical angular grid globally instead of relying on fixed validation thresholds for per-level medians.
 - [ ] Builder inference cleanup: infer the spherical radial edge lattice from clustered observed boundaries instead of depending on one hard-coded clustering tolerance.
-- [ ] Builder inference cleanup: replace the spherical angular snap tolerances with explicit inferred theta/phi edge sets so noisy data maps to the most probable octree.
+- [ ] Builder inference cleanup: replace the spherical angular snap tolerances with explicit inferred polar/azimuth edge sets so noisy data maps to the most probable octree.
 - [ ] Persistence format cleanup: decide whether the file-format version constant should exist at all, rather than leaving that question inline in the code.
 - [x] Add missing runtime dependency declaration for `starwinds-readplt` in `pyproject.toml` to match imports from core modules.
 - [ ] Expand `[project.optional-dependencies].tests` to include non-pytest test imports (at least `pooch`) and verify tests run in a clean `. [tests]` environment.
 - [ ] Investigate and suppress/resolve intermittent runtime warning: `OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.`
 - [ ] Investigate and suppress/resolve notebook warning from `tqdm.auto`: `TqdmWarning: IProgress not found. Please update jupyter and ipywidgets.`
-- [ ] Fix `examples/octree.ipynb` for current builder API: replace removed `OctreeBuilder.compute_phi_levels(...)` usage with `SphericalOctreeBuilder.compute_delta_phi_and_levels(...)` (or equivalent current public API) so executed notebook tests pass.
+- [ ] Fix `examples/octree.ipynb` for current builder API: replace removed old spherical level-call usage with the current spherical span-level API so executed notebook tests pass.
 - [ ] Audit polar/azimuth plotting across examples: use angular grids/ticks that divide 180 cleanly and orient polar-angle axes so minimum polar is not shown at the top.
 - [ ] Reconcile ownership/debt policy with implementation: for any spherical logic left outside `batcamp/spherical.py`, either move it or record blocker/rationale in `DEBT.md`.
-- [ ] Replace `OctreeLookup` private-attribute probing (`getattr(..., \"_lookup_state\"/\"_points\"/\"_cell_phi_*\")`) with explicit backend contracts.
+- [ ] Replace `OctreeLookup` private-attribute probing (`getattr(..., \"_lookup_state\"/\"_points\"/\"_cell_azimuth_*\")`) with explicit backend contracts.
 - [ ] Collapse `OctreeLookup` pass-through wrappers where they only forward to `Octree` without adding behavior.
 - [ ] Remove `Octree.lookup_geometry()` side-door bundling: interpolator code should use octree lookup through one explicit octree-owned contract instead of grabbing `points`/`corners`/`lookup_state` as a parallel lookup path.
 - [x] Normalize public/private pair naming to `name` + `_name` (for example `build` + `_build`) and remove suffix-heavy internal names when no semantic distinction exists.

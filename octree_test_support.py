@@ -46,10 +46,10 @@ def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.n
         return lo, hi
     if coord == "rpa":
         r = np.linalg.norm(pts, axis=1)
-        theta = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
-        phi = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * math.pi)
+        polar = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
+        azimuth = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * math.pi)
         return (
-            np.array([float(np.min(r)), float(np.min(theta)), float(np.min(phi))], dtype=float),
-            np.array([float(np.max(r)), float(np.max(theta)), float(np.max(phi))], dtype=float),
+            np.array([float(np.min(r)), float(np.min(polar)), float(np.min(azimuth))], dtype=float),
+            np.array([float(np.max(r)), float(np.max(polar)), float(np.max(azimuth))], dtype=float),
         )
     raise ValueError(f"Unsupported coord {coord!r}.")
