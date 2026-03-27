@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from functools import wraps
 import logging
 from pathlib import Path
 import time
@@ -28,6 +30,27 @@ _CHILD_IJK_OFFSETS = np.array(
     [[(k >> 2) & 1, (k >> 1) & 1, k & 1] for k in range(8)],
     dtype=np.int64,
 )
+
+
+@contextmanager
+def _timed_info(task: str):
+    """Log one start/finish INFO pair around a code block."""
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("%s...", task)
+    t0 = time.perf_counter()
+    yield
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("%s complete in %.2fs", task, float(time.perf_counter() - t0))
+
+
+def _timed_info_decorator(func):
+    """Decorate one function with a fixed elapsed-time INFO log line."""
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        with _timed_info(func.__name__):
+            return func(*args, **kwargs)
+
+    return wrapped
 
 
 @njit(cache=True)
@@ -143,12 +166,14 @@ def _unpack_cell_keys(keys: np.ndarray, axis_bases: np.ndarray) -> tuple[np.ndar
     return depth, np.column_stack((axis0, axis1, axis2))
 
 
+@_timed_info_decorator
 def _rebuild_cells(
     depths: np.ndarray,
     cell_ijk: np.ndarray,
     leaf_value: np.ndarray,
     *,
     n_leaf_slots: int | None = None,
+    tree_coord: str = "",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build rebuilt octree cell arrays from exact leaf addresses."""
     leaf_ijk_raw = cell_ijk
@@ -215,6 +240,7 @@ def _rebuild_cells(
     return cell_depth, cell_ijk_out, internal_keys, internal_depth, internal_ijk
 
 
+@_timed_info_decorator
 def _build_cell_topology(
     depths: np.ndarray,
     leaf_ijk: np.ndarray,
@@ -223,6 +249,7 @@ def _build_cell_topology(
     internal_depth: np.ndarray,
     internal_ijk: np.ndarray,
     leaf_slots: int,
+    tree_coord: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build sparse 8-child references for occupied rebuilt cells."""
     n_cells = int(leaf_slots) + int(internal_depth.shape[0])
@@ -280,7 +307,7 @@ def _rebuild_cell_state(
     cell_levels: np.ndarray,
     cell_ijk: np.ndarray,
     tree_coord: str,
-) -> tuple[np.ndarray, ...]:
+    ) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied cells from leaf addresses."""
 
     if cell_ijk.ndim != 2 or cell_ijk.shape[1] != 3:
@@ -292,20 +319,13 @@ def _rebuild_cell_state(
         raise ValueError("Octree state requires at least one valid leaf cell.")
     depths = cell_levels[valid_ids]
     leaf_ijk_valid = cell_ijk[valid_ids]
-    t0 = time.perf_counter()
     cell_depth, cell_ijk_rt, internal_keys, internal_depth, internal_ijk = _rebuild_cells(
         depths,
         leaf_ijk_valid,
         valid_ids,
         n_leaf_slots=int(cell_levels.shape[0]),
+        tree_coord=tree_coord,
     )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info(
-            "octree materialize: rebuild cells complete (%.2fs) coord=%s",
-            float(time.perf_counter() - t0),
-            tree_coord,
-        )
-    t0 = time.perf_counter()
     cell_child, root_cell_ids, cell_parent = _build_cell_topology(
         depths,
         leaf_ijk_valid,
@@ -314,13 +334,8 @@ def _rebuild_cell_state(
         internal_depth,
         internal_ijk,
         int(cell_levels.shape[0]),
+        tree_coord=tree_coord,
     )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info(
-            "octree materialize: build cell topology complete (%.2fs) coord=%s",
-            float(time.perf_counter() - t0),
-            tree_coord,
-        )
     return cell_depth, cell_ijk_rt, cell_child, root_cell_ids, cell_parent
 
 class Octree:
@@ -352,20 +367,16 @@ class Octree:
             level_atol=level_atol,
             cell_levels=None,
         )
-        t0 = time.perf_counter()
-        self._init_from_state(
-            root_shape=state.root_shape,
-            tree_coord=state.tree_coord,
-            cell_levels=state.cell_levels,
-            cell_ijk=state.cell_ijk,
-            points=points,
-            corners=corners,
-        )
         if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "octree build: materialize octree complete (%.2fs) coord=%s",
-                float(time.perf_counter() - t0),
-                self._tree_coord,
+            logger.info("_init_from_state: coord=%s", state.tree_coord)
+        with _timed_info("_init_from_state"):
+            self._init_from_state(
+                root_shape=state.root_shape,
+                tree_coord=state.tree_coord,
+                cell_levels=state.cell_levels,
+                cell_ijk=state.cell_ijk,
+                points=points,
+                corners=corners,
             )
 
     def _init_from_state(
@@ -397,24 +408,19 @@ class Octree:
         if corner_rows.ndim != 2 or corner_rows.shape != (leaf_levels.shape[0], 8):
             raise ValueError("corners must have shape (n_cells, 8) matching cell_levels.")
         max_level = int(np.max(leaf_levels))
-        t0 = time.perf_counter()
-        (
-            self._cell_depth,
-            self._cell_ijk,
-            self._cell_child,
-            self._root_cell_ids,
-            self._cell_parent,
-        ) = _rebuild_cell_state(
-            leaf_levels,
-            leaf_ijk,
-            self._tree_coord,
-        )
         if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "octree materialize: rebuild cell state complete (%.2fs) coord=%s max_level=%d",
-                float(time.perf_counter() - t0),
+            logger.info("_rebuild_cell_state: coord=%s max_level=%d", self._tree_coord, max_level)
+        with _timed_info("_rebuild_cell_state"):
+            (
+                self._cell_depth,
+                self._cell_ijk,
+                self._cell_child,
+                self._root_cell_ids,
+                self._cell_parent,
+            ) = _rebuild_cell_state(
+                leaf_levels,
+                leaf_ijk,
                 self._tree_coord,
-                max_level,
             )
         self._leaf_slot_count = int(leaf_levels.shape[0])
         if self._tree_coord == "xyz":
@@ -425,14 +431,10 @@ class Octree:
             from .spherical import _attach_spherical_coord_state
 
             attach_coord_state = _attach_spherical_coord_state
-        t0 = time.perf_counter()
-        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
         if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "octree materialize: attach coord state complete (%.2fs) coord=%s",
-                float(time.perf_counter() - t0),
-                self._tree_coord,
-            )
+            logger.info("%s: coord=%s", attach_coord_state.__name__, self._tree_coord)
+        with _timed_info(attach_coord_state.__name__):
+            cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
         self._corners = corner_rows
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
