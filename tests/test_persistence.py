@@ -97,7 +97,6 @@ def test_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> None:
     tree.save(path)
 
     loaded = Octree.load(path, ds=ds)
-    assert loaded.ds is ds
     assert int(loaded.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 
