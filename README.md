@@ -30,8 +30,16 @@ from batcamp import OctreeInterpolator
 # Read the dataset
 ds = Dataset.from_file("MY_FILE")
 
-# Build the octree explicitly, then create the interpolator on top of it.
-tree = OctreeBuilder().from_ds(ds)
+# Extract the mesh geometry explicitly.
+points = np.column_stack((
+    np.asarray(ds["X [R]"], dtype=float),
+    np.asarray(ds["Y [R]"], dtype=float),
+    np.asarray(ds["Z [R]"], dtype=float),
+))
+corners = np.asarray(ds.corners, dtype=np.int64)
+
+# Build the octree from points and corners, then create the interpolator on top of it.
+tree = OctreeBuilder().build(points, corners)
 rho_values = np.asarray(ds["Rho [g/cm^3]"], dtype=float)
 interp = OctreeInterpolator(tree, rho_values)
 
