@@ -23,24 +23,23 @@ def _attach_spherical_coord_state(tree, points: np.ndarray, corners: np.ndarray)
     y = points[:, 1]
     z = points[:, 2]
     cell_levels = tree.cell_levels
-    n_cells = int(corners.shape[0])
     valid_ids = np.flatnonzero(cell_levels >= 0)
     shifts = int(tree.max_level) - cell_levels[valid_ids]
     width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
     r0_f = np.left_shift(tree._cell_ijk[valid_ids, AXIS0], shifts)
     r1_f = r0_f + width_units
     n_r_edges = int(tree.leaf_shape[0]) + 1
-    radial_sum = np.zeros(n_r_edges, dtype=np.float64)
-    radial_count = np.zeros(n_r_edges, dtype=np.int64)
     point_r = np.sqrt(x * x + y * y + z * z)
     cell_r_lo_obs = np.min(point_r[corners], axis=1)
     cell_r_hi_obs = np.max(point_r[corners], axis=1)
-    for row, edge_idx in enumerate(r0_f):
-        radial_sum[int(edge_idx)] += float(cell_r_lo_obs[valid_ids[row]])
-        radial_count[int(edge_idx)] += 1
-    for row, edge_idx in enumerate(r1_f):
-        radial_sum[int(edge_idx)] += float(cell_r_hi_obs[valid_ids[row]])
-        radial_count[int(edge_idx)] += 1
+    radial_sum = (
+        np.bincount(r0_f, weights=cell_r_lo_obs[valid_ids], minlength=n_r_edges)
+        + np.bincount(r1_f, weights=cell_r_hi_obs[valid_ids], minlength=n_r_edges)
+    )
+    radial_count = (
+        np.bincount(r0_f, minlength=n_r_edges)
+        + np.bincount(r1_f, minlength=n_r_edges)
+    )
     if np.any(radial_count == 0):
         missing_edge = int(np.flatnonzero(radial_count == 0)[0])
         raise ValueError(f"Spherical lookup could not reconstruct radial edge {missing_edge}.")
