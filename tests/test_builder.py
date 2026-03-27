@@ -131,8 +131,8 @@ def _build_disjoint_xyz_dataset() -> _FakeDataset:
     points = np.vstack((cube0, cube1))
     corners = np.array(
         [
-            [0, 1, 2, 3, 4, 5, 6, 7],
-            [8, 9, 10, 11, 12, 13, 14, 15],
+            [0, 1, 3, 2, 4, 5, 7, 6],
+            [8, 9, 11, 10, 12, 13, 15, 14],
         ],
         dtype=np.int64,
     )
@@ -167,12 +167,12 @@ def _build_adaptive_xyz_dataset() -> tuple[_FakeDataset, np.ndarray]:
         [
             int(node_index[0, 0, 0]),
             int(node_index[1, 0, 0]),
-            int(node_index[0, 2, 0]),
             int(node_index[1, 2, 0]),
+            int(node_index[0, 2, 0]),
             int(node_index[0, 0, 2]),
             int(node_index[1, 0, 2]),
-            int(node_index[0, 2, 2]),
             int(node_index[1, 2, 2]),
+            int(node_index[0, 2, 2]),
         ]
     ]
     levels = [0]
@@ -183,12 +183,12 @@ def _build_adaptive_xyz_dataset() -> tuple[_FakeDataset, np.ndarray]:
                     [
                         int(node_index[ix, iy, iz]),
                         int(node_index[ix + 1, iy, iz]),
-                        int(node_index[ix, iy + 1, iz]),
                         int(node_index[ix + 1, iy + 1, iz]),
+                        int(node_index[ix, iy + 1, iz]),
                         int(node_index[ix, iy, iz + 1]),
                         int(node_index[ix + 1, iy, iz + 1]),
-                        int(node_index[ix, iy + 1, iz + 1]),
                         int(node_index[ix + 1, iy + 1, iz + 1]),
+                        int(node_index[ix, iy + 1, iz + 1]),
                     ]
                 )
                 levels.append(1)
@@ -239,12 +239,12 @@ def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
                     [
                         int(node_index[0, ipolar, iazimuth]),
                         int(node_index[1, ipolar, iazimuth]),
-                        int(node_index[0, ipolar + 1, iazimuth]),
                         int(node_index[1, ipolar + 1, iazimuth]),
+                        int(node_index[0, ipolar + 1, iazimuth]),
                         int(node_index[0, ipolar, iazimuth + 1]),
                         int(node_index[1, ipolar, iazimuth + 1]),
-                        int(node_index[0, ipolar + 1, iazimuth + 1]),
                         int(node_index[1, ipolar + 1, iazimuth + 1]),
+                        int(node_index[0, ipolar + 1, iazimuth + 1]),
                     ]
                 )
 
@@ -517,7 +517,6 @@ def test_rebuild_cells_rejects_duplicate_leaf_addresses() -> None:
             np.array([0, 0], dtype=np.int64),
             np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
-            tree_depth=0,
         )
 
 
@@ -528,7 +527,6 @@ def test_rebuild_cells_rejects_parent_child_overlap() -> None:
             np.array([0, 1], dtype=np.int64),
             np.array([[0, 0, 0], [0, 0, 0]], dtype=np.int64),
             np.array([0, 1], dtype=np.int64),
-            tree_depth=1,
         )
 
 

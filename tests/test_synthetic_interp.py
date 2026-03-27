@@ -50,6 +50,9 @@ def _build_uniform_spherical_hex_dataset(
             "LinField": linear_field,
             "LinField2": linear_field2,
             "LinFieldConst": linear_const,
+            "RField": r_nodes,
+            "PolarField": polar_nodes,
+            "AzimuthField": azimuth_nodes,
         },
     )
     return ds, linear_field, (a, b, c, d)
@@ -213,6 +216,42 @@ def test_vector_interp_shape_and_values(synthetic_context) -> None:
 
     assert vals.shape == expected.shape
     assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
+
+
+def test_interp_matches_rpa_coordinate_fields_from_xyz_queries(synthetic_context) -> None:
+    """xyz queries should preserve spherical axis order for `(r, polar, azimuth)` fields."""
+    ds, tree, _linear_field, _coeffs = synthetic_context
+    interp = OctreeInterpolator(
+        tree,
+        np.column_stack((np.asarray(ds["RField"]), np.asarray(ds["PolarField"]), np.asarray(ds["AzimuthField"]))),
+    )
+    rng = np.random.default_rng(55)
+    valid = _interpolation_valid_cells(tree, interp=interp)
+    assert valid.size > 0
+    choose = rng.choice(valid, size=min(160, valid.size), replace=False)
+    xyz, rpa = _sample_inside_cells(tree, choose, rng)
+    vals, cell_ids = interp(xyz, return_cell_ids=True)
+
+    assert np.array_equal(cell_ids, choose)
+    assert np.allclose(vals, rpa, atol=1e-9, rtol=0.0)
+
+
+def test_interp_matches_rpa_coordinate_fields_from_rpa_queries(synthetic_context) -> None:
+    """rpa queries should preserve spherical axis order for `(r, polar, azimuth)` fields."""
+    ds, tree, _linear_field, _coeffs = synthetic_context
+    interp = OctreeInterpolator(
+        tree,
+        np.column_stack((np.asarray(ds["RField"]), np.asarray(ds["PolarField"]), np.asarray(ds["AzimuthField"]))),
+    )
+    rng = np.random.default_rng(66)
+    valid = _interpolation_valid_cells(tree, interp=interp)
+    assert valid.size > 0
+    choose = rng.choice(valid, size=min(160, valid.size), replace=False)
+    _xyz, rpa = _sample_inside_cells(tree, choose, rng)
+    vals, cell_ids = interp(rpa, query_coord="rpa", return_cell_ids=True)
+
+    assert np.array_equal(cell_ids, choose)
+    assert np.allclose(vals, rpa, atol=1e-9, rtol=0.0)
 
 
 def test_outside_points_use_fill_and_negative_cell_id(synthetic_context) -> None:
