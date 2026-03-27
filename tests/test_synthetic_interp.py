@@ -17,14 +17,14 @@ from octree_test_support import cell_bounds
 def _build_uniform_spherical_hex_dataset(
     *,
     nr: int = 2,
-    ntheta: int = 4,
-    nphi: int = 8,
+    npolar: int = 4,
+    nazimuth: int = 8,
 ) -> tuple[_FakeDataset, np.ndarray, tuple[float, float, float, float]]:
     """Private test helper: build a synthetic full-sphere hexahedral dataset."""
     points, corners = _build_spherical_hex_mesh(
         nr=nr,
-        ntheta=ntheta,
-        nphi=nphi,
+        npolar=npolar,
+        nazimuth=nazimuth,
         r_min=1.0,
         r_max=3.0,
     )
@@ -32,11 +32,11 @@ def _build_uniform_spherical_hex_dataset(
     y = points[:, 1]
     z = points[:, 2]
     r_nodes = np.sqrt(x * x + y * y + z * z)
-    theta_nodes = np.arccos(np.clip(z / np.maximum(r_nodes, np.finfo(float).tiny), -1.0, 1.0))
-    phi_nodes = np.mod(np.arctan2(y, x), 2.0 * math.pi)
+    polar_nodes = np.arccos(np.clip(z / np.maximum(r_nodes, np.finfo(float).tiny), -1.0, 1.0))
+    azimuth_nodes = np.mod(np.arctan2(y, x), 2.0 * math.pi)
 
     a, b, c, d = (1.7, -0.45, 0.3, 2.1)
-    linear_field = a * r_nodes + b * theta_nodes + c * phi_nodes + d
+    linear_field = a * r_nodes + b * polar_nodes + c * azimuth_nodes + d
     linear_field2 = 2.0 * linear_field + 1.0
     linear_const = np.full_like(linear_field, 5.0)
 
@@ -82,13 +82,13 @@ def _sample_inside_cells(tree: Octree, cell_ids: np.ndarray, rng: np.random.Gene
         v = float(rng.uniform(0.15, 0.85))
         w = float(rng.uniform(0.15, 0.85))
         r = r0 + u * (r1 - r0)
-        theta = t0 + v * (t1 - t0)
-        phi = (p0 + w * pw) % (2.0 * math.pi)
+        polar = t0 + v * (t1 - t0)
+        azimuth = (p0 + w * pw) % (2.0 * math.pi)
 
-        st = math.sin(theta)
-        xyz = np.array([r * st * math.cos(phi), r * st * math.sin(phi), r * math.cos(theta)])
+        st = math.sin(polar)
+        xyz = np.array([r * st * math.cos(azimuth), r * st * math.sin(azimuth), r * math.cos(polar)])
         xyz_list.append(xyz)
-        rpa_list.append(np.array([r, theta, phi]))
+        rpa_list.append(np.array([r, polar, azimuth]))
     return np.array(xyz_list), np.array(rpa_list)
 
 
@@ -97,14 +97,14 @@ def _midpoints_xyz(tree: Octree, cell_ids: np.ndarray) -> np.ndarray:
     for cell_id in cell_ids.tolist():
         lo, hi = cell_bounds(tree, int(cell_id), coord="rpa")
         r = 0.5 * (float(lo[0]) + float(hi[0]))
-        theta = 0.5 * (float(lo[1]) + float(hi[1]))
-        phi0 = float(lo[2])
-        phi_width = float((hi[2] - lo[2]) % (2.0 * math.pi))
-        if np.isclose(phi_width, 0.0, atol=1e-12):
-            phi_width = 2.0 * math.pi
-        phi = (phi0 + 0.5 * phi_width) % (2.0 * math.pi)
-        st = math.sin(theta)
-        xyz_list.append(np.array([r * st * math.cos(phi), r * st * math.sin(phi), r * math.cos(theta)]))
+        polar = 0.5 * (float(lo[1]) + float(hi[1]))
+        azimuth0 = float(lo[2])
+        azimuth_width = float((hi[2] - lo[2]) % (2.0 * math.pi))
+        if np.isclose(azimuth_width, 0.0, atol=1e-12):
+            azimuth_width = 2.0 * math.pi
+        azimuth = (azimuth0 + 0.5 * azimuth_width) % (2.0 * math.pi)
+        st = math.sin(polar)
+        xyz_list.append(np.array([r * st * math.cos(azimuth), r * st * math.sin(azimuth), r * math.cos(polar)]))
     return np.asarray(xyz_list, dtype=float)
 
 
@@ -119,11 +119,11 @@ def _interpolation_valid_cells(
     hi = np.empty((n_cells, 3), dtype=float)
     for cell_id in range(n_cells):
         lo[cell_id], hi[cell_id] = cell_bounds(tree, cell_id, coord="rpa")
-    phi_end = hi[:, 2]
+    azimuth_end = hi[:, 2]
     ids = np.flatnonzero(
         (lo[:, 1] > 1e-6)
         & (hi[:, 1] < (math.pi - 1e-6))
-        & (phi_end < (2.0 * math.pi - 1e-8))
+        & (azimuth_end < (2.0 * math.pi - 1e-8))
     )
     if interp is None:
         return ids

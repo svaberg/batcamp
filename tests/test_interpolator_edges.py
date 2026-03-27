@@ -19,14 +19,14 @@ from octree_test_support import cell_bounds
 def _build_fake_dataset(
     *,
     nr: int = 1,
-    ntheta: int = 2,
-    nphi: int = 4,
+    npolar: int = 2,
+    nazimuth: int = 4,
 ) -> _FakeDataset:
     """Private test helper: build a small regular spherical hexahedral dataset."""
     points, corners = _build_spherical_hex_mesh(
         nr=nr,
-        ntheta=ntheta,
-        nphi=nphi,
+        npolar=npolar,
+        nazimuth=nazimuth,
         r_min=1.0,
         r_max=2.0,
     )
@@ -181,7 +181,7 @@ def test_cartesian_batch_lookup_resolves_adjacent_cells() -> None:
 
 def test_spherical_batch_lookup_resolves_adjacent_cells() -> None:
     """Spherical batch lookup should resolve adjacent queries correctly."""
-    ds = _build_fake_dataset(nr=2, ntheta=4, nphi=8)
+    ds = _build_fake_dataset(nr=2, npolar=4, nazimuth=8)
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
     cell_child = tree._cell_child
     cell_parent = tree._cell_parent
@@ -286,7 +286,7 @@ def test_vector_fill_applies_outside_domain() -> None:
     assert np.allclose(vals[0], fill, atol=0.0, rtol=0.0)
 
 def test_rpa_wrap_equivalence() -> None:
-    """`rpa` interpolation should treat azimuth `phi` and `phi + 2pi` equivalently."""
+    """`rpa` interpolation should treat azimuth and azimuth + 2pi equivalently."""
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
     interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))

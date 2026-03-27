@@ -39,8 +39,8 @@ def _build_spherical_uniform_tree() -> Octree:
     """Private test helper: small uniform spherical tree with periodic azimuth."""
     points, corners = _build_spherical_hex_mesh(
         nr=1,
-        ntheta=2,
-        nphi=4,
+        npolar=2,
+        nazimuth=4,
         r_min=1.0,
         r_max=2.0,
     )

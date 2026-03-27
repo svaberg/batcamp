@@ -24,17 +24,17 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
     return np.array([r, polar, azimuth], dtype=float)
 
 
-def test_phi_level_arrays_shapes(octree_context: dict[str, object]) -> None:
+def test_azimuth_level_arrays_shapes(octree_context: dict[str, object]) -> None:
     """Per-cell level arrays have expected sizes and finite coarse spacing."""
     corners = octree_context["corners"]
-    delta_phi = octree_context["delta_phi"]
-    center_phi = octree_context["center_phi"]
+    azimuth_span = octree_context["azimuth_span"]
+    azimuth_center = octree_context["azimuth_center"]
     cell_levels = octree_context["cell_levels"]
     expected = octree_context["expected"]
     coarse = octree_context["coarse"]
 
-    assert delta_phi.shape[0] == corners.shape[0]
-    assert center_phi.shape[0] == corners.shape[0]
+    assert azimuth_span.shape[0] == corners.shape[0]
+    assert azimuth_center.shape[0] == corners.shape[0]
     assert cell_levels.shape[0] == corners.shape[0]
     assert expected.shape[0] == corners.shape[0]
     assert np.isfinite(coarse)
