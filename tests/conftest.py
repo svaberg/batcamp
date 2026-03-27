@@ -44,7 +44,7 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
         tree_coord="rpa",
         axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
     )
-    delta_phi, center_phi, _levels, expected, coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(
+    azimuth_span, azimuth_center, _levels, expected, coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
         ds,
         rtol=1e-4,
         atol=1e-9,
@@ -61,8 +61,8 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
     return {
         "ds": ds,
         "corners": corners,
-        "delta_phi": delta_phi,
-        "center_phi": center_phi,
+        "azimuth_span": azimuth_span,
+        "azimuth_center": azimuth_center,
         "cell_levels": cell_levels,
         "expected": expected,
         "coarse": coarse,

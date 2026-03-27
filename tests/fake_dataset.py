@@ -29,45 +29,45 @@ class FakeDataset:
 def build_spherical_hex_mesh(
     *,
     nr: int,
-    ntheta: int,
-    nphi: int,
+    npolar: int,
+    nazimuth: int,
     r_min: float,
     r_max: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build a regular spherical hexahedral mesh and return points/corners."""
     r_edges = np.linspace(float(r_min), float(r_max), int(nr) + 1)
-    theta_edges = np.linspace(0.0, np.pi, int(ntheta) + 1)
-    phi_edges = np.linspace(0.0, 2.0 * np.pi, int(nphi) + 1)
+    polar_edges = np.linspace(0.0, np.pi, int(npolar) + 1)
+    azimuth_edges = np.linspace(0.0, 2.0 * np.pi, int(nazimuth) + 1)
 
-    node_index = -np.ones((int(nr) + 1, int(ntheta) + 1, int(nphi) + 1), dtype=np.int64)
+    node_index = -np.ones((int(nr) + 1, int(npolar) + 1, int(nazimuth) + 1), dtype=np.int64)
     xyz_list: list[tuple[float, float, float]] = []
     node_id = 0
     for ir in range(int(nr) + 1):
         r = float(r_edges[ir])
-        for it in range(int(ntheta) + 1):
-            theta = float(theta_edges[it])
-            st = np.sin(theta)
-            ct = np.cos(theta)
-            for ip in range(int(nphi) + 1):
-                phi = float(phi_edges[ip])
-                xyz_list.append((r * st * np.cos(phi), r * st * np.sin(phi), r * ct))
-                node_index[ir, it, ip] = node_id
+        for ipolar in range(int(npolar) + 1):
+            polar = float(polar_edges[ipolar])
+            st = np.sin(polar)
+            ct = np.cos(polar)
+            for iazimuth in range(int(nazimuth) + 1):
+                azimuth = float(azimuth_edges[iazimuth])
+                xyz_list.append((r * st * np.cos(azimuth), r * st * np.sin(azimuth), r * ct))
+                node_index[ir, ipolar, iazimuth] = node_id
                 node_id += 1
 
     corners: list[list[int]] = []
     for ir in range(int(nr)):
-        for it in range(int(ntheta)):
-            for ip in range(int(nphi)):
+        for ipolar in range(int(npolar)):
+            for iazimuth in range(int(nazimuth)):
                 corners.append(
                     [
-                        int(node_index[ir, it, ip]),
-                        int(node_index[ir + 1, it, ip]),
-                        int(node_index[ir, it + 1, ip]),
-                        int(node_index[ir + 1, it + 1, ip]),
-                        int(node_index[ir, it, ip + 1]),
-                        int(node_index[ir + 1, it, ip + 1]),
-                        int(node_index[ir, it + 1, ip + 1]),
-                        int(node_index[ir + 1, it + 1, ip + 1]),
+                        int(node_index[ir, ipolar, iazimuth]),
+                        int(node_index[ir + 1, ipolar, iazimuth]),
+                        int(node_index[ir, ipolar + 1, iazimuth]),
+                        int(node_index[ir + 1, ipolar + 1, iazimuth]),
+                        int(node_index[ir, ipolar, iazimuth + 1]),
+                        int(node_index[ir + 1, ipolar, iazimuth + 1]),
+                        int(node_index[ir, ipolar + 1, iazimuth + 1]),
+                        int(node_index[ir + 1, ipolar + 1, iazimuth + 1]),
                     ]
                 )
     return np.array(xyz_list, dtype=float), np.array(corners, dtype=np.int64)

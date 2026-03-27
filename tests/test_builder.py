@@ -25,14 +25,14 @@ from octree_test_support import cell_bounds
 def _build_regular_dataset(
     *,
     nr: int = 2,
-    ntheta: int = 4,
-    nphi: int = 8,
+    npolar: int = 4,
+    nazimuth: int = 8,
 ) -> _FakeDataset:
     """Private test helper: build a small regular spherical hexahedral dataset."""
     points, corners = _build_spherical_hex_mesh(
         nr=nr,
-        ntheta=ntheta,
-        nphi=nphi,
+        npolar=npolar,
+        nazimuth=nazimuth,
         r_min=1.0,
         r_max=3.0,
     )
@@ -211,38 +211,38 @@ def _build_adaptive_xyz_dataset() -> tuple[_FakeDataset, np.ndarray]:
 
 def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
     """Private test helper: build two spherical shell layers with a radial gap."""
-    theta_edges = np.array([0.0, 0.5 * math.pi, math.pi], dtype=float)
-    phi_edges = np.array([0.0, math.pi, 2.0 * math.pi], dtype=float)
+    polar_edges = np.array([0.0, 0.5 * math.pi, math.pi], dtype=float)
+    azimuth_edges = np.array([0.0, math.pi, 2.0 * math.pi], dtype=float)
     shell_edges = ((1.0, 2.0), (4.0, 5.0))
 
     points: list[tuple[float, float, float]] = []
     corners: list[list[int]] = []
 
     for r0, r1 in shell_edges:
-        node_index = -np.ones((2, theta_edges.size, phi_edges.size), dtype=np.int64)
+        node_index = -np.ones((2, polar_edges.size, azimuth_edges.size), dtype=np.int64)
         for ir, rr in enumerate((r0, r1)):
-            for it, theta in enumerate(theta_edges):
-                st = math.sin(float(theta))
-                ct = math.cos(float(theta))
-                for ip, phi in enumerate(phi_edges):
-                    x = float(rr) * st * math.cos(float(phi))
-                    y = float(rr) * st * math.sin(float(phi))
+            for ipolar, polar in enumerate(polar_edges):
+                st = math.sin(float(polar))
+                ct = math.cos(float(polar))
+                for iazimuth, azimuth in enumerate(azimuth_edges):
+                    x = float(rr) * st * math.cos(float(azimuth))
+                    y = float(rr) * st * math.sin(float(azimuth))
                     z = float(rr) * ct
-                    node_index[ir, it, ip] = len(points)
+                    node_index[ir, ipolar, iazimuth] = len(points)
                     points.append((x, y, z))
 
-        for it in range(theta_edges.size - 1):
-            for ip in range(phi_edges.size - 1):
+        for ipolar in range(polar_edges.size - 1):
+            for iazimuth in range(azimuth_edges.size - 1):
                 corners.append(
                     [
-                        int(node_index[0, it, ip]),
-                        int(node_index[1, it, ip]),
-                        int(node_index[0, it + 1, ip]),
-                        int(node_index[1, it + 1, ip]),
-                        int(node_index[0, it, ip + 1]),
-                        int(node_index[1, it, ip + 1]),
-                        int(node_index[0, it + 1, ip + 1]),
-                        int(node_index[1, it + 1, ip + 1]),
+                        int(node_index[0, ipolar, iazimuth]),
+                        int(node_index[1, ipolar, iazimuth]),
+                        int(node_index[0, ipolar + 1, iazimuth]),
+                        int(node_index[1, ipolar + 1, iazimuth]),
+                        int(node_index[0, ipolar, iazimuth + 1]),
+                        int(node_index[1, ipolar, iazimuth + 1]),
+                        int(node_index[0, ipolar + 1, iazimuth + 1]),
+                        int(node_index[1, ipolar + 1, iazimuth + 1]),
                     ]
                 )
 
@@ -380,8 +380,8 @@ def test_build_default_returns_cartesian_tree() -> None:
     assert tree.tree_coord == "xyz"
 
 
-def test_compute_phi_levels_rejects_missing_phi_source() -> None:
-    """Phi-level computation should reject datasets lacking phi source fields."""
+def test_compute_azimuth_spans_reject_missing_xy_geometry() -> None:
+    """Azimuth-span computation should reject datasets lacking `X/Y` geometry."""
     points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
     corners = np.array([[0, 1, 2]], dtype=np.int64)
     ds = _FakeDataset(
@@ -389,12 +389,12 @@ def test_compute_phi_levels_rejects_missing_phi_source() -> None:
         corners=corners,
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[2]: points[:, 2]},
     )
-    with pytest.raises(ValueError, match="Could not determine phi"):
-        SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
+    with pytest.raises(ValueError, match="Could not determine azimuth"):
+        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
 
 
-def test_compute_phi_levels_rejects_bad_corner_rank() -> None:
-    """Phi-level computation should reject non-2D corner arrays."""
+def test_compute_azimuth_spans_reject_bad_corner_rank() -> None:
+    """Azimuth-span computation should reject non-2D corner arrays."""
     points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
     corners = np.array([0, 1, 2], dtype=np.int64)
     ds = _FakeDataset(
@@ -403,11 +403,11 @@ def test_compute_phi_levels_rejects_bad_corner_rank() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Expected 2D corner array"):
-        SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
+        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
 
 
-def test_compute_phi_levels_rejects_too_few_corners() -> None:
-    """Phi-level computation should reject cells with fewer than 3 corners."""
+def test_compute_azimuth_spans_reject_too_few_corners() -> None:
+    """Azimuth-span computation should reject cells with fewer than 3 corners."""
     points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
     corners = np.array([[0, 1]], dtype=np.int64)
     ds = _FakeDataset(
@@ -416,11 +416,11 @@ def test_compute_phi_levels_rejects_too_few_corners() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Need at least 3 corners per cell"):
-        SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
+        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
 
 
 def test_infer_levels_marks_non_dyadic_span_invalid() -> None:
-    """Non-dyadic delta-phi spans should map to level -1."""
+    """Non-dyadic azimuth spans should map to level -1."""
     levels = SphericalOctreeBuilder.infer_levels_from_span(np.array([1.0, 0.5, 0.3]))
     assert np.array_equal(levels, np.array([0, 1, -1], dtype=np.int64))
 
@@ -429,8 +429,8 @@ def test_build_tree_rejects_all_invalid_levels() -> None:
     """Tree construction should fail when all provided levels are invalid."""
     ds = _build_regular_dataset()
     builder = OctreeBuilder()
-    delta_phi, _center_phi, _cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
-    all_invalid = np.full(delta_phi.shape, -1, dtype=np.int64)
+    azimuth_span, _azimuth_center, _cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+    all_invalid = np.full(azimuth_span.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
         builder._build(ds, tree_coord="rpa", cell_levels=all_invalid)
 
@@ -564,7 +564,7 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
 def test_spherical_lookup_rejects_non_exact_geometry() -> None:
     """Irregular spherical geometry should fail in the builder."""
     regular = _build_regular_dataset()
-    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(regular)
+    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(regular)
     with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
         OctreeBuilder()._build(
             _build_irregular_spherical_dataset(),
@@ -696,13 +696,13 @@ def test_spherical_level_shapes_require_valid_levels() -> None:
     """Spherical angular-shape inference should fail when all levels are invalid."""
     ds = _build_regular_dataset()
     corners = np.asarray(ds.corners, dtype=np.int64)
-    delta_phi, _center_phi, _levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
+    azimuth_span, _azimuth_center, _levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) cell levels available for tree inference"):
         SphericalOctreeBuilder.infer_level_angular_shapes(
             ds,
             corners,
-            delta_phi,
-            np.full(delta_phi.shape, -1, dtype=np.int64),
+            azimuth_span,
+            np.full(azimuth_span.shape, -1, dtype=np.int64),
         )
 
 
@@ -800,7 +800,7 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
 def test_build_returns_bound_tree() -> None:
     """Builder should return a tree already bound to the dataset."""
     ds = _build_regular_dataset()
-    _delta_phi, _center_phi, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_delta_phi_and_levels(ds)
+    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
     tree = OctreeBuilder()._build(
         ds,
         tree_coord="rpa",
@@ -820,7 +820,7 @@ def test_build_stores_tree_coord() -> None:
 
 def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
     """Spherical build should fail when `ds.corners` is internally inconsistent."""
-    ds = _build_regular_dataset(nr=1, ntheta=2, nphi=2)
+    ds = _build_regular_dataset(nr=1, npolar=2, nazimuth=2)
     corners_full = np.array(ds.corners, copy=True)
     ds.corners = np.array(corners_full[:2], copy=True)
 

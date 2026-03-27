@@ -16,14 +16,14 @@ from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 def _build_regular_fake_dataset(
     *,
     nr: int = 1,
-    ntheta: int = 2,
-    nphi: int = 4,
+    npolar: int = 2,
+    nazimuth: int = 4,
 ) -> _FakeDataset:
     """Private test helper: build a regular spherical dataset for edge-case tests."""
     points, corners = _build_spherical_hex_mesh(
         nr=nr,
-        ntheta=ntheta,
-        nphi=nphi,
+        npolar=npolar,
+        nazimuth=nazimuth,
         r_min=1.0,
         r_max=2.0,
     )
@@ -64,7 +64,7 @@ def _build_axis_only_fake_dataset() -> _FakeDataset:
 
 
 def test_axis_only_dataset_rejected() -> None:
-    """Axis-only cells should fail octree build because no valid phi levels exist."""
+    """Axis-only cells should fail octree build because no valid azimuth spans exist."""
     ds = _build_axis_only_fake_dataset()
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels"):
         OctreeBuilder().build(ds, tree_coord="rpa")

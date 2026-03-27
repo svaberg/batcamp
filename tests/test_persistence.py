@@ -16,8 +16,8 @@ def tree_dataset_pair() -> tuple[Octree, _FakeDataset]:
     """Return one synthetic spherical octree and source dataset for persistence tests."""
     points, corners = _build_spherical_hex_mesh(
         nr=2,
-        ntheta=4,
-        nphi=8,
+        npolar=4,
+        nazimuth=8,
         r_min=1.0,
         r_max=3.0,
     )
