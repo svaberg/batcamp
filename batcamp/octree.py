@@ -333,15 +333,53 @@ class Octree:
 
     def __init__(
         self,
+        points: np.ndarray,
+        corners: np.ndarray,
+        *,
+        tree_coord: TreeCoord | None = None,
+        axis_rho_tol: float = 1e-12,
+        level_rtol: float = 1e-4,
+        level_atol: float = 1e-9,
+    ) -> None:
+        """Build one octree from explicit point coordinates and cell corners."""
+        from .builder import _build_octree_state
+
+        state = _build_octree_state(
+            points,
+            corners,
+            tree_coord=tree_coord,
+            axis_rho_tol=axis_rho_tol,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
+            cell_levels=None,
+        )
+        t0 = time.perf_counter()
+        self._init_from_state(
+            root_shape=state.root_shape,
+            tree_coord=state.tree_coord,
+            cell_levels=state.cell_levels,
+            cell_ijk=state.cell_ijk,
+            points=points,
+            corners=corners,
+        )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "octree build: materialize octree complete (%.2fs) coord=%s",
+                float(time.perf_counter() - t0),
+                self._tree_coord,
+            )
+
+    def _init_from_state(
+        self,
         *,
         root_shape: GridShape,
-        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
+        tree_coord: TreeCoord,
         cell_levels: np.ndarray,
         cell_ijk: np.ndarray,
         points: np.ndarray,
         corners: np.ndarray,
     ) -> None:
-        """Build one octree from exact leaf addresses plus explicit point/corner geometry."""
+        """Materialize one octree from exact leaf addresses and explicit geometry."""
         leaf_levels: np.ndarray
         leaf_ijk: np.ndarray
         resolved_tree_coord = str(tree_coord)
@@ -477,7 +515,8 @@ class Octree:
         corners: np.ndarray,
     ) -> "Octree":
         """Instantiate one tree from exact saved state and explicit point/corner geometry."""
-        return cls(
+        tree = cls.__new__(cls)
+        tree._init_from_state(
             root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
             cell_levels=state.cell_levels,
@@ -485,6 +524,7 @@ class Octree:
             points=points,
             corners=corners,
         )
+        return tree
 
     @classmethod
     def load(

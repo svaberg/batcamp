@@ -24,7 +24,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from batread import Dataset
-from batcamp import build_octree
+from batcamp import Octree
 from batcamp import OctreeInterpolator
 
 # Read the dataset
@@ -35,7 +35,7 @@ points = ds[["X [R]", "Y [R]", "Z [R]"]]  # Point-coordinate array with shape (n
 corners = ds.corners  # Cell-to-corner connectivity with shape (n_cells, 8).
 
 # Build the octree from points and corners, then create the interpolator on top of it.
-octree = build_octree(points, corners)
+octree = Octree(points, corners)
 print(octree)
 rho_values = ds["Rho [g/cm^3]"]
 interp = OctreeInterpolator(octree, rho_values)

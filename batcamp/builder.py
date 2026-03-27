@@ -228,22 +228,18 @@ def build_octree_from_ds(
         n_points=int(points.shape[0]),
         n_cells=int(corners.shape[0]),
     )
-    t0 = time.perf_counter()
-    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners) if tree_coord is None else tree_coord
-    _log_timed_stage("resolve tree coord", time.perf_counter() - t0, coord=resolved_tree_coord)
-    tree = _build_octree(
+    tree = Octree(
         points,
         corners,
-        tree_coord=resolved_tree_coord,
+        tree_coord=tree_coord,
         axis_rho_tol=axis_rho_tol,
         level_rtol=level_rtol,
         level_atol=level_atol,
-        cell_levels=None,
     )
     _log_timed_stage(
         "total",
         time.perf_counter() - t_total,
-        coord=resolved_tree_coord,
+        coord=str(tree.tree_coord),
         n_points=int(points.shape[0]),
         n_cells=int(corners.shape[0]),
     )
@@ -269,39 +265,35 @@ def build_octree(
         n_points=int(points.shape[0]),
         n_cells=int(corners_arr.shape[0]),
     )
-    t0 = time.perf_counter()
-    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
-    _log_timed_stage("resolve tree coord", time.perf_counter() - t0, coord=resolved_tree_coord)
-    tree = _build_octree(
+    tree = Octree(
         points,
         corners_arr,
-        tree_coord=resolved_tree_coord,
+        tree_coord=tree_coord,
         axis_rho_tol=axis_rho_tol,
         level_rtol=level_rtol,
         level_atol=level_atol,
-        cell_levels=None,
     )
     _log_timed_stage(
         "total",
         time.perf_counter() - t_total,
-        coord=resolved_tree_coord,
+        coord=str(tree.tree_coord),
         n_points=int(points.shape[0]),
         n_cells=int(corners_arr.shape[0]),
     )
     return tree
 
 
-def _build_octree(
+def _build_octree_state(
     points: np.ndarray,
     corners: np.ndarray,
     *,
-    tree_coord: TreeCoord = DEFAULT_TREE_COORD,
+    tree_coord: TreeCoord | None = DEFAULT_TREE_COORD,
     axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
     cell_levels: np.ndarray | None = None,
-) -> Octree:
-    """Internal build path on explicit points/corners with optional exact levels."""
+) -> "OctreeState":
+    """Infer exact octree state from explicit points/corners."""
     from .builder_cartesian import _cartesian_cell_geometry
     from .builder_cartesian import _infer_leaf_shape_from_geometry
     from .builder_cartesian import _infer_levels_from_geometry
@@ -311,20 +303,23 @@ def _build_octree(
     from .builder_spherical import populate_tree_state as populate_rpa_tree_state
     from .persistence import OctreeState
 
-    if tree_coord not in SUPPORTED_TREE_COORDS:
-        raise ValueError(
-            f"Unsupported tree_coord '{tree_coord}'; "
-            f"expected one of {SUPPORTED_TREE_COORDS}."
-        )
     points = np.asarray(points, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError("points must have shape (n_points, 3).")
     corners_arr = np.asarray(corners, dtype=np.int64)
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
+    t0 = time.perf_counter()
+    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
+    if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
+        raise ValueError(
+            f"Unsupported tree_coord '{resolved_tree_coord}'; "
+            f"expected one of {SUPPORTED_TREE_COORDS}."
+        )
+    _log_timed_stage("resolve tree coord", time.perf_counter() - t0, coord=resolved_tree_coord)
 
     t0 = time.perf_counter()
-    if tree_coord == "rpa":
+    if resolved_tree_coord == "rpa":
         level_shapes, levels, max_level = infer_rpa_level_shapes(
             points,
             corners_arr,
@@ -344,10 +339,10 @@ def _build_octree(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
-    _log_timed_stage("infer levels", time.perf_counter() - t0, coord=tree_coord, max_level=int(max_level))
+    _log_timed_stage("infer levels", time.perf_counter() - t0, coord=resolved_tree_coord, max_level=int(max_level))
 
     t0 = time.perf_counter()
-    if tree_coord == "rpa":
+    if resolved_tree_coord == "rpa":
         leaf_shape = infer_rpa_leaf_shape(level_shapes)
     else:
         leaf_shape = _infer_leaf_shape_from_geometry(
@@ -357,7 +352,7 @@ def _build_octree(
             levels,
             max_level=max_level,
         )
-    _log_timed_stage("infer leaf shape", time.perf_counter() - t0, coord=tree_coord, leaf_shape=leaf_shape)
+    _log_timed_stage("infer leaf shape", time.perf_counter() - t0, coord=resolved_tree_coord, leaf_shape=leaf_shape)
 
     t0 = time.perf_counter()
     root_shape, depth = _root_shape_and_depth(leaf_shape)
@@ -372,14 +367,14 @@ def _build_octree(
     _log_timed_stage(
         "normalize levels",
         time.perf_counter() - t0,
-        coord=tree_coord,
+        coord=resolved_tree_coord,
         root_shape=root_shape,
         depth=int(depth),
         max_level=int(max_level + level_offset),
     )
 
     t0 = time.perf_counter()
-    if tree_coord == "rpa":
+    if resolved_tree_coord == "rpa":
         state_payload = populate_rpa_tree_state(
             leaf_shape=leaf_shape,
             max_level=int(max_level + level_offset),
@@ -396,31 +391,39 @@ def _build_octree(
             cell_min=cell_min,
             cell_max=cell_max,
         )
-    _log_timed_stage("populate tree state", time.perf_counter() - t0, coord=tree_coord)
-
-    t0 = time.perf_counter()
-    state = OctreeState(
-        tree_coord=tree_coord,
+    _log_timed_stage("populate tree state", time.perf_counter() - t0, coord=resolved_tree_coord)
+    return OctreeState(
+        tree_coord=resolved_tree_coord,
         root_shape=tuple(int(v) for v in root_shape),
         **state_payload,
+    )
+
+
+def _build_octree(
+    points: np.ndarray,
+    corners: np.ndarray,
+    *,
+    tree_coord: TreeCoord | None = DEFAULT_TREE_COORD,
+    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+    cell_levels: np.ndarray | None = None,
+) -> Octree:
+    """Internal build path on explicit points/corners with optional exact levels."""
+    t0 = time.perf_counter()
+    state = _build_octree_state(
+        points,
+        corners,
+        tree_coord=tree_coord,
+        axis_rho_tol=axis_rho_tol,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
+        cell_levels=cell_levels,
     )
     tree = Octree.from_state(
         state,
         points=points,
-        corners=corners_arr,
+        corners=corners,
     )
-    _log_timed_stage("materialize octree", time.perf_counter() - t0, coord=tree_coord)
-    if logger.isEnabledFor(logging.DEBUG):
-        valid, total, frac = valid_cell_fraction(levels_abs)
-        logger.debug(
-            "octree build: summary coord=%s leaf_shape=%s root_shape=%s depth=%d max_level=%d valid=%d/%d frac=%.3f",
-            tree_coord,
-            leaf_shape,
-            root_shape,
-            int(depth),
-            int(max_level + level_offset),
-            valid,
-            total,
-            frac,
-        )
+    _log_timed_stage("materialize octree", time.perf_counter() - t0, coord=state.tree_coord)
     return tree
