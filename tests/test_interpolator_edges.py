@@ -93,17 +93,19 @@ def test_constructor_rejects_query_coord_kw() -> None:
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
     with pytest.raises(TypeError, match="unexpected keyword argument 'query_coord'"):
-        OctreeInterpolator(tree, ["Scalar"], query_coord="bad")
+        OctreeInterpolator(tree, np.asarray(ds["Scalar"]), query_coord="bad")
 
-def test_constructor_rejects_non_list_values() -> None:
-    """Constructor should enforce tree-first values contracts."""
+def test_constructor_rejects_non_array_values() -> None:
+    """Constructor should require explicit point-value arrays."""
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
     bad_values = np.ones(ds.points.shape[0] - 1)
     with pytest.raises(ValueError, match="values length"):
         OctreeInterpolator(tree, bad_values)
-    with pytest.raises(ValueError, match="single-string values are not supported"):
+    with pytest.raises(ValueError, match="values must be an array"):
         OctreeInterpolator(tree, "Scalar")
+    with pytest.raises(ValueError, match="values must be an array"):
+        OctreeInterpolator(tree, ["Scalar"])
 
 def test_default_octree_build_selects_spherical() -> None:
     """Default tree inference should select spherical lookup for non-axis-aligned cells."""
@@ -120,7 +122,7 @@ def test_interpolator_does_not_stash_cartesian_lookup_state() -> None:
     ds = _build_fake_cartesian_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="xyz")
 
-    interp = OctreeInterpolator(tree, ["Scalar"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     assert not hasattr(interp, "_lookup_state_xyz")
 
 def test_interpolator_does_not_stash_spherical_lookup_state() -> None:
@@ -128,7 +130,7 @@ def test_interpolator_does_not_stash_spherical_lookup_state() -> None:
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
 
-    interp = OctreeInterpolator(tree, ["Scalar"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     assert not hasattr(interp, "_lookup_state_rpa")
 
 def test_cartesian_batch_lookup_resolves_adjacent_cells() -> None:
@@ -219,7 +221,7 @@ def test_spherical_batch_lookup_resolves_adjacent_cells() -> None:
 def test_call_rejects_invalid_query_coord() -> None:
     """Runtime call should reject invalid query_coord override."""
     ds = _build_fake_dataset()
-    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="rpa"), ["Scalar"])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="rpa"), np.asarray(ds["Scalar"]))
     with pytest.raises(ValueError, match="query_(coord|space) must be 'xyz' or 'rpa'"):
         interp(np.array([[1.0, 0.0, 0.0]]), query_coord="bad")
 
@@ -227,7 +229,7 @@ def test_supports_xyz_and_rpa_query_coords() -> None:
     """Interpolator should support both xyz and rpa query coordinates on spherical trees."""
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
-    interp = OctreeInterpolator(tree, ["Scalar"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     r, polar, azimuth = _first_resolvable_rpa(interp.tree)
     q_rpa = np.array([[r, polar, azimuth]], dtype=float)
     q = np.array(
@@ -257,7 +259,7 @@ def test_normalize_queries_validation() -> None:
 def test_outside_queries_use_fill_and_minus_one() -> None:
     """Outside-domain queries should return fill values and `cell_id=-1`."""
     ds = _build_fake_dataset()
-    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="rpa"), ["Scalar"], fill_value=-77.0)
+    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="rpa"), np.asarray(ds["Scalar"]), fill_value=-77.0)
     q = np.array(
         [
             [1e6, 0.0, 0.0],
@@ -272,7 +274,11 @@ def test_vector_fill_applies_outside_domain() -> None:
     """Vector-valued fill should broadcast correctly for outside-domain queries."""
     ds = _build_fake_dataset()
     fill = np.array([-5.0, 8.0])
-    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="rpa"), ["Scalar", "Scalar2"], fill_value=fill)
+    interp = OctreeInterpolator(
+        OctreeBuilder().build(ds, tree_coord="rpa"),
+        np.column_stack((np.asarray(ds["Scalar"]), np.asarray(ds["Scalar2"]))),
+        fill_value=fill,
+    )
     q = np.array([[1e6, 0.0, 0.0]])
     vals, cell_ids = interp(q, return_cell_ids=True)
     assert vals.shape == (1, 2)
@@ -283,7 +289,7 @@ def test_rpa_wrap_equivalence() -> None:
     """`rpa` interpolation should treat azimuth `phi` and `phi + 2pi` equivalently."""
     ds = _build_fake_dataset()
     tree = OctreeBuilder().build(ds, tree_coord="rpa")
-    interp = OctreeInterpolator(tree, ["Scalar"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     r, polar, azimuth = _first_resolvable_rpa(tree)
     q0 = np.array([[r, polar, azimuth]])
     q1 = np.array([[r, polar, azimuth + 2.0 * math.pi]])
@@ -308,7 +314,7 @@ def test_invalid_level_cells_treated_as_misses() -> None:
     assert int(tree.lookup_points(q_invalid, coord="xyz")[0]) < 0
     assert int(tree.lookup_points(q_valid, coord="xyz")[0]) >= 0
 
-    interp = OctreeInterpolator(tree, ["Scalar"], fill_value=-123.0)
+    interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]), fill_value=-123.0)
     vals, cell_ids = interp(np.vstack((q_invalid, q_valid)), return_cell_ids=True)
 
     assert int(cell_ids[0]) == -1

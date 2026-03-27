@@ -11,7 +11,6 @@ from numba import njit
 from numba import prange
 import numpy as np
 
-from .constants import XYZ_VARS
 from .octree import AXIS0
 from .octree import AXIS1
 from .octree import AXIS2
@@ -235,7 +234,7 @@ class OctreeInterpolator:
     def __init__(
         self,
         tree: Octree,
-        values: list[str] | np.ndarray | None,
+        values: np.ndarray,
         *,
         fill_value: float | np.ndarray = np.nan,
     ) -> None:
@@ -247,49 +246,28 @@ class OctreeInterpolator:
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
         if self.tree.tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
-        if int(self.tree.ds.points.shape[0]) == 0:
-            q_xyz = np.zeros((1, 3), dtype=np.float64)
-        else:
-            q_xyz = np.column_stack(tuple(np.asarray(self.tree.ds[name][:1], dtype=np.float64) for name in XYZ_VARS))
+        xyz_lo, xyz_hi = self.tree.domain_bounds(coord="xyz")
+        q_xyz = (0.5 * (np.asarray(xyz_lo, dtype=np.float64) + np.asarray(xyz_hi, dtype=np.float64))).reshape(1, 3)
         if self.tree.tree_coord == "rpa":
-            from .spherical import _xyz_arrays_to_rpa
-
-            q_rpa = np.column_stack(_xyz_arrays_to_rpa(q_xyz[:, 0], q_xyz[:, 1], q_xyz[:, 2]))
+            rpa_lo, rpa_hi = self.tree.domain_bounds(coord="rpa")
+            q_rpa = (0.5 * (np.asarray(rpa_lo, dtype=np.float64) + np.asarray(rpa_hi, dtype=np.float64))).reshape(1, 3)
             self(q_xyz, query_coord="xyz", log_outside_domain=False)
             self(q_rpa, query_coord="rpa", log_outside_domain=False)
         else:
             self(q_xyz, query_coord="xyz", log_outside_domain=False)
 
-    def _flatten_point_values(self, values: list[str] | np.ndarray | None) -> tuple[np.ndarray, tuple[int, ...]]:
-        """Resolve requested fields into one flat `(n_points, n_components)` array plus trailing shape."""
-        n_points = int(self.tree.ds.points.shape[0])
-        if values is None:
-            names = [str(name) for name in self.tree.ds.variables]
-            if len(names) == 0:
-                raise ValueError("Dataset has no variables; cannot interpolate values=None.")
-        elif isinstance(values, str):
-            raise ValueError("values must be None, array-like, or list[str]; single-string values are not supported.")
-        elif isinstance(values, list):
-            if len(values) == 0 or not all(isinstance(v, str) for v in values):
-                raise ValueError("values must be None, array-like, or a non-empty list[str] of field names.")
-            names = [str(name) for name in values]
-        else:
-            arr = np.asarray(values)
-            if arr.shape[0] != n_points:
-                raise ValueError(f"values length {arr.shape[0]} does not match required n_points={n_points}.")
-            return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
-
-        arrays: list[np.ndarray] = []
-        for name in names:
-            arr_name = np.array(self.tree.ds[name])
-            if arr_name.shape[0] != n_points:
-                raise ValueError(f"values length {arr_name.shape[0]} does not match required n_points={n_points}.")
-            arrays.append(arr_name)
-        if len(arrays) == 1:
-            arr = arrays[0]
-            return np.array(arr.reshape(n_points, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
-        merged = np.concatenate([arr.reshape(n_points, -1) for arr in arrays], axis=1)
-        return np.array(merged, dtype=np.float64, order="C"), tuple(merged.shape[1:])
+    def _flatten_point_values(self, values: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
+        """Flatten one `(n_points, ...)` value array for interpolation kernels."""
+        if values is None or isinstance(values, str) or isinstance(values, list):
+            raise ValueError("values must be an array aligned with tree point ids.")
+        arr = np.asarray(values)
+        n_points_required = int(np.max(self.tree.corners)) + 1
+        arr_length = 0 if arr.ndim == 0 else int(arr.shape[0])
+        if arr_length < n_points_required:
+            raise ValueError(
+                f"values length {arr_length} does not cover required point ids 0..{n_points_required - 1}."
+            )
+        return np.array(arr.reshape(arr_length, -1), dtype=np.float64, order="C"), tuple(arr.shape[1:])
 
     @staticmethod
     def _normalize_queries(*args) -> tuple[np.ndarray, tuple[int, ...]]:
@@ -403,7 +381,7 @@ class OctreeInterpolator:
         return (
             "OctreeInterpolator("
             f"tree_coord={self.tree.tree_coord}, "
-            f"n_points={int(self.tree.ds.points.shape[0])}, "
+            f"n_points={int(self._point_values_2d.shape[0])}, "
             f"n_cells={int(self.tree.corners.shape[0])}, "
             f"n_components={int(self._point_values_2d.shape[1])}"
             ")"

@@ -160,7 +160,7 @@ def test_interp_matches_linear_field_xyz(synthetic_context) -> None:
     """xyz interpolation should reconstruct an exactly linear spherical field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(tree, ["LinField"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["LinField"]))
     rng = np.random.default_rng(22)
     valid = _interpolation_valid_cells(tree, interp=interp)
     assert valid.size > 0
@@ -177,7 +177,7 @@ def test_interp_matches_linear_field_rpa_wrap(synthetic_context) -> None:
     """rpa interpolation should normalize wrapped azimuth and match linear field."""
     ds, tree, _field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(tree, ["LinField"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["LinField"]))
     rng = np.random.default_rng(33)
     valid = _interpolation_valid_cells(tree, interp=interp)
     assert valid.size > 0
@@ -196,7 +196,10 @@ def test_vector_interp_shape_and_values(synthetic_context) -> None:
     """Vector-valued interpolation should preserve trailing dims and nodal exactness."""
     ds, tree, _linear_field, coeffs = synthetic_context
     a, b, c, d = coeffs
-    interp = OctreeInterpolator(tree, ["LinField", "LinField2", "LinFieldConst"])
+    interp = OctreeInterpolator(
+        tree,
+        np.column_stack((np.asarray(ds["LinField"]), np.asarray(ds["LinField2"]), np.asarray(ds["LinFieldConst"]))),
+    )
 
     rng = np.random.default_rng(44)
     valid = _interpolation_valid_cells(tree, interp=interp)
@@ -216,7 +219,7 @@ def test_outside_points_use_fill_and_negative_cell_id(synthetic_context) -> None
     """Outside-domain synthetic points should return fill value and cell_id=-1."""
     ds, tree, _field, _coeffs = synthetic_context
     fill = -999.0
-    interp = OctreeInterpolator(tree, ["LinField"], fill_value=fill)
+    interp = OctreeInterpolator(tree, np.asarray(ds["LinField"]), fill_value=fill)
 
     inside = _midpoints_xyz(tree, np.array([0], dtype=np.int64))
     outside = np.array([[100.0, 0.0, 0.0], [-100.0, 0.0, 0.0]])
