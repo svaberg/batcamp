@@ -150,7 +150,7 @@ def _rebuild_cells(
     leaf_value: np.ndarray,
     *,
     n_leaf_slots: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build rebuilt octree cell arrays from exact leaf addresses."""
     leaf_ijk_raw = cell_ijk
     if leaf_ijk_raw.ndim != 2 or leaf_ijk_raw.shape[1] != 3:
@@ -170,18 +170,18 @@ def _rebuild_cells(
             f"{(int(dup_depth[0]), *(int(v) for v in dup_ijk[0]))}."
         )
 
+    frontier_depth = depths
+    frontier_ijk = leaf_ijk_raw
     parent_key_parts: list[np.ndarray] = []
-    for shift in range(1, int(np.max(depths)) + 1):
-        mask = depths >= shift
+    while True:
+        mask = frontier_depth > 0
         if not np.any(mask):
-            continue
-        parent_key_parts.append(
-            _pack_cell_keys(
-                depths[mask] - shift,
-                np.right_shift(leaf_ijk_raw[mask], shift),
-                axis_bases,
-            )
-        )
+            break
+        frontier_depth = frontier_depth[mask] - 1
+        frontier_ijk = np.right_shift(frontier_ijk[mask], 1)
+        frontier_keys = np.unique(_pack_cell_keys(frontier_depth, frontier_ijk, axis_bases))
+        parent_key_parts.append(frontier_keys)
+        frontier_depth, frontier_ijk = _unpack_cell_keys(frontier_keys, axis_bases)
 
     if parent_key_parts:
         internal_keys = np.unique(np.concatenate(parent_key_parts))
@@ -199,6 +199,7 @@ def _rebuild_cells(
             )
         internal_depth, internal_ijk = _unpack_cell_keys(internal_keys, axis_bases)
     else:
+        internal_keys = np.empty(0, dtype=np.uint64)
         internal_depth = np.empty(0, dtype=np.int64)
         internal_ijk = np.empty((0, 3), dtype=np.int64)
 
@@ -212,43 +213,67 @@ def _rebuild_cells(
     stop = start + int(internal_depth.shape[0])
     cell_depth[start:stop] = internal_depth
     cell_ijk_out[start:stop] = internal_ijk
-    return cell_depth, cell_ijk_out
+    return cell_depth, cell_ijk_out, internal_keys, internal_depth, internal_ijk
 
 
 def _build_cell_topology(
-    cell_depth: np.ndarray,
-    cell_ijk: np.ndarray,
+    depths: np.ndarray,
+    leaf_ijk: np.ndarray,
+    leaf_value: np.ndarray,
+    internal_keys: np.ndarray,
+    internal_depth: np.ndarray,
+    internal_ijk: np.ndarray,
+    leaf_slots: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build sparse 8-child references for occupied rebuilt cells."""
-    n_cells = int(cell_depth.shape[0])
+    n_cells = int(leaf_slots) + int(internal_depth.shape[0])
     cell_child = np.full((n_cells, 8), -1, dtype=np.int64)
     cell_parent = np.full(n_cells, -1, dtype=np.int64)
-    occupied = np.flatnonzero(cell_depth >= 0).astype(np.int64)
-    occupied_depth = cell_depth[occupied]
-    occupied_ijk = cell_ijk[occupied]
-    axis_bases = np.max(occupied_ijk, axis=0).astype(np.uint64) + 1
-    occupied_keys = _pack_cell_keys(occupied_depth, occupied_ijk, axis_bases)
-    order = np.argsort(occupied_keys)
-    sorted_keys = occupied_keys[order]
-    sorted_ids = occupied[order]
-    child_mask = occupied_depth > 0
-    child_ids = occupied[child_mask]
-    parent_depth = occupied_depth[child_mask] - 1
-    parent_ijk = np.right_shift(occupied_ijk[child_mask], 1)
-    parent_keys = _pack_cell_keys(parent_depth, parent_ijk, axis_bases)
-    parent_pos = np.searchsorted(sorted_keys, parent_keys)
-    hits = parent_pos < sorted_keys.size
-    hits[hits] = sorted_keys[parent_pos[hits]] == parent_keys[hits]
-    parent_ids = sorted_ids[parent_pos[hits]]
-    child_ids = child_ids[hits]
-    child_ord = (
-        ((occupied_ijk[child_mask][hits, AXIS0] & 1) << 2)
-        | ((occupied_ijk[child_mask][hits, AXIS1] & 1) << 1)
-        | (occupied_ijk[child_mask][hits, AXIS2] & 1)
+    axis_bases = np.max(leaf_ijk, axis=0).astype(np.uint64) + 1
+
+    leaf_mask = depths > 0
+    leaf_child_ids = leaf_value[leaf_mask]
+    leaf_parent_keys = _pack_cell_keys(
+        depths[leaf_mask] - 1,
+        np.right_shift(leaf_ijk[leaf_mask], 1),
+        axis_bases,
+    )
+    leaf_child_ord = (
+        ((leaf_ijk[leaf_mask, AXIS0] & 1) << 2)
+        | ((leaf_ijk[leaf_mask, AXIS1] & 1) << 1)
+        | (leaf_ijk[leaf_mask, AXIS2] & 1)
     ).astype(np.int64)
+
+    internal_mask = internal_depth > 0
+    internal_child_ids = int(leaf_slots) + np.flatnonzero(internal_mask).astype(np.int64)
+    internal_parent_keys = _pack_cell_keys(
+        internal_depth[internal_mask] - 1,
+        np.right_shift(internal_ijk[internal_mask], 1),
+        axis_bases,
+    )
+    internal_child_ord = (
+        ((internal_ijk[internal_mask, AXIS0] & 1) << 2)
+        | ((internal_ijk[internal_mask, AXIS1] & 1) << 1)
+        | (internal_ijk[internal_mask, AXIS2] & 1)
+    ).astype(np.int64)
+
+    child_ids = np.concatenate((leaf_child_ids, internal_child_ids))
+    parent_keys = np.concatenate((leaf_parent_keys, internal_parent_keys))
+    child_ord = np.concatenate((leaf_child_ord, internal_child_ord))
+    parent_pos = np.searchsorted(internal_keys, parent_keys)
+    hits = parent_pos < internal_keys.size
+    hits[hits] = internal_keys[parent_pos[hits]] == parent_keys[hits]
+    parent_ids = int(leaf_slots) + parent_pos[hits]
+    child_ids = child_ids[hits]
+    child_ord = child_ord[hits]
     cell_child[parent_ids, child_ord] = child_ids
     cell_parent[child_ids] = parent_ids
-    root_cell_ids = np.flatnonzero(cell_depth == 0).astype(np.int64)
+    root_cell_ids = np.concatenate(
+        (
+            leaf_value[depths == 0],
+            int(leaf_slots) + np.flatnonzero(internal_depth == 0).astype(np.int64),
+        )
+    )
     return cell_child, root_cell_ids, cell_parent
 
 
@@ -269,7 +294,7 @@ def _rebuild_cell_state(
     depths = cell_levels[valid_ids]
     leaf_ijk_valid = cell_ijk[valid_ids]
     t0 = time.perf_counter()
-    cell_depth, cell_ijk_rt = _rebuild_cells(
+    cell_depth, cell_ijk_rt, internal_keys, internal_depth, internal_ijk = _rebuild_cells(
         depths,
         leaf_ijk_valid,
         valid_ids,
@@ -283,8 +308,13 @@ def _rebuild_cell_state(
         )
     t0 = time.perf_counter()
     cell_child, root_cell_ids, cell_parent = _build_cell_topology(
-        cell_depth,
-        cell_ijk_rt,
+        depths,
+        leaf_ijk_valid,
+        valid_ids,
+        internal_keys,
+        internal_depth,
+        internal_ijk,
+        int(cell_levels.shape[0]),
     )
     if logger.isEnabledFor(logging.INFO):
         logger.info(
