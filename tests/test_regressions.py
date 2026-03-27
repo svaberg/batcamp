@@ -60,7 +60,6 @@ def test_load_uses_dataset_corners(tmp_path, regression_context) -> None:
     tree.save(path)
 
     loaded = Octree.load(path, ds=ds)
-    assert loaded.ds is ds
 
     # Ensure lookups are functional via ds.corners.
     q = np.array([1.0, 0.0, 0.0], dtype=float)

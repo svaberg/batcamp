@@ -798,7 +798,7 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
 
 
 def test_build_returns_bound_tree() -> None:
-    """Builder should return a tree already bound to the dataset."""
+    """Builder should return a tree with lookup geometry ready for use."""
     ds = _build_regular_dataset()
     _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
     tree = OctreeBuilder()._build(
@@ -806,7 +806,6 @@ def test_build_returns_bound_tree() -> None:
         tree_coord="rpa",
         cell_levels=cell_levels,
     )
-    assert tree.ds is ds
     assert int(tree.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 

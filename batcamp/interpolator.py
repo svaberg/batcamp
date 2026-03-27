@@ -246,15 +246,6 @@ class OctreeInterpolator:
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
         if self.tree.tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
-        xyz_lo, xyz_hi = self.tree.domain_bounds(coord="xyz")
-        q_xyz = (0.5 * (np.asarray(xyz_lo, dtype=np.float64) + np.asarray(xyz_hi, dtype=np.float64))).reshape(1, 3)
-        if self.tree.tree_coord == "rpa":
-            rpa_lo, rpa_hi = self.tree.domain_bounds(coord="rpa")
-            q_rpa = (0.5 * (np.asarray(rpa_lo, dtype=np.float64) + np.asarray(rpa_hi, dtype=np.float64))).reshape(1, 3)
-            self(q_xyz, query_coord="xyz", log_outside_domain=False)
-            self(q_rpa, query_coord="rpa", log_outside_domain=False)
-        else:
-            self(q_xyz, query_coord="xyz", log_outside_domain=False)
 
     def _flatten_point_values(self, values: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
         """Flatten one `(n_points, ...)` value array for interpolation kernels."""

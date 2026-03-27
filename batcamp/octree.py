@@ -417,7 +417,6 @@ class Octree:
             attach_coord_state = _attach_spherical_coord_state
         cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, ds, corners)
         interp_corners = _build_trilinear_geometry(self, ds, corners, cell_bounds)
-        self._ds = ds
         self._corners = interp_corners
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
@@ -466,11 +465,6 @@ class Octree:
         """Return maximum occupied refinement level."""
         valid_levels = self.cell_levels[self.cell_levels >= 0]
         return int(np.max(valid_levels))
-
-    @property
-    def ds(self) -> Dataset:
-        """Return bound dataset."""
-        return self._ds
 
     @property
     def corners(self) -> np.ndarray:
@@ -600,24 +594,14 @@ class Octree:
         return face_neighbors
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
-        """Return global `(lo, hi)` bounds for the bound tree in requested coord."""
+        """Return global `(lo, hi)` bounds in the tree's own coordinate system."""
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
-
-        if self.tree_coord == "xyz":
-            from .cartesian import _cartesian_domain_bounds_rpa
-            from .cartesian import _cartesian_domain_bounds_xyz
-
-            if resolved_coord == "xyz":
-                return _cartesian_domain_bounds_xyz(self)
-            return _cartesian_domain_bounds_rpa(self)
-        else:
-            from .spherical import _spherical_domain_bounds_rpa
-            from .spherical import _spherical_domain_bounds_xyz
-
-            if resolved_coord == "xyz":
-                return _spherical_domain_bounds_xyz(self)
-            return _spherical_domain_bounds_rpa(self)
+        if resolved_coord != self.tree_coord:
+            raise ValueError(f"domain_bounds only supports coord={self.tree_coord!r} for this tree.")
+        lo = np.array(self._domain_bounds[:, START], dtype=float)
+        hi = np.array(self._domain_bounds[:, START] + self._domain_bounds[:, WIDTH], dtype=float)
+        return lo, hi

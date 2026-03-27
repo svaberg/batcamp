@@ -86,26 +86,3 @@ def _attach_cartesian_coord_state(tree, ds, corners: np.ndarray) -> tuple[np.nda
     domain_bounds[:, START] = xyz_min
     domain_bounds[:, WIDTH] = xyz_max - xyz_min
     return cell_bounds, domain_bounds, 0.0, False
-
-
-def _cartesian_domain_bounds_xyz(tree) -> tuple[np.ndarray, np.ndarray]:
-    lo = np.array(tree._domain_bounds[:, START], dtype=float)
-    hi = np.array(tree._domain_bounds[:, START] + tree._domain_bounds[:, WIDTH], dtype=float)
-    return lo, hi
-
-
-def _cartesian_domain_bounds_rpa(tree) -> tuple[np.ndarray, np.ndarray]:
-    pts = np.column_stack(
-        (
-            tree.ds[XYZ_VARS[0]],
-            tree.ds[XYZ_VARS[1]],
-            tree.ds[XYZ_VARS[2]],
-        )
-    )
-    r = np.linalg.norm(pts, axis=1)
-    polar = np.arccos(np.clip(pts[:, 2] / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
-    azimuth = np.mod(np.arctan2(pts[:, 1], pts[:, 0]), 2.0 * np.pi)
-    return (
-        np.array([float(np.min(r)), float(np.min(polar)), float(np.min(azimuth))], dtype=float),
-        np.array([float(np.max(r)), float(np.max(polar)), float(np.max(azimuth))], dtype=float),
-    )
