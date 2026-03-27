@@ -65,8 +65,9 @@ def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     tree_auto = OctreeBuilder().build(ds)
     queries = _midpoint_queries_xyz(tree_explicit, 16)
 
-    interp_explicit = OctreeInterpolator(tree_explicit, ["Rho [g/cm^3]"])
-    interp_auto = OctreeInterpolator(tree_auto, ["Rho [g/cm^3]"])
+    values = np.asarray(ds["Rho [g/cm^3]"])
+    interp_explicit = OctreeInterpolator(tree_explicit, values)
+    interp_auto = OctreeInterpolator(tree_auto, values)
     vals_explicit, cell_ids_explicit = interp_explicit(queries, return_cell_ids=True)
     vals_auto, cell_ids_auto = interp_auto(queries, return_cell_ids=True)
 

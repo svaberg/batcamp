@@ -129,7 +129,7 @@ def _assert_plane_ramp_matches_exact_field(
 ) -> None:
     """Assert plane-resampling stays exact over one resolution ramp."""
     xyz = _xyz_points(ds)
-    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="xyz"), [field_name])
+    interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord="xyz"), np.asarray(ds[field_name]))
 
     for resolution in _PLANE_RAMP:
         query = _xy_plane_queries(xyz, resolution=resolution)

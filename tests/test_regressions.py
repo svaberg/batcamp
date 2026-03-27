@@ -33,7 +33,7 @@ def test_default_tree_inference_selects_rpa_for_regression_dataset(regression_co
     """Default tree inference should stay on spherical geometry for this dataset."""
     ds, _tree = regression_context
     tree = OctreeBuilder().build(ds)
-    interp = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
+    interp = OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"]))
     assert tree.tree_coord == "rpa"
 
     q = np.array([1.0, 0.0, 0.0], dtype=float)
