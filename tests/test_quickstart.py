@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from batread import Dataset
 
-from batcamp import Octree, OctreeBuilder, OctreeInterpolator
+from batcamp import Octree, OctreeInterpolator, build_octree_from_ds
 from batcamp.builder import infer_tree_coord_from_geometry
 from octree_test_support import cell_bounds
 from sample_data_helper import data_file
@@ -46,24 +46,24 @@ def test_tree_build_uses_expected_coord(name: str, tree_coord: str) -> None:
     """Tree contract: correct tree_coord builds; wrong tree_coord fails."""
     ds = Dataset.from_file(str(data_file(name)))
     wrong_tree_coord = "xyz" if tree_coord == "rpa" else "rpa"
-    assert str(OctreeBuilder().from_ds(ds, tree_coord=tree_coord).tree_coord) == tree_coord
+    assert str(build_octree_from_ds(ds, tree_coord=tree_coord).tree_coord) == tree_coord
     with pytest.raises(ValueError):
-        OctreeBuilder().from_ds(ds, tree_coord=wrong_tree_coord)
+        build_octree_from_ds(ds, tree_coord=wrong_tree_coord)
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_tree_build_default_matches_expected(name: str, tree_coord: str) -> None:
-    """Tree contract: default `OctreeBuilder().from_ds(ds)` resolves correct tree type."""
+    """Tree contract: default `build_octree_from_ds(ds)` resolves correct tree type."""
     ds = Dataset.from_file(str(data_file(name)))
-    assert str(OctreeBuilder().from_ds(ds).tree_coord) == tree_coord
+    assert str(build_octree_from_ds(ds).tree_coord) == tree_coord
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     """Interpolator contract: explicit and inferred trees should interpolate identically."""
     ds = Dataset.from_file(str(data_file(name)))
-    tree_explicit = OctreeBuilder().from_ds(ds, tree_coord=tree_coord)
-    tree_auto = OctreeBuilder().from_ds(ds)
+    tree_explicit = build_octree_from_ds(ds, tree_coord=tree_coord)
+    tree_auto = build_octree_from_ds(ds)
     queries = _midpoint_queries_xyz(tree_explicit, 16)
 
     values = np.asarray(ds["Rho [g/cm^3]"])

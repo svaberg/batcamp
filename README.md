@@ -24,24 +24,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from batread import Dataset
-from batcamp import OctreeBuilder
+from batcamp import build_octree
 from batcamp import OctreeInterpolator
 
 # Read the dataset
 ds = Dataset.from_file("MY_FILE")
+print(ds)
 
-# Extract the mesh geometry explicitly.
-points = np.column_stack((
-    np.asarray(ds["X [R]"], dtype=float),
-    np.asarray(ds["Y [R]"], dtype=float),
-    np.asarray(ds["Z [R]"], dtype=float),
-))
-corners = np.asarray(ds.corners, dtype=np.int64)
+points = ds[["X [R]", "Y [R]", "Z [R]"]]  # Point-coordinate array with shape (n_points, 3).
+corners = ds.corners  # Cell-to-corner connectivity with shape (n_cells, 8).
 
 # Build the octree from points and corners, then create the interpolator on top of it.
-tree = OctreeBuilder().build(points, corners)
-rho_values = np.asarray(ds["Rho [g/cm^3]"], dtype=float)
-interp = OctreeInterpolator(tree, rho_values)
+octree = build_octree(points, corners)
+print(octree)
+rho_values = ds["Rho [g/cm^3]"]
+interp = OctreeInterpolator(octree, rho_values)
+print(interp)
 
 # Create a grid of points and interpolate the density
 X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))

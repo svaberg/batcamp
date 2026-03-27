@@ -169,149 +169,165 @@ def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
             cells_per_block,
         )
 
-class OctreeBuilder:
-    """Build octrees from explicit point/corner geometry."""
+def _root_shape_and_depth(leaf_shape: GridShape) -> tuple[GridShape, int]:
+    """Return dyadic root shape and tree depth implied by one finest leaf shape."""
+    depth: int | None = None
+    for axis_size in leaf_shape:
+        axis_depth = 0
+        value = int(axis_size)
+        while value > 0 and (value % 2) == 0:
+            axis_depth += 1
+            value //= 2
+        if depth is None or axis_depth < depth:
+            depth = axis_depth
+    if depth is None:
+        raise ValueError(f"Invalid leaf_shape={leaf_shape}.")
+    return (
+        int(leaf_shape[0]) >> depth,
+        int(leaf_shape[1]) >> depth,
+        int(leaf_shape[2]) >> depth,
+    ), depth
 
-    def __init__(
-        self,
-        *,
-        level_rtol: float = 1e-4,
-        level_atol: float = 1e-9,
-    ) -> None:
-        """Configure tolerances used for dyadic level inference."""
-        self.level_rtol = float(level_rtol)
-        self.level_atol = float(level_atol)
-        from .builder_cartesian import CartesianOctreeBuilder
-        from .builder_spherical import SphericalOctreeBuilder
 
-        self._rpa_builder = SphericalOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
-        self._xyz_builder = CartesianOctreeBuilder(level_rtol=level_rtol, level_atol=level_atol)
+def build_octree_from_ds(
+    ds: Dataset,
+    *,
+    tree_coord: TreeCoord | None = None,
+    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+) -> Octree:
+    """Build one octree from a dataset by extracting explicit points and corners."""
+    if ds.corners is None:
+        raise ValueError("Dataset has no corners; cannot build octree.")
+    points = _xyz_points_from_ds(ds)
+    corners = np.asarray(ds.corners, dtype=np.int64)
+    _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
+    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners) if tree_coord is None else tree_coord
+    return _build_octree(
+        points,
+        corners,
+        tree_coord=resolved_tree_coord,
+        axis_rho_tol=axis_rho_tol,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
+        cell_levels=None,
+    )
 
-    def from_ds(
-        self,
-        ds: Dataset,
-        *,
-        tree_coord: TreeCoord | None = None,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    ) -> Octree:
-        """Build one octree from a dataset by extracting explicit points and corners."""
-        if ds.corners is None:
-            raise ValueError("Dataset has no corners; cannot build octree.")
-        points = _xyz_points_from_ds(ds)
-        corners = np.asarray(ds.corners, dtype=np.int64)
-        _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
-        resolved_tree_coord = infer_tree_coord_from_geometry(points, corners) if tree_coord is None else tree_coord
-        return self._build(
+
+def build_octree(
+    points: np.ndarray,
+    corners: np.ndarray,
+    *,
+    tree_coord: TreeCoord | None = None,
+    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+) -> Octree:
+    """Build one octree from explicit points and corners."""
+    points = np.asarray(points, dtype=np.float64)
+    corners_arr = np.asarray(corners, dtype=np.int64)
+    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
+    return _build_octree(
+        points,
+        corners_arr,
+        tree_coord=resolved_tree_coord,
+        axis_rho_tol=axis_rho_tol,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
+        cell_levels=None,
+    )
+
+
+def _build_octree(
+    points: np.ndarray,
+    corners: np.ndarray,
+    *,
+    tree_coord: TreeCoord = DEFAULT_TREE_COORD,
+    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+    cell_levels: np.ndarray | None = None,
+) -> Octree:
+    """Internal build path on explicit points/corners with optional exact levels."""
+    from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
+    from .builder_cartesian import infer_level_shapes as infer_xyz_level_shapes
+    from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
+    from .builder_spherical import infer_leaf_shape as infer_rpa_leaf_shape
+    from .builder_spherical import infer_level_shapes as infer_rpa_level_shapes
+    from .builder_spherical import populate_tree_state as populate_rpa_tree_state
+    from .persistence import OctreeState
+
+    if tree_coord not in SUPPORTED_TREE_COORDS:
+        raise ValueError(
+            f"Unsupported tree_coord '{tree_coord}'; "
+            f"expected one of {SUPPORTED_TREE_COORDS}."
+        )
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("points must have shape (n_points, 3).")
+    corners_arr = np.asarray(corners, dtype=np.int64)
+    if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
+        raise ValueError("corners must have shape (n_cells, 8).")
+
+    if tree_coord == "rpa":
+        level_shapes, levels, max_level = infer_rpa_level_shapes(
             points,
-            corners,
-            tree_coord=resolved_tree_coord,
+            corners_arr,
+            cell_levels=cell_levels,
             axis_rho_tol=axis_rho_tol,
-            cell_levels=None,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
         )
-
-    def build(
-        self,
-        points: np.ndarray,
-        corners: np.ndarray,
-        *,
-        tree_coord: TreeCoord | None = None,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    ) -> Octree:
-        """Build one octree from explicit points and corners."""
-        points = np.asarray(points, dtype=np.float64)
-        corners = np.asarray(corners, dtype=np.int64)
-        resolved_tree_coord = infer_tree_coord_from_geometry(points, corners) if tree_coord is None else tree_coord
-        return self._build(
+        leaf_shape = infer_rpa_leaf_shape(level_shapes)
+    else:
+        _level_shapes, levels, max_level = infer_xyz_level_shapes(
             points,
-            corners,
-            tree_coord=resolved_tree_coord,
-            axis_rho_tol=axis_rho_tol,
-            cell_levels=None,
+            corners_arr,
+            cell_levels=cell_levels,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
+        )
+        leaf_shape = infer_xyz_leaf_shape(
+            points,
+            corners_arr,
+            levels,
+            max_level=max_level,
         )
 
-    def _build(
-        self,
-        points: np.ndarray,
-        corners: np.ndarray,
-        *,
-        tree_coord: TreeCoord = DEFAULT_TREE_COORD,
-        axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-        cell_levels: np.ndarray | None = None,
-    ) -> Octree:
-        """Internal build path on explicit points/corners with optional exact levels."""
-        from .persistence import OctreeState
-
-        if tree_coord not in SUPPORTED_TREE_COORDS:
-            raise ValueError(
-                f"Unsupported tree_coord '{tree_coord}'; "
-                f"expected one of {SUPPORTED_TREE_COORDS}."
-            )
-        points = np.asarray(points, dtype=np.float64)
-        if points.ndim != 2 or points.shape[1] != 3:
-            raise ValueError("points must have shape (n_points, 3).")
-        corners_arr = np.asarray(corners, dtype=np.int64)
-        if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
-            raise ValueError("corners must have shape (n_cells, 8).")
-
-        if tree_coord == "rpa":
-            level_shapes, levels, max_level = self._rpa_builder.infer_level_shapes(
-                points,
-                corners_arr,
-                cell_levels=cell_levels,
-                axis_rho_tol=axis_rho_tol,
-            )
-            leaf_shape = self._rpa_builder.infer_leaf_shape(level_shapes)
-        else:
-            _level_shapes, levels, max_level = self._xyz_builder.infer_level_shapes(
-                points,
-                corners_arr,
-                cell_levels=cell_levels,
-            )
-            leaf_shape = self._xyz_builder.infer_leaf_shape(
-                points,
-                corners_arr,
-                levels,
-                max_level=max_level,
-            )
-
-        depth = min(int(np.log2(v & -v)) for v in leaf_shape)
-        root_shape = (
-            leaf_shape[0] >> depth,
-            leaf_shape[1] >> depth,
-            leaf_shape[2] >> depth,
+    root_shape, depth = _root_shape_and_depth(leaf_shape)
+    level_offset = int(depth) - int(max_level)
+    if level_offset < 0:
+        raise ValueError(
+            f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
         )
-        level_offset = int(depth) - int(max_level)
-        if level_offset < 0:
-            raise ValueError(
-                f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
-            )
-        levels = np.asarray(levels, dtype=np.int64)
-        levels_abs = np.array(levels, copy=True)
-        levels_abs[levels_abs >= 0] += int(level_offset)
-        if tree_coord == "rpa":
-            state_payload = self._rpa_builder.populate_tree_state(
-                leaf_shape=leaf_shape,
-                max_level=int(max_level + level_offset),
-                cell_levels=levels_abs,
-                axis_rho_tol=float(axis_rho_tol),
-                points=points,
-                corners=corners_arr,
-            )
-        else:
-            state_payload = self._xyz_builder.populate_tree_state(
-                leaf_shape=leaf_shape,
-                max_level=int(max_level + level_offset),
-                cell_levels=levels_abs,
-                points=points,
-                corners=corners_arr,
-            )
-        state = OctreeState(
-            tree_coord=tree_coord,
-            root_shape=tuple(int(v) for v in root_shape),
-            **state_payload,
-        )
-        return Octree.from_state(
-            state,
+    levels = np.asarray(levels, dtype=np.int64)
+    levels_abs = np.array(levels, copy=True)
+    levels_abs[levels_abs >= 0] += int(level_offset)
+    if tree_coord == "rpa":
+        state_payload = populate_rpa_tree_state(
+            leaf_shape=leaf_shape,
+            max_level=int(max_level + level_offset),
+            cell_levels=levels_abs,
+            axis_rho_tol=float(axis_rho_tol),
             points=points,
             corners=corners_arr,
         )
+    else:
+        state_payload = populate_xyz_tree_state(
+            leaf_shape=leaf_shape,
+            max_level=int(max_level + level_offset),
+            cell_levels=levels_abs,
+            points=points,
+            corners=corners_arr,
+        )
+    state = OctreeState(
+        tree_coord=tree_coord,
+        root_shape=tuple(int(v) for v in root_shape),
+        **state_payload,
+    )
+    return Octree.from_state(
+        state,
+        points=points,
+        corners=corners_arr,
+    )
