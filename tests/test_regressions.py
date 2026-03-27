@@ -7,6 +7,7 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeBuilder
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from batcamp.spherical import _xyz_to_rpa_components
 
 
@@ -54,13 +55,17 @@ def test_lookup_outside_domain_returns_none(regression_context) -> None:
 
 @pytest.mark.slow
 def test_load_uses_dataset_corners(tmp_path, regression_context) -> None:
-    """Regression: loaded trees should resolve lookups from bound dataset corners."""
+    """Regression: loaded trees should resolve lookups from explicit point/corner geometry."""
     ds, tree = regression_context
     path = tmp_path / "tree_regression.npz"
     tree.save(path)
 
-    loaded = Octree.load(path, ds=ds)
+    loaded = Octree.load(
+        path,
+        points=np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in XYZ_VARS)),
+        corners=np.asarray(ds.corners, dtype=np.int64),
+    )
 
-    # Ensure lookups are functional via ds.corners.
+    # Ensure lookups are functional via explicit geometry arrays.
     q = np.array([1.0, 0.0, 0.0], dtype=float)
     assert int(loaded.lookup_points(q, coord="xyz")[0]) >= 0

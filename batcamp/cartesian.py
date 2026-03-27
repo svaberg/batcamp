@@ -10,17 +10,18 @@ Cartesian backend are exact under this axis-aligned representation.
 from __future__ import annotations
 import numpy as np
 
-from .constants import XYZ_VARS
 from .octree import AXIS0
 from .octree import AXIS1
 from .octree import AXIS2
 from .octree import START
 from .octree import WIDTH
-def _attach_cartesian_coord_state(tree, ds, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
-    """Derive Cartesian cell bounds, domain bounds, and axis-2 periodic metadata from the bound dataset."""
-    x = np.asarray(ds[XYZ_VARS[0]], dtype=np.float64)
-    y = np.asarray(ds[XYZ_VARS[1]], dtype=np.float64)
-    z = np.asarray(ds[XYZ_VARS[2]], dtype=np.float64)
+
+
+def _attach_cartesian_coord_state(tree, points: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+    """Derive Cartesian cell bounds, domain bounds, and axis-2 periodic metadata from point/corner geometry."""
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
     cell_levels = tree.cell_levels
     cell_x = x[corners]
     cell_y = y[corners]

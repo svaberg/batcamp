@@ -8,13 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from batread import Dataset
 from numba import njit
 from numba import prange
 
 from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
-from .constants import XYZ_VARS
 from .shared_types import GridShape
 from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
@@ -330,24 +328,21 @@ def _rebuild_cell_state(
 
 def _build_trilinear_geometry(
     tree: "Octree",
-    ds: Dataset,
+    points: np.ndarray,
     corners_all: np.ndarray,
     cell_bounds: np.ndarray,
 ) -> np.ndarray:
-    """Build the leaf-cell trilinear interpolation arrays from the bound dataset."""
+    """Build leaf-cell trilinear corner rows from explicit point/corner geometry."""
     leaf_cell_ids = np.flatnonzero(tree.cell_levels >= 0).astype(np.int64)
     corners = corners_all[leaf_cell_ids]
     leaf_bounds = cell_bounds[leaf_cell_ids]
-    x = np.asarray(ds[XYZ_VARS[0]], dtype=np.float64)
-    y = np.asarray(ds[XYZ_VARS[1]], dtype=np.float64)
-    z = np.asarray(ds[XYZ_VARS[2]], dtype=np.float64)
     if tree.tree_coord == "xyz":
-        corner_axes = np.stack((x[corners], y[corners], z[corners]), axis=2)
+        corner_axes = points[corners]
         axis2_periodic = False
     else:
         from .spherical import _xyz_arrays_to_rpa
 
-        point_r, point_p, point_a = _xyz_arrays_to_rpa(x, y, z)
+        point_r, point_p, point_a = _xyz_arrays_to_rpa(points[:, 0], points[:, 1], points[:, 2])
         corner_axes = np.stack((point_r[corners], point_p[corners], point_a[corners]), axis=2)
         axis2_periodic = True
     leaf_bin_to_corner = _trilinear_corner_order(
@@ -375,9 +370,10 @@ class Octree:
         tree_coord: TreeCoord = DEFAULT_TREE_COORD,
         cell_levels: np.ndarray,
         cell_ijk: np.ndarray,
-        ds: Dataset,
+        points: np.ndarray,
+        corners: np.ndarray,
     ) -> None:
-        """Build one octree directly from exact leaf addresses."""
+        """Build one octree from exact leaf addresses plus explicit point/corner geometry."""
         leaf_levels: np.ndarray
         leaf_ijk: np.ndarray
         resolved_tree_coord = str(tree_coord)
@@ -389,6 +385,12 @@ class Octree:
         self._tree_coord = resolved_tree_coord
         leaf_levels = np.asarray(cell_levels, dtype=np.int64)
         leaf_ijk = np.asarray(cell_ijk, dtype=np.int64)
+        point_xyz = np.asarray(points, dtype=np.float64)
+        if point_xyz.ndim != 2 or point_xyz.shape[1] != 3:
+            raise ValueError("points must have shape (n_points, 3).")
+        corner_rows = np.asarray(corners, dtype=np.int64)
+        if corner_rows.ndim != 2 or corner_rows.shape != (leaf_levels.shape[0], 8):
+            raise ValueError("corners must have shape (n_cells, 8) matching cell_levels.")
         max_level = int(np.max(leaf_levels))
         (
             self._cell_depth,
@@ -402,11 +404,6 @@ class Octree:
             max_level=max_level,
         )
         self._leaf_slot_count = int(leaf_levels.shape[0])
-        if ds.corners is None:
-            raise ValueError("Dataset has no corners; cannot bind octree lookup.")
-        if not set(XYZ_VARS).issubset(set(ds.variables)):
-            raise ValueError("Dataset must provide X/Y/Z variables to bind octree lookup.")
-        corners = np.asarray(ds.corners, dtype=np.int64)
         if self._tree_coord == "xyz":
             from .cartesian import _attach_cartesian_coord_state
 
@@ -415,8 +412,8 @@ class Octree:
             from .spherical import _attach_spherical_coord_state
 
             attach_coord_state = _attach_spherical_coord_state
-        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, ds, corners)
-        interp_corners = _build_trilinear_geometry(self, ds, corners, cell_bounds)
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, point_xyz, corner_rows)
+        interp_corners = _build_trilinear_geometry(self, point_xyz, corner_rows, cell_bounds)
         self._corners = interp_corners
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
@@ -495,15 +492,17 @@ class Octree:
         cls,
         state: "OctreeState",
         *,
-        ds: Dataset,
+        points: np.ndarray,
+        corners: np.ndarray,
     ) -> "Octree":
-        """Instantiate one tree from exact saved state."""
+        """Instantiate one tree from exact saved state and explicit point/corner geometry."""
         return cls(
             root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
             cell_levels=state.cell_levels,
             cell_ijk=state.cell_ijk,
-            ds=ds,
+            points=points,
+            corners=corners,
         )
 
     @classmethod
@@ -511,14 +510,15 @@ class Octree:
         cls,
         path: str | Path,
         *,
-        ds: Dataset,
+        points: np.ndarray,
+        corners: np.ndarray,
     ) -> "Octree":
-        """Load a tree from `.npz` and bind it to the given dataset."""
+        """Load a tree from `.npz` and bind it to explicit point/corner geometry."""
         from .persistence import OctreeState
 
         in_path = Path(path)
         state = OctreeState.load_npz(in_path)
-        tree = cls.from_state(state, ds=ds)
+        tree = cls.from_state(state, points=points, corners=corners)
         logger.info("Loaded octree from %s", str(in_path))
         return tree
 

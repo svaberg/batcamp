@@ -281,5 +281,6 @@ class OctreeBuilder:
         )
         return Octree.from_state(
             state,
-            ds=ds,
+            points=np.column_stack(tuple(np.asarray(ds[name], dtype=np.float64) for name in XYZ_VARS)),
+            corners=corners_arr,
         )

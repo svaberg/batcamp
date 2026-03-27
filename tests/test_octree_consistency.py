@@ -5,6 +5,7 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
+from batcamp.constants import XYZ_VARS
 from octree_test_support import cell_bounds
 
 
@@ -57,7 +58,11 @@ def test_loaded_tree_interpolator_match(advanced_context, tmp_path) -> None:
     ds, tree = advanced_context
     path = tmp_path / "advanced_interp_tree.npz"
     tree.save(path)
-    loaded = Octree.load(path, ds=ds)
+    loaded = Octree.load(
+        path,
+        points=np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in XYZ_VARS)),
+        corners=np.asarray(ds.corners, dtype=np.int64),
+    )
 
     values = np.asarray(ds["Rho [g/cm^3]"])
     interp_a = OctreeInterpolator(tree, values)
