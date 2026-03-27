@@ -43,27 +43,30 @@ def test_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_tree_build_uses_expected_coord(name: str, tree_coord: str) -> None:
-    """Tree contract: correct tree_coord builds; wrong tree_coord fails."""
+    """Tree contract: constructor honors explicit tree_coord and rejects wrong ones."""
     ds = Dataset.from_file(str(data_file(name)))
+    points = ds[["X [R]", "Y [R]", "Z [R]"]]
     wrong_tree_coord = "xyz" if tree_coord == "rpa" else "rpa"
-    assert str(build_octree_from_ds(ds, tree_coord=tree_coord).tree_coord) == tree_coord
+    assert str(Octree(points, ds.corners, tree_coord=tree_coord).tree_coord) == tree_coord
     with pytest.raises(ValueError):
-        build_octree_from_ds(ds, tree_coord=wrong_tree_coord)
+        Octree(points, ds.corners, tree_coord=wrong_tree_coord)
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_tree_build_default_matches_expected(name: str, tree_coord: str) -> None:
-    """Tree contract: default `build_octree_from_ds(ds)` resolves correct tree type."""
+    """Tree contract: default `Octree(points, corners)` resolves correct tree type."""
     ds = Dataset.from_file(str(data_file(name)))
-    assert str(build_octree_from_ds(ds).tree_coord) == tree_coord
+    points = ds[["X [R]", "Y [R]", "Z [R]"]]
+    assert str(Octree(points, ds.corners).tree_coord) == tree_coord
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     """Interpolator contract: explicit and inferred trees should interpolate identically."""
     ds = Dataset.from_file(str(data_file(name)))
-    tree_explicit = build_octree_from_ds(ds, tree_coord=tree_coord)
-    tree_auto = build_octree_from_ds(ds)
+    points = ds[["X [R]", "Y [R]", "Z [R]"]]
+    tree_explicit = Octree(points, ds.corners, tree_coord=tree_coord)
+    tree_auto = Octree(points, ds.corners)
     queries = _midpoint_queries_xyz(tree_explicit, 16)
 
     values = np.asarray(ds["Rho [g/cm^3]"])
@@ -80,3 +83,15 @@ def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
         atol=1e-12,
         equal_nan=True,
     )
+
+
+@pytest.mark.parametrize("name,tree_coord", _CASES)
+def test_builder_function_matches_constructor(name: str, tree_coord: str) -> None:
+    """Secondary builder helper should match direct constructor output."""
+    ds = Dataset.from_file(str(data_file(name)))
+    points = ds[["X [R]", "Y [R]", "Z [R]"]]
+    tree_ctor = Octree(points, ds.corners, tree_coord=tree_coord)
+    tree_fn = build_octree_from_ds(ds, tree_coord=tree_coord)
+    assert tree_ctor.tree_coord == tree_fn.tree_coord
+    np.testing.assert_array_equal(tree_ctor.cell_levels, tree_fn.cell_levels)
+    np.testing.assert_array_equal(tree_ctor.corners, tree_fn.corners)
