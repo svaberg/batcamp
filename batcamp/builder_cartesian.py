@@ -15,9 +15,14 @@ def _cartesian_cell_geometry(
     corners: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return per-cell xyz minima, maxima, and spans."""
-    cell_xyz = points[corners]
-    cell_min = np.min(cell_xyz, axis=1)
-    cell_max = np.max(cell_xyz, axis=1)
+    cell_min = np.empty((corners.shape[0], 3), dtype=points.dtype)
+    cell_max = np.empty((corners.shape[0], 3), dtype=points.dtype)
+    cell_min[:, 0] = points[corners[:, 0], 0]
+    cell_min[:, 1] = points[corners[:, 0], 1]
+    cell_min[:, 2] = points[corners[:, 0], 2]
+    cell_max[:, 0] = points[corners[:, 1], 0]
+    cell_max[:, 1] = points[corners[:, 3], 1]
+    cell_max[:, 2] = points[corners[:, 4], 2]
     return cell_min, cell_max, cell_max - cell_min
 
 
