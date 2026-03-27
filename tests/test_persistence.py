@@ -30,7 +30,7 @@ def tree_dataset_pair() -> tuple[Octree, _FakeDataset]:
             XYZ_VARS[2]: points[:, 2],
         },
     )
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     return tree, ds
 
 

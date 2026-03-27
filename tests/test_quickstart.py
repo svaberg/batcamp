@@ -37,7 +37,8 @@ def _midpoint_queries_xyz(tree: Octree, n_query: int) -> np.ndarray:
 def test_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
     """Inference contract: geometry-based coord inference matches expected."""
     ds = Dataset.from_file(str(data_file(name)))
-    assert str(infer_tree_coord_from_geometry(ds)) == tree_coord
+    points = np.column_stack((np.asarray(ds["X [R]"]), np.asarray(ds["Y [R]"]), np.asarray(ds["Z [R]"])))
+    assert str(infer_tree_coord_from_geometry(points, np.asarray(ds.corners, dtype=np.int64))) == tree_coord
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
@@ -45,24 +46,24 @@ def test_tree_build_uses_expected_coord(name: str, tree_coord: str) -> None:
     """Tree contract: correct tree_coord builds; wrong tree_coord fails."""
     ds = Dataset.from_file(str(data_file(name)))
     wrong_tree_coord = "xyz" if tree_coord == "rpa" else "rpa"
-    assert str(OctreeBuilder().build(ds, tree_coord=tree_coord).tree_coord) == tree_coord
+    assert str(OctreeBuilder().from_ds(ds, tree_coord=tree_coord).tree_coord) == tree_coord
     with pytest.raises(ValueError):
-        OctreeBuilder().build(ds, tree_coord=wrong_tree_coord)
+        OctreeBuilder().from_ds(ds, tree_coord=wrong_tree_coord)
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_tree_build_default_matches_expected(name: str, tree_coord: str) -> None:
-    """Tree contract: default `OctreeBuilder().build(ds)` resolves correct tree type."""
+    """Tree contract: default `OctreeBuilder().from_ds(ds)` resolves correct tree type."""
     ds = Dataset.from_file(str(data_file(name)))
-    assert str(OctreeBuilder().build(ds).tree_coord) == tree_coord
+    assert str(OctreeBuilder().from_ds(ds).tree_coord) == tree_coord
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     """Interpolator contract: explicit and inferred trees should interpolate identically."""
     ds = Dataset.from_file(str(data_file(name)))
-    tree_explicit = OctreeBuilder().build(ds, tree_coord=tree_coord)
-    tree_auto = OctreeBuilder().build(ds)
+    tree_explicit = OctreeBuilder().from_ds(ds, tree_coord=tree_coord)
+    tree_auto = OctreeBuilder().from_ds(ds)
     queries = _midpoint_queries_xyz(tree_explicit, 16)
 
     values = np.asarray(ds["Rho [g/cm^3]"])

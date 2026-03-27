@@ -31,8 +31,9 @@ from batcamp import OctreeInterpolator
 ds = Dataset.from_file("MY_FILE")
 
 # Build the octree explicitly, then create the interpolator on top of it.
-tree = OctreeBuilder().build(ds)
-interp = OctreeInterpolator(tree, ["Rho [g/cm^3]"])
+tree = OctreeBuilder().from_ds(ds)
+rho_values = np.asarray(ds["Rho [g/cm^3]"], dtype=float)
+interp = OctreeInterpolator(tree, rho_values)
 
 # Create a grid of points and interpolate the density
 X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))

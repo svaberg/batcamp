@@ -299,7 +299,7 @@ def _make_spherical_tree(
 def cartesian_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="xyz")
     assert isinstance(tree, Octree)
     interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     return ds, tree, interp
@@ -354,20 +354,20 @@ def test_build_rejects_missing_corners() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Dataset has no corners"):
-        OctreeBuilder().build(ds)
+        OctreeBuilder().from_ds(ds)
 
 
 def test_build_rejects_unknown_tree_coord() -> None:
     """Builder should reject unsupported coordinate-system identifiers."""
     ds = _build_regular_dataset()
     with pytest.raises(ValueError, match="Unsupported tree_coord"):
-        OctreeBuilder().build(ds, tree_coord="foo")
+        OctreeBuilder().from_ds(ds, tree_coord="foo")
 
 
 def test_build_xyz_returns_cartesian_tree() -> None:
     """Builder should construct Cartesian octree when tree_coord='xyz'."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="xyz")
     assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
@@ -375,22 +375,17 @@ def test_build_xyz_returns_cartesian_tree() -> None:
 def test_build_default_returns_cartesian_tree() -> None:
     """Default build path should return the Cartesian octree specialization."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds)
+    tree = OctreeBuilder().from_ds(ds)
     assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
 
-def test_compute_azimuth_spans_reject_missing_xy_geometry() -> None:
-    """Azimuth-span computation should reject datasets lacking `X/Y` geometry."""
-    points = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
+def test_build_rejects_bad_point_shape() -> None:
+    """Explicit point arrays must have shape `(n_points, 3)`."""
+    points = np.array([[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     corners = np.array([[0, 1, 2]], dtype=np.int64)
-    ds = _FakeDataset(
-        points=points,
-        corners=corners,
-        variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[2]: points[:, 2]},
-    )
-    with pytest.raises(ValueError, match="Could not determine azimuth"):
-        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+    with pytest.raises(ValueError, match="points must have shape"):
+        OctreeBuilder().build(points, corners, tree_coord="rpa")
 
 
 def test_compute_azimuth_spans_reject_bad_corner_rank() -> None:
@@ -403,7 +398,7 @@ def test_compute_azimuth_spans_reject_bad_corner_rank() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Expected 2D corner array"):
-        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(np.asarray(ds.points, dtype=float), corners=corners)
 
 
 def test_compute_azimuth_spans_reject_too_few_corners() -> None:
@@ -416,7 +411,7 @@ def test_compute_azimuth_spans_reject_too_few_corners() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Need at least 3 corners per cell"):
-        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+        SphericalOctreeBuilder.compute_azimuth_spans_and_levels(np.asarray(ds.points, dtype=float), corners=corners)
 
 
 def test_infer_levels_marks_non_dyadic_span_invalid() -> None:
@@ -429,10 +424,18 @@ def test_build_tree_rejects_all_invalid_levels() -> None:
     """Tree construction should fail when all provided levels are invalid."""
     ds = _build_regular_dataset()
     builder = OctreeBuilder()
-    azimuth_span, _azimuth_center, _cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+    azimuth_span, _azimuth_center, _cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
+        np.asarray(ds.points, dtype=float),
+        corners=np.asarray(ds.corners, dtype=np.int64),
+    )
     all_invalid = np.full(azimuth_span.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        builder._build(ds, tree_coord="rpa", cell_levels=all_invalid)
+        builder._build(
+            np.asarray(ds.points, dtype=float),
+            np.asarray(ds.corners, dtype=np.int64),
+            tree_coord="rpa",
+            cell_levels=all_invalid,
+        )
 
 
 def test_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogCaptureFixture) -> None:
@@ -440,7 +443,7 @@ def test_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogC
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "7 3x5x9"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+        tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert tree.leaf_shape[0] > 0
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
@@ -451,7 +454,7 @@ def test_no_warning_on_compatible_blocks_aux(caplog: pytest.LogCaptureFixture) -
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "1 2x4x8"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+        tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert not any("BLOCKS" in rec.getMessage() for rec in caplog.records)
 
@@ -461,7 +464,7 @@ def test_warns_on_blocks_count_mismatch(caplog: pytest.LogCaptureFixture) -> Non
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "5 1x1x1"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+        tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
 
@@ -471,7 +474,7 @@ def test_warns_on_impossible_blocks_count(caplog: pytest.LogCaptureFixture) -> N
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "1000 1x1x1"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+        tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
 
@@ -481,7 +484,7 @@ def test_warns_on_unparseable_blocks_aux(caplog: pytest.LogCaptureFixture) -> No
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "garbage"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = OctreeBuilder().build(ds, tree_coord="rpa")
+        tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert any("BLOCKS" in rec.getMessage() and "not parseable" in rec.getMessage() for rec in caplog.records)
 
@@ -530,13 +533,13 @@ def test_rebuild_cells_rejects_parent_child_overlap() -> None:
 
 def test_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
-    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
+    tree = OctreeBuilder().from_ds(_build_regular_dataset(), tree_coord="rpa")
     assert not hasattr(tree, "depth_for_level")
 
 
 def test_regular_spherical_tree_uses_absolute_levels() -> None:
     """Uniform spherical trees should store root-relative absolute levels."""
-    tree = OctreeBuilder().build(_build_regular_dataset(), tree_coord="rpa")
+    tree = OctreeBuilder().from_ds(_build_regular_dataset(), tree_coord="rpa")
     assert tree.min_level == tree.max_level
     assert tree.cell_levels is not None
     assert np.all(tree.cell_levels == tree.max_level)
@@ -544,7 +547,12 @@ def test_regular_spherical_tree_uses_absolute_levels() -> None:
 
 def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     """Builder should attach exact tree indices on the ready bound tree."""
-    xyz_tree = OctreeBuilder()._build(_build_regular_xyz_dataset(), tree_coord="xyz")
+    xyz_ds = _build_regular_xyz_dataset()
+    xyz_tree = OctreeBuilder()._build(
+        np.asarray(xyz_ds.points, dtype=float),
+        np.asarray(xyz_ds.corners, dtype=np.int64),
+        tree_coord="xyz",
+    )
     assert xyz_tree.cell_levels is not None
     assert np.asarray(xyz_tree._cell_ijk[: xyz_tree.cell_levels.shape[0]], dtype=np.int64).shape == (xyz_tree.cell_levels.shape[0], 3)
     assert np.asarray(xyz_tree._cell_depth, dtype=np.int64).ndim == 1
@@ -552,7 +560,12 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     assert np.asarray(xyz_tree._root_cell_ids, dtype=np.int64).ndim == 1
     assert not hasattr(xyz_tree, "_radial_edges")
 
-    rpa_tree = OctreeBuilder()._build(_build_regular_dataset(), tree_coord="rpa")
+    rpa_ds = _build_regular_dataset()
+    rpa_tree = OctreeBuilder()._build(
+        np.asarray(rpa_ds.points, dtype=float),
+        np.asarray(rpa_ds.corners, dtype=np.int64),
+        tree_coord="rpa",
+    )
     assert rpa_tree.cell_levels is not None
     assert np.asarray(rpa_tree._cell_ijk[: rpa_tree.cell_levels.shape[0]], dtype=np.int64).shape == (rpa_tree.cell_levels.shape[0], 3)
     assert np.asarray(rpa_tree._cell_depth, dtype=np.int64).ndim == 1
@@ -564,10 +577,15 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
 def test_spherical_lookup_rejects_non_exact_geometry() -> None:
     """Irregular spherical geometry should fail in the builder."""
     regular = _build_regular_dataset()
-    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(regular)
+    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
+        np.asarray(regular.points, dtype=float),
+        corners=np.asarray(regular.corners, dtype=np.int64),
+    )
+    irregular = _build_irregular_spherical_dataset()
     with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
         OctreeBuilder()._build(
-            _build_irregular_spherical_dataset(),
+            np.asarray(irregular.points, dtype=float),
+            np.asarray(irregular.corners, dtype=np.int64),
             tree_coord="rpa",
             cell_levels=cell_levels,
         )
@@ -576,7 +594,12 @@ def test_spherical_lookup_rejects_non_exact_geometry() -> None:
 def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
     ds, cell_levels = _build_adaptive_xyz_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="xyz", cell_levels=cell_levels)
+    tree = OctreeBuilder()._build(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+        tree_coord="xyz",
+        cell_levels=cell_levels,
+    )
     assert tree.max_level == 1
     assert tree.min_level == 0
     assert tree.cell_levels is not None
@@ -601,7 +624,11 @@ def test_cartesian_level_shapes_reject_inconsistent_dx() -> None:
         },
     )
     with pytest.raises(ValueError, match="inconsistent dx"):
-        CartesianOctreeBuilder.infer_xyz_level_shapes(ds, np.asarray(corners, dtype=np.int64), np.zeros(3, dtype=np.int64))
+        CartesianOctreeBuilder.infer_xyz_level_shapes(
+            np.asarray(ds.points, dtype=float),
+            np.asarray(corners, dtype=np.int64),
+            np.zeros(3, dtype=np.int64),
+        )
 
 
 def test_cartesian_infer_leaf_shape_rejects_missing_max_level() -> None:
@@ -609,7 +636,7 @@ def test_cartesian_infer_leaf_shape_rejects_missing_max_level() -> None:
     ds = _build_regular_xyz_dataset(nx=2, ny=2, nz=2)
     with pytest.raises(ValueError, match="No cells found at max_level=1"):
         CartesianOctreeBuilder.infer_leaf_shape(
-            ds,
+            np.asarray(ds.points, dtype=float),
             np.asarray(ds.corners, dtype=np.int64),
             np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
             max_level=1,
@@ -630,7 +657,7 @@ def test_cartesian_tree_state_requires_cell_levels() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -649,7 +676,7 @@ def test_cartesian_tree_state_requires_at_least_one_valid_level() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -668,7 +695,7 @@ def test_cartesian_tree_state_rejects_depth_above_tree_depth() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -687,7 +714,7 @@ def test_cartesian_tree_state_rejects_width_mismatch() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -696,10 +723,13 @@ def test_spherical_level_shapes_require_valid_levels() -> None:
     """Spherical angular-shape inference should fail when all levels are invalid."""
     ds = _build_regular_dataset()
     corners = np.asarray(ds.corners, dtype=np.int64)
-    azimuth_span, _azimuth_center, _levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+    azimuth_span, _azimuth_center, _levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
+        np.asarray(ds.points, dtype=float),
+        corners=corners,
+    )
     with pytest.raises(ValueError, match="No valid \\(>=0\\) cell levels available for tree inference"):
         SphericalOctreeBuilder.infer_level_angular_shapes(
-            ds,
+            np.asarray(ds.points, dtype=float),
             corners,
             azimuth_span,
             np.full(azimuth_span.shape, -1, dtype=np.int64),
@@ -732,7 +762,7 @@ def test_spherical_tree_state_requires_cell_levels() -> None:
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
             axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -752,7 +782,7 @@ def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
             axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -772,7 +802,7 @@ def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
             axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -792,7 +822,7 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
             axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
-            ds=ds,
+            points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
@@ -800,9 +830,13 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
 def test_build_returns_bound_tree() -> None:
     """Builder should return a tree with lookup geometry ready for use."""
     ds = _build_regular_dataset()
-    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(ds)
+    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
+        np.asarray(ds.points, dtype=float),
+        corners=np.asarray(ds.corners, dtype=np.int64),
+    )
     tree = OctreeBuilder()._build(
-        ds,
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
         tree_coord="rpa",
         cell_levels=cell_levels,
     )
@@ -812,7 +846,11 @@ def test_build_returns_bound_tree() -> None:
 def test_build_stores_tree_coord() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder()._build(ds, tree_coord="xyz")
+    tree = OctreeBuilder()._build(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+        tree_coord="xyz",
+    )
     assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
@@ -825,7 +863,8 @@ def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
 
     with pytest.raises(ValueError, match="Could not infer integer finest n_axis0"):
         OctreeBuilder()._build(
-            ds,
+            np.asarray(ds.points, dtype=float),
+            np.asarray(ds.corners, dtype=np.int64),
             tree_coord="rpa",
             cell_levels=None,
         )
@@ -834,7 +873,7 @@ def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
 def test_lookup_runs_for_xyz() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="xyz")
     assert int(tree.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
     assert not hasattr(tree, "lookup_rpa")
 
@@ -842,7 +881,7 @@ def test_lookup_runs_for_xyz() -> None:
 def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
     """Cartesian lookup should return miss for points in an uncovered bbox gap."""
     ds = _build_disjoint_xyz_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="xyz")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="xyz")
     q_gap = np.array([5.0, 0.5, 0.5], dtype=float)
     assert int(tree.lookup_points(q_gap, coord="xyz")[0]) < 0
 
@@ -851,4 +890,4 @@ def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:
     """Gappy spherical shells should be rejected by the builder."""
     ds = _build_disjoint_spherical_shell_dataset()
     with pytest.raises(ValueError, match="radial edge count does not match leaf_shape"):
-        OctreeBuilder().build(ds, tree_coord="rpa")
+        OctreeBuilder().from_ds(ds, tree_coord="rpa")

@@ -4,9 +4,7 @@
 from __future__ import annotations
 
 import numpy as np
-from batread import Dataset
 
-from .constants import XYZ_VARS
 from .builder import LevelShapeStatsMap
 from .builder import DEFAULT_AXIS_RHO_TOL
 from .builder import _median_positive
@@ -110,28 +108,15 @@ class SphericalOctreeBuilder:
         return start, width
 
     @staticmethod
-    def _axis_corner_mask(ds: Dataset, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
+    def _axis_corner_mask(points: np.ndarray, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
         """Mark corners near the polar axis where azimuth is singular."""
-        names = set(ds.variables)
-        if not set(XYZ_VARS[:2]).issubset(names):
-            return np.zeros(corners.shape, dtype=bool)
-        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
-        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
-        rho = np.hypot(x, y)
+        rho = np.hypot(points[:, 0], points[:, 1])
         return rho[corners] <= float(axis_rho_tol)
 
     @staticmethod
-    def _extract_azimuth(ds: Dataset) -> np.ndarray:
-        """Extract wrapped azimuth values from Cartesian `X/Y` coordinates."""
-        variable_names = set(ds.variables)
-        if not set(XYZ_VARS[:2]).issubset(variable_names):
-            raise ValueError(
-                "Could not determine azimuth from dataset geometry. "
-                f"Need {XYZ_VARS[0]!r} and {XYZ_VARS[1]!r}; available variables are {list(ds.variables)}."
-            )
-        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
-        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
-        return np.mod(np.arctan2(y, x), 2.0 * np.pi)
+    def _extract_azimuth(points: np.ndarray) -> np.ndarray:
+        """Extract wrapped azimuth values from Cartesian `X/Y` point coordinates."""
+        return np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
 
     @staticmethod
     def infer_level_expectation(
@@ -173,26 +158,23 @@ class SphericalOctreeBuilder:
 
     @staticmethod
     def compute_azimuth_spans_and_levels(
-        ds: Dataset,
+        points: np.ndarray,
         *,
-        corners: np.ndarray | None = None,
+        corners: np.ndarray,
         rtol: float = 1e-4,
         atol: float = 1e-9,
         axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
         """Compute per-cell azimuth spans and inferred dyadic refinement levels."""
-        source_corners = ds.corners if corners is None else corners
-        if source_corners is None:
-            raise ValueError("Dataset has no corners; cannot compute azimuth-span levels.")
-        corners_arr = np.asarray(source_corners, dtype=np.int64)
+        corners_arr = np.asarray(corners, dtype=np.int64)
         if corners_arr.ndim != 2:
             raise ValueError(f"Expected 2D corner array, got shape {corners_arr.shape}.")
         if corners_arr.shape[1] < 3:
             raise ValueError("Need at least 3 corners per cell to estimate azimuth span.")
 
-        azimuth = SphericalOctreeBuilder._extract_azimuth(ds)
+        azimuth = SphericalOctreeBuilder._extract_azimuth(points)
         cell_azimuth = azimuth[corners_arr]
-        axis_mask = SphericalOctreeBuilder._axis_corner_mask(ds, corners_arr, axis_rho_tol=axis_rho_tol)
+        axis_mask = SphericalOctreeBuilder._axis_corner_mask(points, corners_arr, axis_rho_tol=axis_rho_tol)
         azimuth_span, azimuth_center = SphericalOctreeBuilder._circular_span_and_mean(
             cell_azimuth,
             ignore_mask=axis_mask,
@@ -206,15 +188,15 @@ class SphericalOctreeBuilder:
 
     @staticmethod
     def infer_level_angular_shapes(
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
         azimuth_span: np.ndarray,
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level angular counts/spacings from spherical mesh geometry."""
-        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
-        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
-        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
+        x = points[:, 0]
+        y = points[:, 1]
+        z = points[:, 2]
         r = np.sqrt(x * x + y * y + z * z)
         polar = np.arccos(np.clip(z / np.maximum(r, np.finfo(float).tiny), -1.0, 1.0))
         delta_polar = np.ptp(polar[corners], axis=1)
@@ -255,7 +237,7 @@ class SphericalOctreeBuilder:
 
     def infer_level_shapes(
         self,
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
         *,
         cell_levels: np.ndarray | None = None,
@@ -263,7 +245,7 @@ class SphericalOctreeBuilder:
     ) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
         """Infer spherical level-shape map and validated levels."""
         azimuth_span, _azimuth_center, auto_levels, _expected, _coarse = self.compute_azimuth_spans_and_levels(
-            ds,
+            points,
             corners=corners,
             rtol=self.level_rtol,
             atol=self.level_atol,
@@ -274,7 +256,7 @@ class SphericalOctreeBuilder:
             cell_levels=cell_levels,
             expected_shape=auto_levels.shape,
         )
-        level_shapes = self.infer_level_angular_shapes(ds, corners, azimuth_span, levels)
+        level_shapes = self.infer_level_angular_shapes(points, corners, azimuth_span, levels)
         return level_shapes, levels, max_level
 
     @staticmethod
@@ -308,20 +290,12 @@ class SphericalOctreeBuilder:
         max_level: int,
         cell_levels: np.ndarray | None,
         axis_rho_tol: float,
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
     ) -> dict[str, object]:
         """Return exact spherical octree state for one built tree."""
         if cell_levels is None:
             raise ValueError("Spherical tree state requires cell_levels.")
-
-        points = np.column_stack(
-            (
-                np.asarray(ds[XYZ_VARS[0]], dtype=float),
-                np.asarray(ds[XYZ_VARS[1]], dtype=float),
-                np.asarray(ds[XYZ_VARS[2]], dtype=float),
-            )
-        )
         corners_arr = np.asarray(corners, dtype=np.int64)
         levels = np.asarray(cell_levels, dtype=np.int64)
         valid = levels >= 0
@@ -338,11 +312,7 @@ class SphericalOctreeBuilder:
         cell_polar_min = np.min(polar_points[corners_arr], axis=1)
         cell_polar_max = np.max(polar_points[corners_arr], axis=1)
         azimuth_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-        axis_mask = SphericalOctreeBuilder._axis_corner_mask(
-            ds,
-            corners_arr,
-            axis_rho_tol=float(axis_rho_tol),
-        )
+        axis_mask = SphericalOctreeBuilder._axis_corner_mask(points, corners_arr, axis_rho_tol=float(axis_rho_tol))
         azimuth_start = np.empty(levels.shape[0], dtype=float)
         azimuth_width = np.empty(levels.shape[0], dtype=float)
         azimuth_corners = azimuth_points[corners_arr]

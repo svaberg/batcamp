@@ -59,7 +59,7 @@ def test_build_and_query_runtime_guardrail() -> None:
     rng = np.random.default_rng(0)
 
     t0 = perf_counter()
-    tree = OctreeBuilder().build(ds)
+    tree = OctreeBuilder().from_ds(ds)
     interp = OctreeInterpolator(tree, np.asarray(ds[_RHO], dtype=float))
     build_s = perf_counter() - t0
 
@@ -105,7 +105,7 @@ def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: 
     oct_query_times: list[float] = []
     oct_results: list[np.ndarray] = []
     t0 = perf_counter()
-    oct_interp = OctreeInterpolator(OctreeBuilder().build(ds, tree_coord=tree_coord), values)
+    oct_interp = OctreeInterpolator(OctreeBuilder().from_ds(ds, tree_coord=tree_coord), values)
     for q in queries:
         t1 = perf_counter()
         out = np.asarray(
