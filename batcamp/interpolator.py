@@ -355,9 +355,9 @@ class OctreeInterpolator:
             if qs == "rpa":
                 kernel_queries = q_array
             else:
-                from .spherical import _xyz_arrays_to_rpa
+                from .spherical import xyz_arrays_to_rpa
 
-                kernel_queries = np.column_stack(_xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
+                kernel_queries = np.column_stack(xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
             kernel = _interp_cells_rpa
         else:
             kernel_queries = q_array
@@ -393,5 +393,3 @@ class OctreeInterpolator:
             f"n_components={int(self._point_values_2d.shape[1])}"
             ")"
         )
-
-logger.addHandler(logging.NullHandler())
