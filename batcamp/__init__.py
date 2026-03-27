@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from .builder import OctreeBuilder
 from .builder import DEFAULT_AXIS_RHO_TOL
 from .builder import DEFAULT_MIN_VALID_CELL_FRACTION
+from .builder import build_octree
+from .builder import build_octree_from_ds
 from .builder import format_histogram
 from .builder import point_refinement_levels
 from .builder import valid_cell_fraction
@@ -14,7 +15,8 @@ from .octree import Octree
 from .persistence import OCTREE_FILE_VERSION
 
 __all__ = [
-    "OctreeBuilder",
+    "build_octree",
+    "build_octree_from_ds",
     "format_histogram",
     "point_refinement_levels",
     "valid_cell_fraction",

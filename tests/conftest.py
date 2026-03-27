@@ -6,9 +6,9 @@ from batread import Dataset
 
 from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree
-from batcamp import OctreeBuilder
+from batcamp import build_octree_from_ds
 from batcamp import point_refinement_levels
-from batcamp.builder_spherical import SphericalOctreeBuilder
+import batcamp.builder_spherical as spherical_builder
 from sample_data_helper import data_file
 
 
@@ -39,12 +39,14 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
     assert ds.corners is not None
 
     corners = np.asarray(ds.corners, dtype=np.int64)
-    tree = OctreeBuilder(level_rtol=1e-4, level_atol=1e-9).from_ds(
+    tree = build_octree_from_ds(
         ds,
         tree_coord="rpa",
         axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
+        level_rtol=1e-4,
+        level_atol=1e-9,
     )
-    azimuth_span, azimuth_center, _levels, expected, coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
+    azimuth_span, azimuth_center, _levels, expected, coarse = spherical_builder.compute_azimuth_spans_and_levels(
         np.column_stack((np.asarray(ds["X [R]"]), np.asarray(ds["Y [R]"]), np.asarray(ds["Z [R]"]))),
         corners=corners,
         rtol=1e-4,

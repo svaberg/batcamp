@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
-from batcamp import OctreeBuilder
+from batcamp import build_octree_from_ds
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
@@ -59,7 +59,7 @@ def _build_uniform_spherical_hex_dataset(
 def synthetic_context() -> tuple[_FakeDataset, Octree, np.ndarray, tuple[float, float, float, float]]:
     """Return synthetic dataset, built tree, linear nodal field and coefficients."""
     ds, linear_field, coeffs = _build_uniform_spherical_hex_dataset()
-    tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
+    tree = build_octree_from_ds(ds, tree_coord="rpa")
     return ds, tree, linear_field, coeffs
 
 

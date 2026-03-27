@@ -7,7 +7,7 @@ import pytest
 from batread import Dataset
 
 from batcamp import Octree
-from batcamp import OctreeBuilder
+from batcamp import build_octree_from_ds
 from batcamp.constants import XYZ_VARS
 from batcamp.face_neighbors import OctreeFaceNeighbors
 from fake_dataset import FakeDataset as _FakeDataset
@@ -32,7 +32,7 @@ def _build_cartesian_uniform_tree() -> Octree:
             XYZ_VARS[2]: points[:, 2],
         },
     )
-    return OctreeBuilder().from_ds(ds, tree_coord="xyz")
+    return build_octree_from_ds(ds, tree_coord="xyz")
 
 
 def _build_spherical_uniform_tree() -> Octree:
@@ -53,7 +53,7 @@ def _build_spherical_uniform_tree() -> Octree:
             XYZ_VARS[2]: points[:, 2],
         },
     )
-    return OctreeBuilder().from_ds(ds, tree_coord="rpa")
+    return build_octree_from_ds(ds, tree_coord="rpa")
 
 
 def _build_two_level_topology_tree() -> Octree:
@@ -281,7 +281,7 @@ _TOPOLOGY_SAMPLE_CASES = [
 def test_topological_neighborhood_on_sample_files(file_name: str, tree_coord: str, record_property) -> None:
     path, resolve_path_s = _time_call(data_file, file_name)
     ds, read_dataset_s = _time_call(Dataset.from_file, str(path))
-    tree, build_tree_s = _time_call(OctreeBuilder().from_ds, ds, tree_coord=tree_coord)
+    tree, build_tree_s = _time_call(build_octree_from_ds, ds, tree_coord=tree_coord)
     topo, build_topology_s = _build_face_neighbors_timed(tree, label=file_name)
     _unused, validate_invariants_s = _time_call(_assert_basic_face_neighbor_invariants, topo)
 

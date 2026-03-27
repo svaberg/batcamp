@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from batcamp import Octree
-from batcamp import OctreeBuilder
+from batcamp import build_octree_from_ds
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
@@ -129,7 +129,7 @@ def _assert_plane_ramp_matches_exact_field(
 ) -> None:
     """Assert plane-resampling stays exact over one resolution ramp."""
     xyz = _xyz_points(ds)
-    interp = OctreeInterpolator(OctreeBuilder().from_ds(ds, tree_coord="xyz"), np.asarray(ds[field_name]))
+    interp = OctreeInterpolator(build_octree_from_ds(ds, tree_coord="xyz"), np.asarray(ds[field_name]))
 
     for resolution in _PLANE_RAMP:
         query = _xy_plane_queries(xyz, resolution=resolution)
