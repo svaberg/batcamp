@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections import Counter
 import logging
 import re
+import time
 from typing import TypeAlias
 
 import numpy as np
@@ -31,6 +32,22 @@ DEFAULT_AXIS_RHO_TOL = 1e-12
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 """Default minimum fraction of valid inferred cell levels accepted by builder utilities."""
+
+
+def _log_timed_stage(stage: str, seconds: float, **fields: object) -> None:
+    """Emit one concise timed builder log line at INFO level."""
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    detail = ""
+    if fields:
+        detail = " " + " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info(
+        "octree build: %s complete (%.2fs)%s",
+        stage,
+        float(seconds),
+        detail,
+        stacklevel=2,
+    )
 
 
 def _xyz_points_from_ds(ds: Dataset) -> np.ndarray:
@@ -198,13 +215,23 @@ def build_octree_from_ds(
     level_atol: float = 1e-9,
 ) -> Octree:
     """Build one octree from a dataset by extracting explicit points and corners."""
+    t_total = time.perf_counter()
     if ds.corners is None:
         raise ValueError("Dataset has no corners; cannot build octree.")
+    t0 = time.perf_counter()
     points = _xyz_points_from_ds(ds)
     corners = np.asarray(ds.corners, dtype=np.int64)
     _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
+    _log_timed_stage(
+        "extract geometry",
+        time.perf_counter() - t0,
+        n_points=int(points.shape[0]),
+        n_cells=int(corners.shape[0]),
+    )
+    t0 = time.perf_counter()
     resolved_tree_coord = infer_tree_coord_from_geometry(points, corners) if tree_coord is None else tree_coord
-    return _build_octree(
+    _log_timed_stage("resolve tree coord", time.perf_counter() - t0, coord=resolved_tree_coord)
+    tree = _build_octree(
         points,
         corners,
         tree_coord=resolved_tree_coord,
@@ -213,6 +240,14 @@ def build_octree_from_ds(
         level_atol=level_atol,
         cell_levels=None,
     )
+    _log_timed_stage(
+        "total",
+        time.perf_counter() - t_total,
+        coord=resolved_tree_coord,
+        n_points=int(points.shape[0]),
+        n_cells=int(corners.shape[0]),
+    )
+    return tree
 
 
 def build_octree(
@@ -225,10 +260,19 @@ def build_octree(
     level_atol: float = 1e-9,
 ) -> Octree:
     """Build one octree from explicit points and corners."""
+    t_total = time.perf_counter()
     points = np.asarray(points, dtype=np.float64)
     corners_arr = np.asarray(corners, dtype=np.int64)
+    _log_timed_stage(
+        "prepare explicit geometry",
+        time.perf_counter() - t_total,
+        n_points=int(points.shape[0]),
+        n_cells=int(corners_arr.shape[0]),
+    )
+    t0 = time.perf_counter()
     resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
-    return _build_octree(
+    _log_timed_stage("resolve tree coord", time.perf_counter() - t0, coord=resolved_tree_coord)
+    tree = _build_octree(
         points,
         corners_arr,
         tree_coord=resolved_tree_coord,
@@ -237,6 +281,14 @@ def build_octree(
         level_atol=level_atol,
         cell_levels=None,
     )
+    _log_timed_stage(
+        "total",
+        time.perf_counter() - t_total,
+        coord=resolved_tree_coord,
+        n_points=int(points.shape[0]),
+        n_cells=int(corners_arr.shape[0]),
+    )
+    return tree
 
 
 def _build_octree(
@@ -270,6 +322,7 @@ def _build_octree(
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
 
+    t0 = time.perf_counter()
     if tree_coord == "rpa":
         level_shapes, levels, max_level = infer_rpa_level_shapes(
             points,
@@ -279,7 +332,6 @@ def _build_octree(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
-        leaf_shape = infer_rpa_leaf_shape(level_shapes)
     else:
         _level_shapes, levels, max_level = infer_xyz_level_shapes(
             points,
@@ -288,13 +340,21 @@ def _build_octree(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
+    _log_timed_stage("infer levels", time.perf_counter() - t0, coord=tree_coord, max_level=int(max_level))
+
+    t0 = time.perf_counter()
+    if tree_coord == "rpa":
+        leaf_shape = infer_rpa_leaf_shape(level_shapes)
+    else:
         leaf_shape = infer_xyz_leaf_shape(
             points,
             corners_arr,
             levels,
             max_level=max_level,
         )
+    _log_timed_stage("infer leaf shape", time.perf_counter() - t0, coord=tree_coord, leaf_shape=leaf_shape)
 
+    t0 = time.perf_counter()
     root_shape, depth = _root_shape_and_depth(leaf_shape)
     level_offset = int(depth) - int(max_level)
     if level_offset < 0:
@@ -304,6 +364,16 @@ def _build_octree(
     levels = np.asarray(levels, dtype=np.int64)
     levels_abs = np.array(levels, copy=True)
     levels_abs[levels_abs >= 0] += int(level_offset)
+    _log_timed_stage(
+        "normalize levels",
+        time.perf_counter() - t0,
+        coord=tree_coord,
+        root_shape=root_shape,
+        depth=int(depth),
+        max_level=int(max_level + level_offset),
+    )
+
+    t0 = time.perf_counter()
     if tree_coord == "rpa":
         state_payload = populate_rpa_tree_state(
             leaf_shape=leaf_shape,
@@ -321,13 +391,31 @@ def _build_octree(
             points=points,
             corners=corners_arr,
         )
+    _log_timed_stage("populate tree state", time.perf_counter() - t0, coord=tree_coord)
+
+    t0 = time.perf_counter()
     state = OctreeState(
         tree_coord=tree_coord,
         root_shape=tuple(int(v) for v in root_shape),
         **state_payload,
     )
-    return Octree.from_state(
+    tree = Octree.from_state(
         state,
         points=points,
         corners=corners_arr,
     )
+    _log_timed_stage("materialize octree", time.perf_counter() - t0, coord=tree_coord)
+    if logger.isEnabledFor(logging.DEBUG):
+        valid, total, frac = valid_cell_fraction(levels_abs)
+        logger.debug(
+            "octree build: summary coord=%s leaf_shape=%s root_shape=%s depth=%d max_level=%d valid=%d/%d frac=%.3f",
+            tree_coord,
+            leaf_shape,
+            root_shape,
+            int(depth),
+            int(max_level + level_offset),
+            valid,
+            total,
+            frac,
+        )
+    return tree
