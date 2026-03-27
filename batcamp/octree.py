@@ -25,70 +25,10 @@ AXIS2 = 2  # Packed bounds axis index for the third tree coordinate.
 START = 0  # Packed bounds slot index for interval start.
 WIDTH = 1  # Packed bounds slot index for interval width.
 
-
-_TRILINEAR_TARGET_BITS = np.array(
-    [[k & 1, (k >> 1) & 1, (k >> 2) & 1] for k in range(8)],
-    dtype=np.int8,
-)
 _CHILD_IJK_OFFSETS = np.array(
     [[(k >> 2) & 1, (k >> 1) & 1, k & 1] for k in range(8)],
     dtype=np.int64,
 )
-
-def _trilinear_corner_order(
-    corner_axes: np.ndarray,
-    *,
-    cell_bounds: np.ndarray,
-    axis2_periodic: bool,
-) -> np.ndarray:
-    """Build logical trilinear corner indices from per-corner axis coordinates."""
-    tiny = np.finfo(float).tiny
-    axis0 = corner_axes[:, :, AXIS0]
-    axis1 = corner_axes[:, :, AXIS1]
-    axis2 = corner_axes[:, :, AXIS2]
-    axis0_start = cell_bounds[:, AXIS0, START]
-    axis0_width = cell_bounds[:, AXIS0, WIDTH]
-    axis1_start = cell_bounds[:, AXIS1, START]
-    axis1_width = cell_bounds[:, AXIS1, WIDTH]
-    axis2_start = cell_bounds[:, AXIS2, START]
-    axis2_width = cell_bounds[:, AXIS2, WIDTH]
-
-    axis0_mid = axis0_start[:, None] + 0.5 * axis0_width[:, None]
-    axis1_mid = axis1_start[:, None] + 0.5 * axis1_width[:, None]
-    bit0 = (axis0 >= axis0_mid).astype(np.int8)
-    bit1 = (axis1 >= axis1_mid).astype(np.int8)
-    if axis2_periodic:
-        axis2_full = axis2_width >= (2.0 * np.pi - 1.0e-10)
-        axis2_tiny = axis2_width <= tiny
-        axis2_rel = np.mod(axis2 - axis2_start[:, None], 2.0 * np.pi)
-        axis2_rel = np.where(
-            (~axis2_full)[:, None],
-            np.clip(axis2_rel, 0.0, axis2_width[:, None]),
-            axis2_rel,
-        )
-        axis2_mid = 0.5 * axis2_width[:, None]
-        bit2 = np.zeros_like(bit0, dtype=np.int8)
-        valid_axis2 = ~axis2_tiny
-        if np.any(valid_axis2):
-            bit2[valid_axis2] = (axis2_rel[valid_axis2] >= axis2_mid[valid_axis2]).astype(np.int8)
-    else:
-        axis2_mid = axis2_start[:, None] + 0.5 * axis2_width[:, None]
-        bit2 = (axis2 >= axis2_mid).astype(np.int8)
-
-    bin_id = bit0 + (bit1 << 1) + (bit2 << 2)
-    bit_trip = np.stack((bit0, bit1, bit2), axis=2)
-    n_cells = int(axis0.shape[0])
-    bin_to_corner = np.empty((n_cells, 8), dtype=np.int64)
-    for k in range(8):
-        eq = bin_id == k
-        has = np.any(eq, axis=1)
-        pick = np.argmax(eq, axis=1).astype(np.int64)
-        missing = ~has
-        if np.any(missing):
-            d = np.sum((bit_trip[missing] - _TRILINEAR_TARGET_BITS[k]) ** 2, axis=2)
-            pick[missing] = np.argmin(d, axis=1)
-        bin_to_corner[:, k] = pick
-    return bin_to_corner
 
 
 @njit(cache=True)
@@ -180,12 +120,35 @@ def _cell_row_order(cell_depth: np.ndarray, cell_ijk: np.ndarray) -> np.ndarray:
     return np.lexsort(np.column_stack((cell_depth, cell_ijk))[:, ::-1].T)
 
 
+def _pack_cell_keys(cell_depth: np.ndarray, cell_ijk: np.ndarray, axis_bases: np.ndarray) -> np.ndarray:
+    """Pack `(depth, axis0, axis1, axis2)` rows into sortable integer keys."""
+    depth = cell_depth.astype(np.uint64, copy=False)
+    axis0 = cell_ijk[:, AXIS0].astype(np.uint64, copy=False)
+    axis1 = cell_ijk[:, AXIS1].astype(np.uint64, copy=False)
+    axis2 = cell_ijk[:, AXIS2].astype(np.uint64, copy=False)
+    key = depth * np.uint64(axis_bases[AXIS0]) + axis0
+    key = key * np.uint64(axis_bases[AXIS1]) + axis1
+    key = key * np.uint64(axis_bases[AXIS2]) + axis2
+    return key
+
+
+def _unpack_cell_keys(keys: np.ndarray, axis_bases: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Unpack sortable integer keys into `(depth, cell_ijk)` arrays."""
+    key = keys.astype(np.uint64, copy=True)
+    axis2 = (key % np.uint64(axis_bases[AXIS2])).astype(np.int64)
+    key //= np.uint64(axis_bases[AXIS2])
+    axis1 = (key % np.uint64(axis_bases[AXIS1])).astype(np.int64)
+    key //= np.uint64(axis_bases[AXIS1])
+    axis0 = (key % np.uint64(axis_bases[AXIS0])).astype(np.int64)
+    depth = (key // np.uint64(axis_bases[AXIS0])).astype(np.int64)
+    return depth, np.column_stack((axis0, axis1, axis2))
+
+
 def _rebuild_cells(
     depths: np.ndarray,
     cell_ijk: np.ndarray,
     leaf_value: np.ndarray,
     *,
-    tree_depth: int,
     n_leaf_slots: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build rebuilt octree cell arrays from exact leaf addresses."""
@@ -208,30 +171,23 @@ def _rebuild_cells(
             f"{(int(leaf_depth[dup]), *(int(v) for v in leaf_ijk[dup]))}."
         )
 
-    parent_depth_parts: list[np.ndarray] = []
-    parent_ijk_parts: list[np.ndarray] = []
-    for parent_depth in range(int(tree_depth)):
-        mask = depths > int(parent_depth)
+    parent_key_parts: list[np.ndarray] = []
+    axis_bases = np.max(leaf_ijk, axis=0).astype(np.uint64) + 1
+    for shift in range(1, int(np.max(leaf_depth)) + 1):
+        mask = leaf_depth >= shift
         if not np.any(mask):
             continue
-        up = depths[mask] - int(parent_depth)
-        parent_ijk = np.right_shift(leaf_ijk_raw[mask], up[:, None])
-        parent_cells = np.column_stack(
-            (
-                np.full(int(np.count_nonzero(mask)), int(parent_depth), dtype=np.int64),
-                parent_ijk,
+        parent_key_parts.append(
+            _pack_cell_keys(
+                leaf_depth[mask] - shift,
+                np.right_shift(leaf_ijk[mask], shift),
+                axis_bases,
             )
         )
-        parent_cells = np.unique(parent_cells, axis=0)
-        parent_depth_parts.append(parent_cells[:, 0].astype(np.int64, copy=False))
-        parent_ijk_parts.append(parent_cells[:, 1:].astype(np.int64, copy=False))
 
-    if parent_depth_parts:
-        internal_depth = np.concatenate(parent_depth_parts)
-        internal_ijk = np.concatenate(parent_ijk_parts, axis=0)
-        internal_order = _cell_row_order(internal_depth, internal_ijk)
-        internal_depth = internal_depth[internal_order]
-        internal_ijk = internal_ijk[internal_order]
+    if parent_key_parts:
+        internal_keys = np.unique(np.concatenate(parent_key_parts))
+        internal_depth, internal_ijk = _unpack_cell_keys(internal_keys, axis_bases)
     else:
         internal_depth = np.empty(0, dtype=np.int64)
         internal_ijk = np.empty((0, 3), dtype=np.int64)
@@ -275,20 +231,26 @@ def _build_cell_topology(
     cell_child = np.full((n_cells, 8), -1, dtype=np.int64)
     cell_parent = np.full(n_cells, -1, dtype=np.int64)
     occupied = np.flatnonzero(cell_depth >= 0).astype(np.int64)
-    key_to_cell = {
-        (int(cell_depth[idx]), *(int(v) for v in cell_ijk[idx])): int(idx)
-        for idx in occupied
-    }
-    for idx in occupied:
-        depth = int(cell_depth[idx])
-        parent_ijk = cell_ijk[idx]
-        for child_ord in range(8):
-            child_ijk = 2 * parent_ijk + _CHILD_IJK_OFFSETS[child_ord]
-            child_key = (depth + 1, *(int(v) for v in child_ijk))
-            child_idx = key_to_cell.get(child_key)
-            if child_idx is not None:
-                cell_child[idx, child_ord] = int(child_idx)
-                cell_parent[int(child_idx)] = int(idx)
+    occupied_depth = cell_depth[occupied]
+    occupied_ijk = cell_ijk[occupied]
+    axis_bases = 2 * np.max(occupied_ijk, axis=0).astype(np.uint64) + 2
+    occupied_keys = _pack_cell_keys(occupied_depth, occupied_ijk, axis_bases)
+    order = np.argsort(occupied_keys)
+    sorted_keys = occupied_keys[order]
+    sorted_ids = occupied[order]
+    for child_ord in range(8):
+        child_depth = occupied_depth + 1
+        child_ijk = 2 * occupied_ijk + _CHILD_IJK_OFFSETS[child_ord]
+        child_keys = _pack_cell_keys(child_depth, child_ijk, axis_bases)
+        child_pos = np.searchsorted(sorted_keys, child_keys)
+        hits = child_pos < sorted_keys.size
+        hits[hits] = sorted_keys[child_pos[hits]] == child_keys[hits]
+        if not np.any(hits):
+            continue
+        parent_ids = occupied[hits]
+        child_ids = sorted_ids[child_pos[hits]]
+        cell_child[parent_ids, child_ord] = child_ids
+        cell_parent[child_ids] = parent_ids
     root_cell_ids = np.flatnonzero(cell_depth == 0).astype(np.int64)
     return cell_child, root_cell_ids, cell_parent
 
@@ -296,8 +258,6 @@ def _build_cell_topology(
 def _rebuild_cell_state(
     cell_levels: np.ndarray,
     cell_ijk: np.ndarray,
-    *,
-    max_level: int,
 ) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied cells from leaf addresses."""
 
@@ -314,7 +274,6 @@ def _rebuild_cell_state(
         depths,
         leaf_ijk_valid,
         valid_ids,
-        tree_depth=int(max_level),
         n_leaf_slots=int(cell_levels.shape[0]),
     )
     cell_child, root_cell_ids, cell_parent = _build_cell_topology(
@@ -322,36 +281,6 @@ def _rebuild_cell_state(
         cell_ijk_rt,
     )
     return cell_depth, cell_ijk_rt, cell_child, root_cell_ids, cell_parent
-
-def _build_trilinear_geometry(
-    tree: "Octree",
-    points: np.ndarray,
-    corners_all: np.ndarray,
-    cell_bounds: np.ndarray,
-) -> np.ndarray:
-    """Build leaf-cell trilinear corner rows from explicit point/corner geometry."""
-    leaf_cell_ids = np.flatnonzero(tree.cell_levels >= 0).astype(np.int64)
-    corners = corners_all[leaf_cell_ids]
-    leaf_bounds = cell_bounds[leaf_cell_ids]
-    if tree.tree_coord == "xyz":
-        corner_axes = points[corners]
-        axis2_periodic = False
-    else:
-        from .spherical import _xyz_arrays_to_rpa
-
-        point_r, point_p, point_a = _xyz_arrays_to_rpa(points[:, 0], points[:, 1], points[:, 2])
-        corner_axes = np.stack((point_r[corners], point_p[corners], point_a[corners]), axis=2)
-        axis2_periodic = True
-    leaf_bin_to_corner = _trilinear_corner_order(
-        corner_axes,
-        cell_bounds=leaf_bounds,
-        axis2_periodic=axis2_periodic,
-    )
-    n_leaf_slots = int(corners_all.shape[0])
-    interp_corners = np.full((n_leaf_slots, 8), -1, dtype=np.int64)
-    interp_corners[leaf_cell_ids] = np.take_along_axis(corners, leaf_bin_to_corner, axis=1)
-    return interp_corners
-
 
 class Octree:
     """Adaptive octree summary plus bound lookup entrypoints.
@@ -399,7 +328,6 @@ class Octree:
         ) = _rebuild_cell_state(
             leaf_levels,
             leaf_ijk,
-            max_level=max_level,
         )
         if logger.isEnabledFor(logging.INFO):
             logger.info(
@@ -425,15 +353,7 @@ class Octree:
                 float(time.perf_counter() - t0),
                 self._tree_coord,
             )
-        t0 = time.perf_counter()
-        interp_corners = _build_trilinear_geometry(self, points, corner_rows, cell_bounds)
-        if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "octree materialize: build trilinear geometry complete (%.2fs) coord=%s",
-                float(time.perf_counter() - t0),
-                self._tree_coord,
-            )
-        self._corners = interp_corners
+        self._corners = corner_rows
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
         self._axis2_period = float(axis2_period)
@@ -483,7 +403,7 @@ class Octree:
 
     @property
     def corners(self) -> np.ndarray:
-        """Return logical trilinear corner point ids for leaf rows."""
+        """Return leaf-row corner point ids in Tecplot/BATSRUS brick order."""
         return self._corners
 
     @property

@@ -22,6 +22,19 @@ logger = logging.getLogger(__name__)
 
 _TWO_PI = 2.0 * math.pi
 _TINY = np.finfo(np.float64).tiny
+_BRICK_TRILINEAR_BITS = np.array(
+    [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+    ],
+    dtype=np.int8,
+)
 
 
 @njit(cache=True)
@@ -34,18 +47,21 @@ def _accumulate_trilinear(
     corners: np.ndarray,
     point_values: np.ndarray,
 ) -> None:
-    """Write one trilinear interpolation row for one cell from normalized local coordinates."""
+    """Write one trilinear interpolation row from Tecplot/BATSRUS brick-ordered corners."""
     cell_id = int(cell_id)
     frac_axis0_lo = 1.0 - frac_axis0
     frac_axis1_lo = 1.0 - frac_axis1
     frac_axis2_lo = 1.0 - frac_axis2
     cell_corner_ids = corners[cell_id]
     out_row[:] = 0.0
-    for logical_corner in range(8):
-        weight = frac_axis0 if (logical_corner & 1) else frac_axis0_lo
-        weight *= frac_axis1 if (logical_corner & 2) else frac_axis1_lo
-        weight *= frac_axis2 if (logical_corner & 4) else frac_axis2_lo
-        corner_point_id = int(cell_corner_ids[logical_corner])
+    for corner_ord in range(8):
+        bit0 = _BRICK_TRILINEAR_BITS[corner_ord, AXIS0]
+        bit1 = _BRICK_TRILINEAR_BITS[corner_ord, AXIS1]
+        bit2 = _BRICK_TRILINEAR_BITS[corner_ord, AXIS2]
+        weight = frac_axis0 if bit0 else frac_axis0_lo
+        weight *= frac_axis1 if bit1 else frac_axis1_lo
+        weight *= frac_axis2 if bit2 else frac_axis2_lo
+        corner_point_id = int(cell_corner_ids[corner_ord])
         out_row[:] += weight * point_values[corner_point_id]
 
 

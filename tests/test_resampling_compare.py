@@ -72,12 +72,12 @@ def _build_adaptive_slab_points_and_corners() -> tuple[np.ndarray, np.ndarray]:
             [
                 int(node_index[ix0, iy0, iz0]),
                 int(node_index[ix1, iy0, iz0]),
-                int(node_index[ix0, iy1, iz0]),
                 int(node_index[ix1, iy1, iz0]),
+                int(node_index[ix0, iy1, iz0]),
                 int(node_index[ix0, iy0, iz1]),
                 int(node_index[ix1, iy0, iz1]),
-                int(node_index[ix0, iy1, iz1]),
                 int(node_index[ix1, iy1, iz1]),
+                int(node_index[ix0, iy1, iz1]),
             ]
         )
 

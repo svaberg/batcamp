@@ -37,6 +37,8 @@ def _build_uniform_cartesian_linear_dataset() -> _FakeDataset:
             XYZ_VARS[2]: z,
             "Scalar": _linear_scalar(x, y, z),
             "XCoord": np.asarray(x, dtype=float),
+            "YCoord": np.asarray(y, dtype=float),
+            "ZCoord": np.asarray(z, dtype=float),
         },
     )
 
@@ -57,12 +59,12 @@ def _build_adaptive_cartesian_linear_dataset() -> _FakeDataset:
         [
             int(node_index[0, 0, 0]),
             int(node_index[1, 0, 0]),
-            int(node_index[0, 2, 0]),
             int(node_index[1, 2, 0]),
+            int(node_index[0, 2, 0]),
             int(node_index[0, 0, 2]),
             int(node_index[1, 0, 2]),
-            int(node_index[0, 2, 2]),
             int(node_index[1, 2, 2]),
+            int(node_index[0, 2, 2]),
         ]
     ]
     for ix in (1, 2):
@@ -72,12 +74,12 @@ def _build_adaptive_cartesian_linear_dataset() -> _FakeDataset:
                     [
                         int(node_index[ix, iy, iz]),
                         int(node_index[ix + 1, iy, iz]),
-                        int(node_index[ix, iy + 1, iz]),
                         int(node_index[ix + 1, iy + 1, iz]),
+                        int(node_index[ix, iy + 1, iz]),
                         int(node_index[ix, iy, iz + 1]),
                         int(node_index[ix + 1, iy, iz + 1]),
-                        int(node_index[ix, iy + 1, iz + 1]),
                         int(node_index[ix + 1, iy + 1, iz + 1]),
+                        int(node_index[ix, iy + 1, iz + 1]),
                     ]
                 )
 
@@ -93,6 +95,8 @@ def _build_adaptive_cartesian_linear_dataset() -> _FakeDataset:
             XYZ_VARS[2]: z,
             "Scalar": _linear_scalar(x, y, z),
             "XCoord": np.asarray(x, dtype=float),
+            "YCoord": np.asarray(y, dtype=float),
+            "ZCoord": np.asarray(z, dtype=float),
         },
     )
 
@@ -119,6 +123,18 @@ def _xy_plane_queries(xyz: np.ndarray, *, resolution: int) -> np.ndarray:
     xg, yg = np.meshgrid(x, y, indexing="xy")
     zg = np.full_like(xg, 0.5 * float(dmin[2] + dmax[2]))
     return np.column_stack((xg.ravel(), yg.ravel(), zg.ravel()))
+
+
+def _random_interior_queries(xyz: np.ndarray, *, n_query: int, seed: int) -> np.ndarray:
+    """Return random interior Cartesian queries away from the outer box faces."""
+    rng = np.random.default_rng(int(seed))
+    dmin = np.min(xyz, axis=0)
+    dmax = np.max(xyz, axis=0)
+    span = dmax - dmin
+    eps = 1e-6 * np.maximum(span, 1.0)
+    lo = dmin + eps
+    hi = dmax - eps
+    return rng.uniform(lo, hi, size=(int(n_query), 3))
 
 
 def _assert_plane_ramp_matches_exact_field(
@@ -181,3 +197,31 @@ def test_adaptive_cartesian_plane_ramp_matches_x_coordinate_field() -> None:
         field_name="XCoord",
         expected_fn=lambda q: q[:, 0],
     )
+
+
+def test_uniform_cartesian_interp_matches_xyz_coordinate_fields() -> None:
+    """Uniform Cartesian interpolation should preserve axis order for `(x, y, z)` fields."""
+    ds = _build_uniform_cartesian_linear_dataset()
+    xyz = _xyz_points(ds)
+    interp = OctreeInterpolator(
+        build_octree_from_ds(ds, tree_coord="xyz"),
+        np.column_stack((np.asarray(ds["XCoord"]), np.asarray(ds["YCoord"]), np.asarray(ds["ZCoord"]))),
+    )
+    query = _random_interior_queries(xyz, n_query=512, seed=123)
+    values, cell_ids = interp(query, query_coord="xyz", log_outside_domain=False, return_cell_ids=True)
+    assert np.all(cell_ids >= 0)
+    assert np.allclose(values, query, atol=1e-10, rtol=0.0)
+
+
+def test_adaptive_cartesian_interp_matches_xyz_coordinate_fields() -> None:
+    """Adaptive Cartesian interpolation should preserve axis order for `(x, y, z)` fields."""
+    ds = _build_adaptive_cartesian_linear_dataset()
+    xyz = _xyz_points(ds)
+    interp = OctreeInterpolator(
+        build_octree_from_ds(ds, tree_coord="xyz"),
+        np.column_stack((np.asarray(ds["XCoord"]), np.asarray(ds["YCoord"]), np.asarray(ds["ZCoord"]))),
+    )
+    query = _random_interior_queries(xyz, n_query=512, seed=456)
+    values, cell_ids = interp(query, query_coord="xyz", log_outside_domain=False, return_cell_ids=True)
+    assert np.all(cell_ids >= 0)
+    assert np.allclose(values, query, atol=1e-10, rtol=0.0)
