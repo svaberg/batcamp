@@ -12,7 +12,6 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
-from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
 from .octree import Octree
@@ -287,7 +286,7 @@ def _build_octree_state(
     points: np.ndarray,
     corners: np.ndarray,
     *,
-    tree_coord: TreeCoord | None = DEFAULT_TREE_COORD,
+    tree_coord: TreeCoord | None = None,
     axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
@@ -397,33 +396,3 @@ def _build_octree_state(
         root_shape=tuple(int(v) for v in root_shape),
         **state_payload,
     )
-
-
-def _build_octree(
-    points: np.ndarray,
-    corners: np.ndarray,
-    *,
-    tree_coord: TreeCoord | None = DEFAULT_TREE_COORD,
-    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
-    cell_levels: np.ndarray | None = None,
-) -> Octree:
-    """Internal build path on explicit points/corners with optional exact levels."""
-    t0 = time.perf_counter()
-    state = _build_octree_state(
-        points,
-        corners,
-        tree_coord=tree_coord,
-        axis_rho_tol=axis_rho_tol,
-        level_rtol=level_rtol,
-        level_atol=level_atol,
-        cell_levels=cell_levels,
-    )
-    tree = Octree.from_state(
-        state,
-        points=points,
-        corners=corners,
-    )
-    _log_timed_stage("materialize octree", time.perf_counter() - t0, coord=state.tree_coord)
-    return tree
