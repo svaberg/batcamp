@@ -156,58 +156,51 @@ def _rebuild_cells(
     if leaf_ijk_raw.ndim != 2 or leaf_ijk_raw.shape[1] != 3:
         raise ValueError("cell_ijk must have shape (n_cells, 3).")
 
-    leaf_order = _cell_row_order(depths, leaf_ijk_raw)
-    leaf_depth = depths[leaf_order]
-    leaf_ijk = leaf_ijk_raw[leaf_order]
+    axis_bases = np.max(leaf_ijk_raw, axis=0).astype(np.uint64) + 1
+    leaf_keys = _pack_cell_keys(depths, leaf_ijk_raw, axis_bases)
+    leaf_order = np.argsort(leaf_keys)
+    sorted_leaf_keys = leaf_keys[leaf_order]
 
-    same_leaf = (
-        (leaf_depth[1:] == leaf_depth[:-1])
-        & np.all(leaf_ijk[1:] == leaf_ijk[:-1], axis=1)
-    )
+    same_leaf = sorted_leaf_keys[1:] == sorted_leaf_keys[:-1]
     if np.any(same_leaf):
         dup = int(np.flatnonzero(same_leaf)[0])
+        dup_depth, dup_ijk = _unpack_cell_keys(sorted_leaf_keys[dup : dup + 1], axis_bases)
         raise ValueError(
             "Cells overlap at octree address "
-            f"{(int(leaf_depth[dup]), *(int(v) for v in leaf_ijk[dup]))}."
+            f"{(int(dup_depth[0]), *(int(v) for v in dup_ijk[0]))}."
         )
 
     parent_key_parts: list[np.ndarray] = []
-    axis_bases = np.max(leaf_ijk, axis=0).astype(np.uint64) + 1
-    for shift in range(1, int(np.max(leaf_depth)) + 1):
-        mask = leaf_depth >= shift
+    for shift in range(1, int(np.max(depths)) + 1):
+        mask = depths >= shift
         if not np.any(mask):
             continue
         parent_key_parts.append(
             _pack_cell_keys(
-                leaf_depth[mask] - shift,
-                np.right_shift(leaf_ijk[mask], shift),
+                depths[mask] - shift,
+                np.right_shift(leaf_ijk_raw[mask], shift),
                 axis_bases,
             )
         )
 
     if parent_key_parts:
         internal_keys = np.unique(np.concatenate(parent_key_parts))
+        parent_pos = np.searchsorted(sorted_leaf_keys, internal_keys)
+        hits = parent_pos < sorted_leaf_keys.size
+        hits[hits] = sorted_leaf_keys[parent_pos[hits]] == internal_keys[hits]
+        if np.any(hits):
+            dup_depth, dup_ijk = _unpack_cell_keys(
+                internal_keys[np.flatnonzero(hits)[:1]],
+                axis_bases,
+            )
+            raise ValueError(
+                "Cells overlap across parent/child addresses at "
+                f"{(int(dup_depth[0]), *(int(v) for v in dup_ijk[0]))}."
+            )
         internal_depth, internal_ijk = _unpack_cell_keys(internal_keys, axis_bases)
     else:
         internal_depth = np.empty(0, dtype=np.int64)
         internal_ijk = np.empty((0, 3), dtype=np.int64)
-
-    all_depth = np.concatenate((leaf_depth, internal_depth))
-    all_ijk = np.concatenate((leaf_ijk, internal_ijk), axis=0)
-    all_order = _cell_row_order(all_depth, all_ijk)
-    all_depth = all_depth[all_order]
-    all_ijk = all_ijk[all_order]
-
-    same_cell = (
-        (all_depth[1:] == all_depth[:-1])
-        & np.all(all_ijk[1:] == all_ijk[:-1], axis=1)
-    )
-    if np.any(same_cell):
-        dup = int(np.flatnonzero(same_cell)[0])
-        raise ValueError(
-            "Cells overlap across parent/child addresses at "
-            f"{(int(all_depth[dup]), *(int(v) for v in all_ijk[dup]))}."
-        )
 
     leaf_slots = int(np.max(leaf_value)) + 1 if n_leaf_slots is None and leaf_value.size else int(n_leaf_slots or 0)
     n_cells = leaf_slots + int(internal_depth.shape[0])
@@ -233,24 +226,28 @@ def _build_cell_topology(
     occupied = np.flatnonzero(cell_depth >= 0).astype(np.int64)
     occupied_depth = cell_depth[occupied]
     occupied_ijk = cell_ijk[occupied]
-    axis_bases = 2 * np.max(occupied_ijk, axis=0).astype(np.uint64) + 2
+    axis_bases = np.max(occupied_ijk, axis=0).astype(np.uint64) + 1
     occupied_keys = _pack_cell_keys(occupied_depth, occupied_ijk, axis_bases)
     order = np.argsort(occupied_keys)
     sorted_keys = occupied_keys[order]
     sorted_ids = occupied[order]
-    for child_ord in range(8):
-        child_depth = occupied_depth + 1
-        child_ijk = 2 * occupied_ijk + _CHILD_IJK_OFFSETS[child_ord]
-        child_keys = _pack_cell_keys(child_depth, child_ijk, axis_bases)
-        child_pos = np.searchsorted(sorted_keys, child_keys)
-        hits = child_pos < sorted_keys.size
-        hits[hits] = sorted_keys[child_pos[hits]] == child_keys[hits]
-        if not np.any(hits):
-            continue
-        parent_ids = occupied[hits]
-        child_ids = sorted_ids[child_pos[hits]]
-        cell_child[parent_ids, child_ord] = child_ids
-        cell_parent[child_ids] = parent_ids
+    child_mask = occupied_depth > 0
+    child_ids = occupied[child_mask]
+    parent_depth = occupied_depth[child_mask] - 1
+    parent_ijk = np.right_shift(occupied_ijk[child_mask], 1)
+    parent_keys = _pack_cell_keys(parent_depth, parent_ijk, axis_bases)
+    parent_pos = np.searchsorted(sorted_keys, parent_keys)
+    hits = parent_pos < sorted_keys.size
+    hits[hits] = sorted_keys[parent_pos[hits]] == parent_keys[hits]
+    parent_ids = sorted_ids[parent_pos[hits]]
+    child_ids = child_ids[hits]
+    child_ord = (
+        ((occupied_ijk[child_mask][hits, AXIS0] & 1) << 2)
+        | ((occupied_ijk[child_mask][hits, AXIS1] & 1) << 1)
+        | (occupied_ijk[child_mask][hits, AXIS2] & 1)
+    ).astype(np.int64)
+    cell_child[parent_ids, child_ord] = child_ids
+    cell_parent[child_ids] = parent_ids
     root_cell_ids = np.flatnonzero(cell_depth == 0).astype(np.int64)
     return cell_child, root_cell_ids, cell_parent
 
@@ -258,6 +255,7 @@ def _build_cell_topology(
 def _rebuild_cell_state(
     cell_levels: np.ndarray,
     cell_ijk: np.ndarray,
+    tree_coord: str,
 ) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied cells from leaf addresses."""
 
@@ -270,16 +268,30 @@ def _rebuild_cell_state(
         raise ValueError("Octree state requires at least one valid leaf cell.")
     depths = cell_levels[valid_ids]
     leaf_ijk_valid = cell_ijk[valid_ids]
+    t0 = time.perf_counter()
     cell_depth, cell_ijk_rt = _rebuild_cells(
         depths,
         leaf_ijk_valid,
         valid_ids,
         n_leaf_slots=int(cell_levels.shape[0]),
     )
+    if logger.isEnabledFor(logging.INFO):
+        logger.info(
+            "octree materialize: rebuild cells complete (%.2fs) coord=%s",
+            float(time.perf_counter() - t0),
+            tree_coord,
+        )
+    t0 = time.perf_counter()
     cell_child, root_cell_ids, cell_parent = _build_cell_topology(
         cell_depth,
         cell_ijk_rt,
     )
+    if logger.isEnabledFor(logging.INFO):
+        logger.info(
+            "octree materialize: build cell topology complete (%.2fs) coord=%s",
+            float(time.perf_counter() - t0),
+            tree_coord,
+        )
     return cell_depth, cell_ijk_rt, cell_child, root_cell_ids, cell_parent
 
 class Octree:
@@ -328,6 +340,7 @@ class Octree:
         ) = _rebuild_cell_state(
             leaf_levels,
             leaf_ijk,
+            self._tree_coord,
         )
         if logger.isEnabledFor(logging.INFO):
             logger.info(

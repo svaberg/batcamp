@@ -302,9 +302,10 @@ def _build_octree(
     cell_levels: np.ndarray | None = None,
 ) -> Octree:
     """Internal build path on explicit points/corners with optional exact levels."""
-    from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
-    from .builder_cartesian import infer_level_shapes as infer_xyz_level_shapes
-    from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
+    from .builder_cartesian import _cartesian_cell_geometry
+    from .builder_cartesian import _infer_leaf_shape_from_geometry
+    from .builder_cartesian import _infer_levels_from_geometry
+    from .builder_cartesian import _populate_tree_state_from_geometry
     from .builder_spherical import infer_leaf_shape as infer_rpa_leaf_shape
     from .builder_spherical import infer_level_shapes as infer_rpa_level_shapes
     from .builder_spherical import populate_tree_state as populate_rpa_tree_state
@@ -333,9 +334,12 @@ def _build_octree(
             level_atol=level_atol,
         )
     else:
-        _level_shapes, levels, max_level = infer_xyz_level_shapes(
+        cell_min, cell_max, cell_span = _cartesian_cell_geometry(
             points,
             corners_arr,
+        )
+        levels, max_level = _infer_levels_from_geometry(
+            cell_span,
             cell_levels=cell_levels,
             level_rtol=level_rtol,
             level_atol=level_atol,
@@ -346,9 +350,10 @@ def _build_octree(
     if tree_coord == "rpa":
         leaf_shape = infer_rpa_leaf_shape(level_shapes)
     else:
-        leaf_shape = infer_xyz_leaf_shape(
-            points,
-            corners_arr,
+        leaf_shape = _infer_leaf_shape_from_geometry(
+            cell_min,
+            cell_max,
+            cell_span,
             levels,
             max_level=max_level,
         )
@@ -384,12 +389,12 @@ def _build_octree(
             corners=corners_arr,
         )
     else:
-        state_payload = populate_xyz_tree_state(
+        state_payload = _populate_tree_state_from_geometry(
             leaf_shape=leaf_shape,
             max_level=int(max_level + level_offset),
             cell_levels=levels_abs,
-            points=points,
-            corners=corners_arr,
+            cell_min=cell_min,
+            cell_max=cell_max,
         )
     _log_timed_stage("populate tree state", time.perf_counter() - t0, coord=tree_coord)
 

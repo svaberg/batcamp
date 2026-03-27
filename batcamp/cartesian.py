@@ -19,70 +19,19 @@ from .octree import WIDTH
 
 def _attach_cartesian_coord_state(tree, points: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
     """Derive Cartesian cell bounds, domain bounds, and axis-2 periodic metadata from point/corner geometry."""
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    cell_levels = tree.cell_levels
-    cell_x = x[corners]
-    cell_y = y[corners]
-    cell_z = z[corners]
-    cell_x_min = np.min(cell_x, axis=1)
-    cell_x_max = np.max(cell_x, axis=1)
-    cell_y_min = np.min(cell_y, axis=1)
-    cell_y_max = np.max(cell_y, axis=1)
-    cell_z_min = np.min(cell_z, axis=1)
-    cell_z_max = np.max(cell_z, axis=1)
-
-    leaf_cell_ids = np.flatnonzero(cell_levels >= 0)
+    xyz_min = np.min(points, axis=0).astype(np.float64, copy=False)
+    xyz_max = np.max(points, axis=0).astype(np.float64, copy=False)
+    xyz_span = np.maximum(xyz_max - xyz_min, np.finfo(np.float64).tiny)
+    fine_step = xyz_span / np.asarray(tree.leaf_shape, dtype=np.float64)
     n_cells = int(tree._cell_depth.shape[0])
-    octree_cell_x_min = np.full(n_cells, np.inf, dtype=np.float64)
-    octree_cell_x_max = np.full(n_cells, -np.inf, dtype=np.float64)
-    octree_cell_y_min = np.full(n_cells, np.inf, dtype=np.float64)
-    octree_cell_y_max = np.full(n_cells, -np.inf, dtype=np.float64)
-    octree_cell_z_min = np.full(n_cells, np.inf, dtype=np.float64)
-    octree_cell_z_max = np.full(n_cells, -np.inf, dtype=np.float64)
-    octree_cell_x_min[leaf_cell_ids] = cell_x_min[leaf_cell_ids]
-    octree_cell_x_max[leaf_cell_ids] = cell_x_max[leaf_cell_ids]
-    octree_cell_y_min[leaf_cell_ids] = cell_y_min[leaf_cell_ids]
-    octree_cell_y_max[leaf_cell_ids] = cell_y_max[leaf_cell_ids]
-    octree_cell_z_min[leaf_cell_ids] = cell_z_min[leaf_cell_ids]
-    octree_cell_z_max[leaf_cell_ids] = cell_z_max[leaf_cell_ids]
     occupied_ids = np.flatnonzero(tree._cell_depth >= 0)
-    occupied_ids = occupied_ids[np.argsort(tree._cell_depth[occupied_ids])[::-1]]
-    for cell_id in occupied_ids:
-        parent = int(tree._cell_parent[cell_id])
-        if parent < 0:
-            continue
-        octree_cell_x_min[parent] = min(octree_cell_x_min[parent], octree_cell_x_min[cell_id])
-        octree_cell_x_max[parent] = max(octree_cell_x_max[parent], octree_cell_x_max[cell_id])
-        octree_cell_y_min[parent] = min(octree_cell_y_min[parent], octree_cell_y_min[cell_id])
-        octree_cell_y_max[parent] = max(octree_cell_y_max[parent], octree_cell_y_max[cell_id])
-        octree_cell_z_min[parent] = min(octree_cell_z_min[parent], octree_cell_z_min[cell_id])
-        octree_cell_z_max[parent] = max(octree_cell_z_max[parent], octree_cell_z_max[cell_id])
-    root_ids = tree._root_cell_ids
-    xyz_min = np.array(
-        [
-            float(np.min(octree_cell_x_min[root_ids])),
-            float(np.min(octree_cell_y_min[root_ids])),
-            float(np.min(octree_cell_z_min[root_ids])),
-        ],
-        dtype=np.float64,
-    )
-    xyz_max = np.array(
-        [
-            float(np.max(octree_cell_x_max[root_ids])),
-            float(np.max(octree_cell_y_max[root_ids])),
-            float(np.max(octree_cell_z_max[root_ids])),
-        ],
-        dtype=np.float64,
-    )
+    cell_shift = int(tree.max_level) - tree._cell_depth[occupied_ids]
+    cell_width = np.left_shift(np.ones_like(cell_shift, dtype=np.int64), cell_shift)
+    cell_start_f = np.left_shift(tree._cell_ijk[occupied_ids], cell_shift[:, None])
     cell_bounds = np.empty((n_cells, 3, 2), dtype=np.float64)
-    cell_bounds[:, AXIS0, START] = octree_cell_x_min
-    cell_bounds[:, AXIS0, WIDTH] = octree_cell_x_max - octree_cell_x_min
-    cell_bounds[:, AXIS1, START] = octree_cell_y_min
-    cell_bounds[:, AXIS1, WIDTH] = octree_cell_y_max - octree_cell_y_min
-    cell_bounds[:, AXIS2, START] = octree_cell_z_min
-    cell_bounds[:, AXIS2, WIDTH] = octree_cell_z_max - octree_cell_z_min
+    cell_bounds.fill(np.nan)
+    cell_bounds[occupied_ids, :, START] = xyz_min + cell_start_f * fine_step
+    cell_bounds[occupied_ids, :, WIDTH] = cell_width[:, None] * fine_step
     domain_bounds = np.empty((3, 2), dtype=np.float64)
     domain_bounds[:, START] = xyz_min
     domain_bounds[:, WIDTH] = xyz_max - xyz_min

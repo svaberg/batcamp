@@ -10,6 +10,17 @@ from .builder import _median_positive
 from .builder import _resolve_cell_levels
 
 
+def _cartesian_cell_geometry(
+    points: np.ndarray,
+    corners: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return per-cell xyz minima, maxima, and spans."""
+    cell_xyz = points[corners]
+    cell_min = np.min(cell_xyz, axis=1)
+    cell_max = np.max(cell_xyz, axis=1)
+    return cell_min, cell_max, cell_max - cell_min
+
+
 def infer_xyz_levels_from_cell_spans(
     dx: np.ndarray,
     dy: np.ndarray,
@@ -46,32 +57,41 @@ def infer_xyz_levels_from_cell_spans(
     return levels
 
 
-def infer_xyz_level_shapes(
-    points: np.ndarray,
-    corners: np.ndarray,
+def _infer_levels_from_geometry(
+    cell_span: np.ndarray,
+    *,
+    cell_levels: np.ndarray | None = None,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+) -> tuple[np.ndarray, int]:
+    """Infer or validate Cartesian levels from precomputed per-cell spans."""
+    inferred_levels: np.ndarray | None = None
+    if cell_levels is None:
+        inferred_levels = infer_xyz_levels_from_cell_spans(
+            cell_span[:, 0],
+            cell_span[:, 1],
+            cell_span[:, 2],
+            rtol=max(2e-2, float(level_rtol)),
+            atol=max(1e-10, float(level_atol)),
+        )
+    return _resolve_cell_levels(
+        inferred_levels=inferred_levels,
+        cell_levels=cell_levels,
+        expected_shape=cell_span.shape[:1],
+    )
+
+
+def _infer_xyz_level_shapes_from_geometry(
+    cell_min: np.ndarray,
+    cell_max: np.ndarray,
+    cell_span: np.ndarray,
     cell_levels: np.ndarray,
 ) -> LevelShapeStatsMap:
-    """Infer per-level axis counts/spacings for Cartesian octrees."""
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    cell_x = x[corners]
-    cell_y = y[corners]
-    cell_z = z[corners]
-    dx = np.ptp(cell_x, axis=1)
-    dy = np.ptp(cell_y, axis=1)
-    dz = np.ptp(cell_z, axis=1)
-
-    x_min = float(np.min(np.min(cell_x, axis=1)))
-    x_max = float(np.max(np.max(cell_x, axis=1)))
-    y_min = float(np.min(np.min(cell_y, axis=1)))
-    y_max = float(np.max(np.max(cell_y, axis=1)))
-    z_min = float(np.min(np.min(cell_z, axis=1)))
-    z_max = float(np.max(np.max(cell_z, axis=1)))
-
-    span_x = max(x_max - x_min, np.finfo(float).tiny)
-    span_y = max(y_max - y_min, np.finfo(float).tiny)
-    span_z = max(z_max - z_min, np.finfo(float).tiny)
+    """Infer per-level axis counts/spacings from precomputed Cartesian geometry."""
+    xyz_span = np.maximum(np.max(cell_max, axis=0) - np.min(cell_min, axis=0), np.finfo(float).tiny)
+    dx = cell_span[:, 0]
+    dy = cell_span[:, 1]
+    dz = cell_span[:, 2]
 
     out: LevelShapeStatsMap = {}
     unique_levels = sorted(set(int(v) for v in cell_levels.tolist() if int(v) >= 0))
@@ -83,16 +103,16 @@ def infer_xyz_level_shapes(
         med_dx = _median_positive(dx[mask])
         med_dy = _median_positive(dy[mask])
         med_dz = _median_positive(dz[mask])
-        n_x = int(round(span_x / med_dx))
-        n_y = int(round(span_y / med_dy))
-        n_z = int(round(span_z / med_dz))
+        n_x = int(round(float(xyz_span[0]) / med_dx))
+        n_y = int(round(float(xyz_span[1]) / med_dy))
+        n_z = int(round(float(xyz_span[2]) / med_dz))
         if n_x <= 0 or n_y <= 0 or n_z <= 0:
             raise ValueError(
                 f"Invalid xyz counts inferred at level {level}: n_x={n_x}, n_y={n_y}, n_z={n_z}."
             )
-        ref_dx = span_x / n_x
-        ref_dy = span_y / n_y
-        ref_dz = span_z / n_z
+        ref_dx = float(xyz_span[0]) / n_x
+        ref_dy = float(xyz_span[1]) / n_y
+        ref_dz = float(xyz_span[2]) / n_z
         if not np.isclose(med_dx, ref_dx, rtol=2e-2, atol=1e-9):
             raise ValueError(f"Level {level} has inconsistent dx={med_dx:.6e} vs inferred {ref_dx:.6e}.")
         if not np.isclose(med_dy, ref_dy, rtol=2e-2, atol=1e-9):
@@ -101,6 +121,16 @@ def infer_xyz_level_shapes(
             raise ValueError(f"Level {level} has inconsistent dz={med_dz:.6e} vs inferred {ref_dz:.6e}.")
         out[level] = (n_y, n_z, med_dy, med_dz, int(np.count_nonzero(mask)))
     return out
+
+
+def infer_xyz_level_shapes(
+    points: np.ndarray,
+    corners: np.ndarray,
+    cell_levels: np.ndarray,
+) -> LevelShapeStatsMap:
+    """Infer per-level axis counts/spacings for Cartesian octrees."""
+    cell_min, cell_max, cell_span = _cartesian_cell_geometry(points, corners)
+    return _infer_xyz_level_shapes_from_geometry(cell_min, cell_max, cell_span, cell_levels)
 
 
 def infer_level_shapes(
@@ -112,32 +142,42 @@ def infer_level_shapes(
     level_atol: float = 1e-9,
 ) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
     """Infer Cartesian level-shape map and validated levels."""
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    cell_x = x[corners]
-    cell_y = y[corners]
-    cell_z = z[corners]
-    dx = np.ptp(cell_x, axis=1)
-    dy = np.ptp(cell_y, axis=1)
-    dz = np.ptp(cell_z, axis=1)
-
-    inferred_levels: np.ndarray | None = None
-    if cell_levels is None:
-        inferred_levels = infer_xyz_levels_from_cell_spans(
-            dx,
-            dy,
-            dz,
-            rtol=max(2e-2, float(level_rtol)),
-            atol=max(1e-10, float(level_atol)),
-        )
-    levels, max_level = _resolve_cell_levels(
-        inferred_levels=inferred_levels,
+    cell_min, cell_max, cell_span = _cartesian_cell_geometry(points, corners)
+    levels, max_level = _infer_levels_from_geometry(
+        cell_span,
         cell_levels=cell_levels,
-        expected_shape=dx.shape,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
     )
-    level_shapes = infer_xyz_level_shapes(points, corners, levels)
+    level_shapes = _infer_xyz_level_shapes_from_geometry(cell_min, cell_max, cell_span, levels)
     return level_shapes, levels, max_level
+
+
+def _infer_leaf_shape_from_geometry(
+    cell_min: np.ndarray,
+    cell_max: np.ndarray,
+    cell_span: np.ndarray,
+    cell_levels: np.ndarray,
+    *,
+    max_level: int,
+) -> tuple[int, int, int]:
+    """Infer finest Cartesian `(n_x, n_y, n_z)` counts from precomputed geometry."""
+    mask = np.asarray(cell_levels, dtype=np.int64) == int(max_level)
+    if not np.any(mask):
+        raise ValueError(f"No cells found at max_level={max_level}.")
+
+    xyz_span = np.maximum(np.max(cell_max, axis=0) - np.min(cell_min, axis=0), np.finfo(float).tiny)
+    finest_dx = _median_positive(cell_span[mask, 0])
+    finest_dy = _median_positive(cell_span[mask, 1])
+    finest_dz = _median_positive(cell_span[mask, 2])
+    n_x = int(round(float(xyz_span[0]) / finest_dx))
+    n_y = int(round(float(xyz_span[1]) / finest_dy))
+    n_z = int(round(float(xyz_span[2]) / finest_dz))
+    if n_x <= 0 or n_y <= 0 or n_z <= 0:
+        raise ValueError(
+            f"Invalid finest Cartesian shape inferred: n_x={n_x}, n_y={n_y}, n_z={n_z}."
+        )
+    return n_x, n_y, n_z
 
 
 def infer_leaf_shape(
@@ -148,81 +188,31 @@ def infer_leaf_shape(
     max_level: int,
 ) -> tuple[int, int, int]:
     """Infer finest Cartesian `(n_x, n_y, n_z)` counts from geometry at `max_level`."""
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    cell_x = x[corners]
-    cell_y = y[corners]
-    cell_z = z[corners]
-    dx = np.ptp(cell_x, axis=1)
-    dy = np.ptp(cell_y, axis=1)
-    dz = np.ptp(cell_z, axis=1)
-    mask = np.asarray(cell_levels, dtype=np.int64) == int(max_level)
-    if not np.any(mask):
-        raise ValueError(f"No cells found at max_level={max_level}.")
-
-    x_min = float(np.min(np.min(cell_x, axis=1)))
-    x_max = float(np.max(np.max(cell_x, axis=1)))
-    y_min = float(np.min(np.min(cell_y, axis=1)))
-    y_max = float(np.max(np.max(cell_y, axis=1)))
-    z_min = float(np.min(np.min(cell_z, axis=1)))
-    z_max = float(np.max(np.max(cell_z, axis=1)))
-    span_x = max(x_max - x_min, np.finfo(float).tiny)
-    span_y = max(y_max - y_min, np.finfo(float).tiny)
-    span_z = max(z_max - z_min, np.finfo(float).tiny)
-
-    finest_dx = _median_positive(dx[mask])
-    finest_dy = _median_positive(dy[mask])
-    finest_dz = _median_positive(dz[mask])
-    n_x = int(round(span_x / finest_dx))
-    n_y = int(round(span_y / finest_dy))
-    n_z = int(round(span_z / finest_dz))
-    if n_x <= 0 or n_y <= 0 or n_z <= 0:
-        raise ValueError(
-            f"Invalid finest Cartesian shape inferred: n_x={n_x}, n_y={n_y}, n_z={n_z}."
-        )
-    return n_x, n_y, n_z
+    cell_min, cell_max, cell_span = _cartesian_cell_geometry(points, corners)
+    return _infer_leaf_shape_from_geometry(
+        cell_min,
+        cell_max,
+        cell_span,
+        cell_levels,
+        max_level=max_level,
+    )
 
 
-def populate_tree_state(
+def _populate_tree_state_from_geometry(
     *,
     leaf_shape: tuple[int, int, int],
     max_level: int,
-    cell_levels: np.ndarray | None,
-    points: np.ndarray,
-    corners: np.ndarray,
+    cell_levels: np.ndarray,
+    cell_min: np.ndarray,
+    cell_max: np.ndarray,
 ) -> dict[str, object]:
-    """Return exact Cartesian octree state for one built tree."""
-    if cell_levels is None:
-        raise ValueError("Cartesian tree state requires cell_levels.")
-    corners_arr = np.asarray(corners, dtype=np.int64)
-    cell_xyz = points[corners_arr]
-    cell_x_min = np.min(cell_xyz[:, :, 0], axis=1)
-    cell_x_max = np.max(cell_xyz[:, :, 0], axis=1)
-    cell_y_min = np.min(cell_xyz[:, :, 1], axis=1)
-    cell_y_max = np.max(cell_xyz[:, :, 1], axis=1)
-    cell_z_min = np.min(cell_xyz[:, :, 2], axis=1)
-    cell_z_max = np.max(cell_xyz[:, :, 2], axis=1)
-
-    xyz_min = np.array(
-        [
-            float(np.min(cell_x_min)),
-            float(np.min(cell_y_min)),
-            float(np.min(cell_z_min)),
-        ],
-        dtype=float,
-    )
-    xyz_max = np.array(
-        [
-            float(np.max(cell_x_max)),
-            float(np.max(cell_y_max)),
-            float(np.max(cell_z_max)),
-        ],
-        dtype=float,
-    )
+    """Return exact Cartesian octree state from precomputed per-cell bounds."""
+    xyz_min = np.min(cell_min, axis=0).astype(float, copy=False)
+    xyz_max = np.max(cell_max, axis=0).astype(float, copy=False)
     xyz_span = np.maximum(xyz_max - xyz_min, np.finfo(float).tiny)
+
     leaf_shape_arr = np.asarray(leaf_shape, dtype=np.int64)
-    fine_step = xyz_span / np.asarray(leaf_shape_arr, dtype=float)
+    fine_step = xyz_span / leaf_shape_arr.astype(float)
     float32_eps = float(np.finfo(np.float32).eps)
     axis_tol = np.empty(3, dtype=float)
     for k in range(3):
@@ -244,6 +234,13 @@ def populate_tree_state(
         bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
         raise ValueError(f"Cartesian cell {bad} depth exceeds tree_depth={tree_depth}.")
     width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
+
+    cell_x_min = cell_min[:, 0]
+    cell_x_max = cell_max[:, 0]
+    cell_y_min = cell_min[:, 1]
+    cell_y_max = cell_max[:, 1]
+    cell_z_min = cell_min[:, 2]
+    cell_z_max = cell_max[:, 2]
 
     x0_f = np.rint((cell_x_min[valid_ids] - float(xyz_min[0])) / float(fine_step[0])).astype(np.int64)
     x1_f = np.rint((cell_x_max[valid_ids] - float(xyz_min[0])) / float(fine_step[0])).astype(np.int64)
@@ -301,14 +298,32 @@ def populate_tree_state(
         raise ValueError(f"Cartesian cell {bad} bounds do not align with inferred octree grid.")
 
     cell_ijk = np.full((levels.shape[0], 3), -1, dtype=np.int64)
-    i0 = np.right_shift(x0_f, shifts)
-    i1 = np.right_shift(y0_f, shifts)
-    i2 = np.right_shift(z0_f, shifts)
-    cell_ijk[valid_ids, 0] = i0
-    cell_ijk[valid_ids, 1] = i1
-    cell_ijk[valid_ids, 2] = i2
+    cell_ijk[valid_ids, 0] = np.right_shift(x0_f, shifts)
+    cell_ijk[valid_ids, 1] = np.right_shift(y0_f, shifts)
+    cell_ijk[valid_ids, 2] = np.right_shift(z0_f, shifts)
 
     return {
         "cell_levels": np.asarray(cell_levels, dtype=np.int64),
-        "cell_ijk": np.asarray(cell_ijk, dtype=np.int64),
+        "cell_ijk": cell_ijk,
     }
+
+
+def populate_tree_state(
+    *,
+    leaf_shape: tuple[int, int, int],
+    max_level: int,
+    cell_levels: np.ndarray | None,
+    points: np.ndarray,
+    corners: np.ndarray,
+) -> dict[str, object]:
+    """Return exact Cartesian octree state for one built tree."""
+    if cell_levels is None:
+        raise ValueError("Cartesian tree state requires cell_levels.")
+    cell_min, cell_max, _cell_span = _cartesian_cell_geometry(points, corners)
+    return _populate_tree_state_from_geometry(
+        leaf_shape=leaf_shape,
+        max_level=max_level,
+        cell_levels=cell_levels,
+        cell_min=cell_min,
+        cell_max=cell_max,
+    )
