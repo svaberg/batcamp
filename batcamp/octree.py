@@ -11,7 +11,6 @@ import numpy as np
 from numba import njit
 from numba import prange
 
-from .constants import DEFAULT_TREE_COORD
 from .constants import SUPPORTED_TREE_COORDS
 from .shared_types import GridShape
 from .shared_types import LevelCountTable

@@ -12,7 +12,7 @@ from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import build_octree
 from batcamp import build_octree_from_ds
-from batcamp.builder import _build_octree
+from batcamp.builder import _build_octree_state
 from batcamp.builder import _resolve_cell_levels
 import batcamp.builder_cartesian as cartesian_builder
 import batcamp.builder_spherical as spherical_builder
@@ -22,6 +22,22 @@ from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 from octree_test_support import cell_bounds
+
+
+def _tree_from_state_build(
+    points: np.ndarray,
+    corners: np.ndarray,
+    *,
+    tree_coord: str | None,
+    cell_levels: np.ndarray | None = None,
+) -> Octree:
+    state = _build_octree_state(
+        points,
+        corners,
+        tree_coord=tree_coord,
+        cell_levels=cell_levels,
+    )
+    return Octree.from_state(state, points=points, corners=corners)
 
 
 def _build_regular_dataset(
@@ -431,7 +447,7 @@ def test_build_tree_rejects_all_invalid_levels() -> None:
     )
     all_invalid = np.full(azimuth_span.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
-        _build_octree(
+        _tree_from_state_build(
             np.asarray(ds.points, dtype=float),
             np.asarray(ds.corners, dtype=np.int64),
             tree_coord="rpa",
@@ -547,7 +563,7 @@ def test_regular_spherical_tree_uses_absolute_levels() -> None:
 def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     """Builder should attach exact tree indices on the ready bound tree."""
     xyz_ds = _build_regular_xyz_dataset()
-    xyz_tree = _build_octree(
+    xyz_tree = _tree_from_state_build(
         np.asarray(xyz_ds.points, dtype=float),
         np.asarray(xyz_ds.corners, dtype=np.int64),
         tree_coord="xyz",
@@ -560,7 +576,7 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
     assert not hasattr(xyz_tree, "_radial_edges")
 
     rpa_ds = _build_regular_dataset()
-    rpa_tree = _build_octree(
+    rpa_tree = _tree_from_state_build(
         np.asarray(rpa_ds.points, dtype=float),
         np.asarray(rpa_ds.corners, dtype=np.int64),
         tree_coord="rpa",
@@ -582,7 +598,7 @@ def test_spherical_lookup_rejects_non_exact_geometry() -> None:
     )
     irregular = _build_irregular_spherical_dataset()
     with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
-        _build_octree(
+        _tree_from_state_build(
             np.asarray(irregular.points, dtype=float),
             np.asarray(irregular.corners, dtype=np.int64),
             tree_coord="rpa",
@@ -593,7 +609,7 @@ def test_spherical_lookup_rejects_non_exact_geometry() -> None:
 def test_adaptive_cartesian_tree_preserves_root_relative_levels() -> None:
     """Adaptive Cartesian builds should keep supplied root-relative levels unchanged."""
     ds, cell_levels = _build_adaptive_xyz_dataset()
-    tree = _build_octree(
+    tree = _tree_from_state_build(
         np.asarray(ds.points, dtype=float),
         np.asarray(ds.corners, dtype=np.int64),
         tree_coord="xyz",
@@ -833,7 +849,7 @@ def test_build_returns_bound_tree() -> None:
         np.asarray(ds.points, dtype=float),
         corners=np.asarray(ds.corners, dtype=np.int64),
     )
-    tree = _build_octree(
+    tree = _tree_from_state_build(
         np.asarray(ds.points, dtype=float),
         np.asarray(ds.corners, dtype=np.int64),
         tree_coord="rpa",
@@ -845,7 +861,7 @@ def test_build_returns_bound_tree() -> None:
 def test_build_stores_tree_coord() -> None:
     """Builder should store requested coordinate-system metadata in the tree."""
     ds = _build_regular_xyz_dataset()
-    tree = _build_octree(
+    tree = _tree_from_state_build(
         np.asarray(ds.points, dtype=float),
         np.asarray(ds.corners, dtype=np.int64),
         tree_coord="xyz",
@@ -861,7 +877,7 @@ def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
     ds.corners = np.array(corners_full[:2], copy=True)
 
     with pytest.raises(ValueError, match="Could not infer integer finest n_axis0"):
-        _build_octree(
+        _tree_from_state_build(
             np.asarray(ds.points, dtype=float),
             np.asarray(ds.corners, dtype=np.int64),
             tree_coord="rpa",

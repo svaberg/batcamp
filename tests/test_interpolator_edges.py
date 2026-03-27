@@ -8,7 +8,7 @@ import pytest
 from batcamp import Octree
 from batcamp import build_octree_from_ds
 from batcamp import OctreeInterpolator
-from batcamp.builder import _build_octree
+from batcamp.builder import _build_octree_state
 from batcamp.constants import XYZ_VARS
 from batcamp.octree import _find_cells
 from fake_dataset import FakeDataset as _FakeDataset
@@ -303,12 +303,15 @@ def test_invalid_level_cells_treated_as_misses() -> None:
     """Lookup and interpolation should both treat level<0 cells as invalid."""
     ds = _build_fake_cartesian_dataset()
     levels = np.array([-1, 0], dtype=np.int64)
-    tree = _build_octree(
-        np.asarray(ds.points, dtype=float),
-        np.asarray(ds.corners, dtype=np.int64),
+    points = np.asarray(ds.points, dtype=float)
+    corners = np.asarray(ds.corners, dtype=np.int64)
+    state = _build_octree_state(
+        points,
+        corners,
         tree_coord="xyz",
         cell_levels=levels,
     )
+    tree = Octree.from_state(state, points=points, corners=corners)
 
     q_invalid = np.array([0.5, 0.0, 0.25], dtype=float)
     q_valid = np.array([1.5, 0.0, 0.25], dtype=float)
