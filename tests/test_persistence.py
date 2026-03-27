@@ -40,7 +40,7 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     path = tmp_path / "persist" / "tree_roundtrip.npz"
     tree.save(path)
 
-    loaded = Octree.load(path, ds=ds)
+    loaded = Octree.load(path, points=ds.points, corners=ds.corners)
     assert isinstance(loaded, Octree)
     assert loaded.leaf_shape == tree.leaf_shape
     assert loaded.root_shape == tree.root_shape
@@ -91,12 +91,12 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
 
 @pytest.mark.slow
 def test_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> None:
-    """Loading requires dataset so lookup geometry is always dataset-bound."""
+    """Loading requires explicit point/corner geometry so lookup remains fully bound."""
     tree, ds = tree_dataset_pair
     path = tmp_path / "tree_bound_load.npz"
     tree.save(path)
 
-    loaded = Octree.load(path, ds=ds)
+    loaded = Octree.load(path, points=ds.points, corners=ds.corners)
     assert int(loaded.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 
@@ -106,7 +106,7 @@ def test_persistence_omits_legacy_corners_payload(tree_dataset_pair, tmp_path) -
     tree, ds = tree_dataset_pair
     path = tmp_path / "tree_no_corner_payload.npz"
     tree.save(path)
-    loaded = Octree.load(path, ds=ds)
+    loaded = Octree.load(path, points=ds.points, corners=ds.corners)
     with np.load(path, allow_pickle=False) as data:
         assert "corners" not in data.files
         assert "has_corners" not in data.files
@@ -129,7 +129,11 @@ def test_load_rejects_unsupported_file_version(tree_dataset_pair, tmp_path) -> N
     np.savez_compressed(bad_path, **payload)
 
     with pytest.raises(ValueError, match="Unsupported octree file version"):
-        Octree.load(bad_path, ds=tree_dataset_pair[1])
+        Octree.load(
+            bad_path,
+            points=tree_dataset_pair[1].points,
+            corners=tree_dataset_pair[1].corners,
+        )
 
 
 def test_load_rejects_unsupported_tree_coord(tree_dataset_pair, tmp_path) -> None:
@@ -147,4 +151,8 @@ def test_load_rejects_unsupported_tree_coord(tree_dataset_pair, tmp_path) -> Non
     np.savez_compressed(bad_path, **payload)
 
     with pytest.raises(ValueError, match="Unsupported tree_coord"):
-        Octree.load(bad_path, ds=tree_dataset_pair[1])
+        Octree.load(
+            bad_path,
+            points=tree_dataset_pair[1].points,
+            corners=tree_dataset_pair[1].corners,
+        )

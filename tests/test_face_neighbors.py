@@ -107,22 +107,13 @@ def _build_two_level_topology_tree() -> Octree:
         cell_points.append(pts)
         cell_corners[cell_id] = np.arange(start, start + 8, dtype=np.int64)
     points = np.vstack(cell_points)
-    ds = _FakeDataset(
-        points=points,
-        corners=cell_corners,
-        variables={
-            XYZ_VARS[0]: points[:, 0],
-            XYZ_VARS[1]: points[:, 1],
-            XYZ_VARS[2]: points[:, 2],
-        },
-    )
-
     tree = Octree(
         root_shape=(2, 2, 2),
         tree_coord="xyz",
         cell_levels=levels,
         cell_ijk=np.column_stack((i0, i1, i2)),
-        ds=ds,
+        points=points,
+        corners=cell_corners,
     )
     return tree
 
