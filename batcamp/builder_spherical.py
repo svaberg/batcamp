@@ -101,6 +101,44 @@ def _minimal_azimuth_interval(values: np.ndarray) -> tuple[float, float]:
     return start, width
 
 
+def _minimal_azimuth_intervals(
+    cell_azimuth: np.ndarray,
+    *,
+    ignore_mask: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return minimal wrapped azimuth interval start/width for each cell row."""
+    if ignore_mask is None:
+        vals = np.sort(np.mod(cell_azimuth, 2.0 * np.pi), axis=1)
+        wrapped = np.concatenate((vals, vals[:, :1] + 2.0 * np.pi), axis=1)
+        gaps = np.diff(wrapped, axis=1)
+        gap_id = np.argmax(gaps, axis=1)
+        start = np.take_along_axis(wrapped[:, 1:], gap_id[:, None], axis=1)[:, 0]
+        width = (2.0 * np.pi) - gaps[np.arange(gaps.shape[0]), gap_id]
+        return np.mod(start, 2.0 * np.pi), width
+    if ignore_mask.shape != cell_azimuth.shape:
+        raise ValueError(
+            f"ignore_mask shape {ignore_mask.shape} does not match cell_azimuth {cell_azimuth.shape}"
+        )
+
+    n_cells = cell_azimuth.shape[0]
+    start = np.empty(n_cells, dtype=float)
+    width = np.empty(n_cells, dtype=float)
+    row_has_mask = np.any(ignore_mask, axis=1)
+    row_no_mask = ~row_has_mask
+
+    if np.any(row_no_mask):
+        row_start, row_width = _minimal_azimuth_intervals(cell_azimuth[row_no_mask])
+        start[row_no_mask] = row_start
+        width[row_no_mask] = row_width
+
+    for cell_id in np.flatnonzero(row_has_mask):
+        vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
+        if vals.size < 2:
+            vals = cell_azimuth[cell_id]
+        start[cell_id], width[cell_id] = _minimal_azimuth_interval(vals)
+    return start, width
+
+
 def _axis_corner_mask(points: np.ndarray, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
     """Mark corners near the polar axis where azimuth is singular."""
     rho = np.hypot(points[:, 0], points[:, 1])
@@ -303,16 +341,11 @@ def populate_tree_state(
     cell_polar_max = np.max(polar_points[corners_arr], axis=1)
     azimuth_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
     axis_mask = _axis_corner_mask(points, corners_arr, axis_rho_tol=float(axis_rho_tol))
-    azimuth_start = np.empty(levels.shape[0], dtype=float)
-    azimuth_width = np.empty(levels.shape[0], dtype=float)
     azimuth_corners = azimuth_points[corners_arr]
-    for cell_id in range(levels.shape[0]):
-        vals = azimuth_corners[cell_id, ~axis_mask[cell_id]]
-        if vals.size < 2:
-            vals = azimuth_corners[cell_id]
-        start, width = _minimal_azimuth_interval(vals)
-        azimuth_start[cell_id] = start
-        azimuth_width[cell_id] = width
+    azimuth_start, azimuth_width = _minimal_azimuth_intervals(
+        azimuth_corners,
+        ignore_mask=axis_mask,
+    )
 
     r_min = float(np.min(cell_r_min))
     r_max = float(np.max(cell_r_max))
