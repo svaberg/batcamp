@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from functools import wraps
 import logging
 from pathlib import Path
@@ -31,24 +30,17 @@ _CHILD_IJK_OFFSETS = np.array(
     dtype=np.int64,
 )
 
-
-@contextmanager
-def _timed_info(task: str):
-    """Log one start/finish INFO pair around a code block."""
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("%s...", task)
-    t0 = time.perf_counter()
-    yield
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("%s complete in %.2fs", task, float(time.perf_counter() - t0))
-
-
-def _timed_info_decorator(func):
+def timed_info_decorator(func):
     """Decorate one function with a fixed elapsed-time INFO log line."""
     @wraps(func)
     def wrapped(*args, **kwargs):
-        with _timed_info(func.__name__):
-            return func(*args, **kwargs)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("%s...", func.__name__)
+        t0 = time.perf_counter()
+        result = func(*args, **kwargs)
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("%s complete in %.2fs", func.__name__, float(time.perf_counter() - t0))
+        return result
 
     return wrapped
 
@@ -166,14 +158,13 @@ def _unpack_cell_keys(keys: np.ndarray, axis_bases: np.ndarray) -> tuple[np.ndar
     return depth, np.column_stack((axis0, axis1, axis2))
 
 
-@_timed_info_decorator
+@timed_info_decorator
 def _rebuild_cells(
     depths: np.ndarray,
     cell_ijk: np.ndarray,
     leaf_value: np.ndarray,
     *,
     n_leaf_slots: int | None = None,
-    tree_coord: str = "",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build rebuilt octree cell arrays from exact leaf addresses."""
     leaf_ijk_raw = cell_ijk
@@ -240,7 +231,7 @@ def _rebuild_cells(
     return cell_depth, cell_ijk_out, internal_keys, internal_depth, internal_ijk
 
 
-@_timed_info_decorator
+@timed_info_decorator
 def _build_cell_topology(
     depths: np.ndarray,
     leaf_ijk: np.ndarray,
@@ -249,7 +240,6 @@ def _build_cell_topology(
     internal_depth: np.ndarray,
     internal_ijk: np.ndarray,
     leaf_slots: int,
-    tree_coord: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build sparse 8-child references for occupied rebuilt cells."""
     n_cells = int(leaf_slots) + int(internal_depth.shape[0])
@@ -324,7 +314,6 @@ def _rebuild_cell_state(
         leaf_ijk_valid,
         valid_ids,
         n_leaf_slots=int(cell_levels.shape[0]),
-        tree_coord=tree_coord,
     )
     cell_child, root_cell_ids, cell_parent = _build_cell_topology(
         depths,
@@ -334,7 +323,6 @@ def _rebuild_cell_state(
         internal_depth,
         internal_ijk,
         int(cell_levels.shape[0]),
-        tree_coord=tree_coord,
     )
     return cell_depth, cell_ijk_rt, cell_child, root_cell_ids, cell_parent
 
@@ -369,15 +357,19 @@ class Octree:
         )
         if logger.isEnabledFor(logging.INFO):
             logger.info("_init_from_state: coord=%s", state.tree_coord)
-        with _timed_info("_init_from_state"):
-            self._init_from_state(
-                root_shape=state.root_shape,
-                tree_coord=state.tree_coord,
-                cell_levels=state.cell_levels,
-                cell_ijk=state.cell_ijk,
-                points=points,
-                corners=corners,
-            )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("_init_from_state...")
+        t0 = time.perf_counter()
+        self._init_from_state(
+            root_shape=state.root_shape,
+            tree_coord=state.tree_coord,
+            cell_levels=state.cell_levels,
+            cell_ijk=state.cell_ijk,
+            points=points,
+            corners=corners,
+        )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("_init_from_state complete in %.2fs", float(time.perf_counter() - t0))
 
     def _init_from_state(
         self,
@@ -410,18 +402,22 @@ class Octree:
         max_level = int(np.max(leaf_levels))
         if logger.isEnabledFor(logging.INFO):
             logger.info("_rebuild_cell_state: coord=%s max_level=%d", self._tree_coord, max_level)
-        with _timed_info("_rebuild_cell_state"):
-            (
-                self._cell_depth,
-                self._cell_ijk,
-                self._cell_child,
-                self._root_cell_ids,
-                self._cell_parent,
-            ) = _rebuild_cell_state(
-                leaf_levels,
-                leaf_ijk,
-                self._tree_coord,
-            )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("_rebuild_cell_state...")
+        t0 = time.perf_counter()
+        (
+            self._cell_depth,
+            self._cell_ijk,
+            self._cell_child,
+            self._root_cell_ids,
+            self._cell_parent,
+        ) = _rebuild_cell_state(
+            leaf_levels,
+            leaf_ijk,
+            self._tree_coord,
+        )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("_rebuild_cell_state complete in %.2fs", float(time.perf_counter() - t0))
         self._leaf_slot_count = int(leaf_levels.shape[0])
         if self._tree_coord == "xyz":
             from .cartesian import _attach_cartesian_coord_state
@@ -433,8 +429,12 @@ class Octree:
             attach_coord_state = _attach_spherical_coord_state
         if logger.isEnabledFor(logging.INFO):
             logger.info("%s: coord=%s", attach_coord_state.__name__, self._tree_coord)
-        with _timed_info(attach_coord_state.__name__):
-            cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("%s...", attach_coord_state.__name__)
+        t0 = time.perf_counter()
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("%s complete in %.2fs", attach_coord_state.__name__, float(time.perf_counter() - t0))
         self._corners = corner_rows
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
@@ -584,9 +584,9 @@ class Octree:
         elif resolved_coord == "rpa":
             q_local = q
         else:
-            from .spherical import _xyz_arrays_to_rpa
+            from .spherical import xyz_arrays_to_rpa
 
-            q_local = np.column_stack(_xyz_arrays_to_rpa(q[:, 0], q[:, 1], q[:, 2]))
+            q_local = np.column_stack(xyz_arrays_to_rpa(q[:, 0], q[:, 1], q[:, 2]))
         cell_ids = _find_cells(
             q_local,
             self._cell_child,

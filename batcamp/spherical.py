@@ -81,7 +81,7 @@ def _attach_spherical_coord_state(tree, points: np.ndarray, corners: np.ndarray)
     domain_bounds[:, WIDTH] = np.array([float(r_max - r_min), float(math.pi), float(_TWO_PI)], dtype=np.float64)
     return cell_bounds, domain_bounds, float(_TWO_PI), True
 @njit(cache=True)
-def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
+def xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, float]:
     """Convert one Cartesian point to spherical `(r, polar, azimuth)`."""
     r = np.sqrt(x * x + y * y + z * z)
     if r == 0.0:
@@ -97,7 +97,7 @@ def _xyz_to_rpa_components(x: float, y: float, z: float) -> tuple[float, float, 
     return r, polar, azimuth
 
 
-def _xyz_arrays_to_rpa(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def xyz_arrays_to_rpa(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Convert Cartesian coordinate arrays to spherical `(r, polar, azimuth)`."""
     r = np.sqrt(x * x + y * y + z * z)
     polar = np.zeros_like(r)

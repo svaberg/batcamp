@@ -7,11 +7,11 @@ import numpy as np
 
 from .builder import DEFAULT_AXIS_RHO_TOL
 from .builder import LevelShapeStatsMap
-from .builder import _median_positive
+from .builder import median_positive
 from .builder import _resolve_cell_levels
 
 
-def _circular_span(cell_azimuth: np.ndarray) -> np.ndarray:
+def circular_span(cell_azimuth: np.ndarray) -> np.ndarray:
     """Compute minimal wrapped angular span for each row of azimuth samples."""
     ordered = np.sort(np.mod(cell_azimuth, 2.0 * np.pi), axis=1)
     wrapped = np.concatenate((ordered, ordered[:, :1] + 2.0 * np.pi), axis=1)
@@ -19,20 +19,20 @@ def _circular_span(cell_azimuth: np.ndarray) -> np.ndarray:
     return 2.0 * np.pi - np.max(gaps, axis=1)
 
 
-def _circular_mean(cell_azimuth: np.ndarray) -> np.ndarray:
+def circular_mean(cell_azimuth: np.ndarray) -> np.ndarray:
     """Compute circular mean for each row of azimuth samples."""
     mean_complex = np.mean(np.exp(1j * cell_azimuth), axis=1)
     return np.mod(np.angle(mean_complex), 2.0 * np.pi)
 
 
-def _circular_span_and_mean(
+def circular_span_and_mean(
     cell_azimuth: np.ndarray,
     *,
     ignore_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute per-cell circular span and mean with optional corner masking."""
     if ignore_mask is None:
-        return _circular_span(cell_azimuth), _circular_mean(cell_azimuth)
+        return circular_span(cell_azimuth), circular_mean(cell_azimuth)
     if ignore_mask.shape != cell_azimuth.shape:
         raise ValueError(
             f"ignore_mask shape {ignore_mask.shape} does not match cell_azimuth {cell_azimuth.shape}"
@@ -45,8 +45,8 @@ def _circular_span_and_mean(
     row_no_mask = ~row_has_mask
 
     if np.any(row_no_mask):
-        span[row_no_mask] = _circular_span(cell_azimuth[row_no_mask])
-        center[row_no_mask] = _circular_mean(cell_azimuth[row_no_mask])
+        span[row_no_mask] = circular_span(cell_azimuth[row_no_mask])
+        center[row_no_mask] = circular_mean(cell_azimuth[row_no_mask])
 
     for cell_id in np.flatnonzero(row_has_mask):
         vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
@@ -55,12 +55,12 @@ def _circular_span_and_mean(
             center[cell_id] = np.nan
             continue
         vals = vals.reshape(1, -1)
-        span[cell_id] = _circular_span(vals)[0]
-        center[cell_id] = _circular_mean(vals)[0]
+        span[cell_id] = circular_span(vals)[0]
+        center[cell_id] = circular_mean(vals)[0]
     return span, center
 
 
-def _cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray, np.ndarray]:
+def cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray, np.ndarray]:
     """Cluster sorted boundary values within one absolute tolerance."""
     ordered = np.sort(np.asarray(values, dtype=float).reshape(-1))
     if ordered.size == 0:
@@ -86,7 +86,7 @@ def _cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarra
     return centers, tolerances
 
 
-def _minimal_azimuth_interval(values: np.ndarray) -> tuple[float, float]:
+def minimal_azimuth_interval(values: np.ndarray) -> tuple[float, float]:
     """Return the smallest wrapped azimuth interval covering the samples."""
     vals = np.sort(np.mod(np.asarray(values, dtype=float), 2.0 * np.pi))
     if vals.size == 0:
@@ -101,7 +101,7 @@ def _minimal_azimuth_interval(values: np.ndarray) -> tuple[float, float]:
     return start, width
 
 
-def _minimal_azimuth_intervals(
+def minimal_azimuth_intervals(
     cell_azimuth: np.ndarray,
     *,
     ignore_mask: np.ndarray | None = None,
@@ -127,7 +127,7 @@ def _minimal_azimuth_intervals(
     row_no_mask = ~row_has_mask
 
     if np.any(row_no_mask):
-        row_start, row_width = _minimal_azimuth_intervals(cell_azimuth[row_no_mask])
+        row_start, row_width = minimal_azimuth_intervals(cell_azimuth[row_no_mask])
         start[row_no_mask] = row_start
         width[row_no_mask] = row_width
 
@@ -135,17 +135,17 @@ def _minimal_azimuth_intervals(
         vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
         if vals.size < 2:
             vals = cell_azimuth[cell_id]
-        start[cell_id], width[cell_id] = _minimal_azimuth_interval(vals)
+        start[cell_id], width[cell_id] = minimal_azimuth_interval(vals)
     return start, width
 
 
-def _axis_corner_mask(points: np.ndarray, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
+def axis_corner_mask(points: np.ndarray, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
     """Mark corners near the polar axis where azimuth is singular."""
     rho = np.hypot(points[:, 0], points[:, 1])
     return rho[corners] <= float(axis_rho_tol)
 
 
-def _extract_azimuth(points: np.ndarray) -> np.ndarray:
+def extract_azimuth(points: np.ndarray) -> np.ndarray:
     """Extract wrapped azimuth values from Cartesian `X/Y` point coordinates."""
     return np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
 
@@ -203,10 +203,10 @@ def compute_azimuth_spans_and_levels(
     if corners_arr.shape[1] < 3:
         raise ValueError("Need at least 3 corners per cell to estimate azimuth span.")
 
-    azimuth = _extract_azimuth(points)
+    azimuth = extract_azimuth(points)
     cell_azimuth = azimuth[corners_arr]
-    axis_mask = _axis_corner_mask(points, corners_arr, axis_rho_tol=axis_rho_tol)
-    azimuth_span, azimuth_center = _circular_span_and_mean(
+    axis_mask = axis_corner_mask(points, corners_arr, axis_rho_tol=axis_rho_tol)
+    azimuth_span, azimuth_center = circular_span_and_mean(
         cell_azimuth,
         ignore_mask=axis_mask,
     )
@@ -239,8 +239,8 @@ def infer_level_angular_shapes(
 
     for level in unique_levels:
         mask = cell_levels == level
-        med_dazimuth = _median_positive(azimuth_span[mask])
-        med_dpolar = _median_positive(delta_polar[mask])
+        med_dazimuth = median_positive(azimuth_span[mask])
+        med_dpolar = median_positive(delta_polar[mask])
         n_azimuth = int(round((2.0 * np.pi) / med_dazimuth))
         n_polar = int(round(np.pi / med_dpolar))
         if n_azimuth <= 0 or n_polar <= 0:
@@ -340,9 +340,9 @@ def populate_tree_state(
     cell_polar_min = np.min(polar_points[corners_arr], axis=1)
     cell_polar_max = np.max(polar_points[corners_arr], axis=1)
     azimuth_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-    axis_mask = _axis_corner_mask(points, corners_arr, axis_rho_tol=float(axis_rho_tol))
+    axis_mask = axis_corner_mask(points, corners_arr, axis_rho_tol=float(axis_rho_tol))
     azimuth_corners = azimuth_points[corners_arr]
-    azimuth_start, azimuth_width = _minimal_azimuth_intervals(
+    azimuth_start, azimuth_width = minimal_azimuth_intervals(
         azimuth_corners,
         ignore_mask=axis_mask,
     )
@@ -350,7 +350,7 @@ def populate_tree_state(
     r_min = float(np.min(cell_r_min))
     r_max = float(np.max(cell_r_max))
     radial_tol = 1e-7 * max(float(r_max - r_min), 1.0)
-    radial_edges, radial_edge_tol = _cluster_close_values(
+    radial_edges, radial_edge_tol = cluster_close_values(
         np.concatenate((cell_r_min[valid], cell_r_max[valid])),
         atol=radial_tol,
     )
