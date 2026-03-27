@@ -4,9 +4,7 @@
 from __future__ import annotations
 
 import numpy as np
-from batread import Dataset
 
-from .constants import XYZ_VARS
 from .builder import LevelShapeStatsMap
 from .builder import _median_positive
 from .builder import _resolve_cell_levels
@@ -53,14 +51,14 @@ class CartesianOctreeBuilder:
 
     @staticmethod
     def infer_xyz_level_shapes(
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
         cell_levels: np.ndarray,
     ) -> LevelShapeStatsMap:
         """Infer per-level axis counts/spacings for Cartesian octrees."""
-        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
-        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
-        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
+        x = points[:, 0]
+        y = points[:, 1]
+        z = points[:, 2]
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -115,15 +113,15 @@ class CartesianOctreeBuilder:
 
     def infer_level_shapes(
         self,
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
         *,
         cell_levels: np.ndarray | None = None,
     ) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
         """Infer Cartesian level-shape map and validated levels."""
-        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
-        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
-        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
+        x = points[:, 0]
+        y = points[:, 1]
+        z = points[:, 2]
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -145,21 +143,21 @@ class CartesianOctreeBuilder:
             cell_levels=cell_levels,
             expected_shape=dx.shape,
         )
-        level_shapes = self.infer_xyz_level_shapes(ds, corners, levels)
+        level_shapes = self.infer_xyz_level_shapes(points, corners, levels)
         return level_shapes, levels, max_level
 
     @staticmethod
     def infer_leaf_shape(
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
         cell_levels: np.ndarray,
         *,
         max_level: int,
     ) -> tuple[int, int, int]:
         """Infer finest Cartesian `(n_x, n_y, n_z)` counts from geometry at `max_level`."""
-        x = np.asarray(ds[XYZ_VARS[0]], dtype=float)
-        y = np.asarray(ds[XYZ_VARS[1]], dtype=float)
-        z = np.asarray(ds[XYZ_VARS[2]], dtype=float)
+        x = points[:, 0]
+        y = points[:, 1]
+        z = points[:, 2]
         cell_x = x[corners]
         cell_y = y[corners]
         cell_z = z[corners]
@@ -198,20 +196,12 @@ class CartesianOctreeBuilder:
         leaf_shape: tuple[int, int, int],
         max_level: int,
         cell_levels: np.ndarray | None,
-        ds: Dataset,
+        points: np.ndarray,
         corners: np.ndarray,
     ) -> dict[str, object]:
         """Return exact Cartesian octree state for one built tree."""
         if cell_levels is None:
             raise ValueError("Cartesian tree state requires cell_levels.")
-
-        points = np.column_stack(
-            (
-                np.asarray(ds[XYZ_VARS[0]], dtype=float),
-                np.asarray(ds[XYZ_VARS[1]], dtype=float),
-                np.asarray(ds[XYZ_VARS[2]], dtype=float),
-            )
-        )
         corners_arr = np.asarray(corners, dtype=np.int64)
         cell_xyz = points[corners_arr]
         cell_x_min = np.min(cell_xyz[:, :, 0], axis=1)

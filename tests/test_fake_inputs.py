@@ -67,13 +67,13 @@ def test_axis_only_dataset_rejected() -> None:
     """Axis-only cells should fail octree build because no valid azimuth spans exist."""
     ds = _build_axis_only_fake_dataset()
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels"):
-        OctreeBuilder().build(ds, tree_coord="rpa")
+        OctreeBuilder().from_ds(ds, tree_coord="rpa")
 
 
 def test_lookup_rejects_invalid_queries() -> None:
     """Lookup should return None for non-finite or invalid-angle queries."""
     ds = _build_regular_fake_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
 
     assert int(tree.lookup_points(np.array([float("nan"), 0.0, 0.0], dtype=float), coord="xyz")[0]) < 0
     assert int(tree.lookup_points(np.array([float("inf"), 0.0, 0.0], dtype=float), coord="xyz")[0]) < 0
@@ -85,7 +85,7 @@ def test_lookup_rejects_invalid_queries() -> None:
 def test_interpolator_fill_for_invalid_points() -> None:
     """Interpolator should emit fill value and cell_id=-1 for invalid queries."""
     ds = _build_regular_fake_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]), fill_value=-123.0)
 
     invalid = np.array(

@@ -59,7 +59,7 @@ def _build_uniform_spherical_hex_dataset(
 def synthetic_context() -> tuple[_FakeDataset, Octree, np.ndarray, tuple[float, float, float, float]]:
     """Return synthetic dataset, built tree, linear nodal field and coefficients."""
     ds, linear_field, coeffs = _build_uniform_spherical_hex_dataset()
-    tree = OctreeBuilder().build(ds, tree_coord="rpa")
+    tree = OctreeBuilder().from_ds(ds, tree_coord="rpa")
     return ds, tree, linear_field, coeffs
 
 

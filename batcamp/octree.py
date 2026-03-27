@@ -385,8 +385,8 @@ class Octree:
         self._tree_coord = resolved_tree_coord
         leaf_levels = np.asarray(cell_levels, dtype=np.int64)
         leaf_ijk = np.asarray(cell_ijk, dtype=np.int64)
-        point_xyz = np.asarray(points, dtype=np.float64)
-        if point_xyz.ndim != 2 or point_xyz.shape[1] != 3:
+        points = np.asarray(points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError("points must have shape (n_points, 3).")
         corner_rows = np.asarray(corners, dtype=np.int64)
         if corner_rows.ndim != 2 or corner_rows.shape != (leaf_levels.shape[0], 8):
@@ -412,8 +412,8 @@ class Octree:
             from .spherical import _attach_spherical_coord_state
 
             attach_coord_state = _attach_spherical_coord_state
-        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, point_xyz, corner_rows)
-        interp_corners = _build_trilinear_geometry(self, point_xyz, corner_rows, cell_bounds)
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
+        interp_corners = _build_trilinear_geometry(self, points, corner_rows, cell_bounds)
         self._corners = interp_corners
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds

@@ -39,13 +39,14 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
     assert ds.corners is not None
 
     corners = np.asarray(ds.corners, dtype=np.int64)
-    tree = OctreeBuilder(level_rtol=1e-4, level_atol=1e-9).build(
+    tree = OctreeBuilder(level_rtol=1e-4, level_atol=1e-9).from_ds(
         ds,
         tree_coord="rpa",
         axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
     )
     azimuth_span, azimuth_center, _levels, expected, coarse = SphericalOctreeBuilder.compute_azimuth_spans_and_levels(
-        ds,
+        np.column_stack((np.asarray(ds["X [R]"]), np.asarray(ds["Y [R]"]), np.asarray(ds["Z [R]"]))),
+        corners=corners,
         rtol=1e-4,
         atol=1e-9,
         axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
