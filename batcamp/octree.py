@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+import time
 
 import numpy as np
 from numba import njit
@@ -18,9 +18,6 @@ from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from .face_neighbors import OctreeFaceNeighbors
 
 AXIS0 = 0  # Packed bounds axis index for the first tree coordinate.
 AXIS1 = 1  # Packed bounds axis index for the second tree coordinate.
@@ -392,6 +389,7 @@ class Octree:
         if corner_rows.ndim != 2 or corner_rows.shape != (leaf_levels.shape[0], 8):
             raise ValueError("corners must have shape (n_cells, 8) matching cell_levels.")
         max_level = int(np.max(leaf_levels))
+        t0 = time.perf_counter()
         (
             self._cell_depth,
             self._cell_ijk,
@@ -403,6 +401,13 @@ class Octree:
             leaf_ijk,
             max_level=max_level,
         )
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "octree materialize: rebuild cell state complete (%.2fs) coord=%s max_level=%d",
+                float(time.perf_counter() - t0),
+                self._tree_coord,
+                max_level,
+            )
         self._leaf_slot_count = int(leaf_levels.shape[0])
         if self._tree_coord == "xyz":
             from .cartesian import _attach_cartesian_coord_state
@@ -412,14 +417,27 @@ class Octree:
             from .spherical import _attach_spherical_coord_state
 
             attach_coord_state = _attach_spherical_coord_state
+        t0 = time.perf_counter()
         cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "octree materialize: attach coord state complete (%.2fs) coord=%s",
+                float(time.perf_counter() - t0),
+                self._tree_coord,
+            )
+        t0 = time.perf_counter()
         interp_corners = _build_trilinear_geometry(self, points, corner_rows, cell_bounds)
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "octree materialize: build trilinear geometry complete (%.2fs) coord=%s",
+                float(time.perf_counter() - t0),
+                self._tree_coord,
+            )
         self._corners = interp_corners
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
         self._axis2_period = float(axis2_period)
         self._axis2_periodic = bool(axis2_periodic)
-        self._face_neighbors_by_max_level: dict[int, OctreeFaceNeighbors] = {}
 
     @property
     def root_shape(self) -> GridShape:
@@ -576,22 +594,6 @@ class Octree:
             self._axis2_periodic,
         )
         return cell_ids.reshape(shape)
-
-    def face_neighbors(self, *, max_level: int | None = None) -> "OctreeFaceNeighbors":
-        """Return the lazily built face-neighbor graph for one level cutoff."""
-        valid_levels = self.cell_levels[self.cell_levels >= 0]
-        target_max_level = int(np.max(valid_levels) if max_level is None else max_level)
-        cache = self._face_neighbors_by_max_level
-        face_neighbors = cache.get(target_max_level)
-        if face_neighbors is None:
-            from .face_neighbors import _build_face_neighbors
-
-            face_neighbors = _build_face_neighbors(
-                tree=self,
-                target_max_level=target_max_level,
-            )
-            cache[int(face_neighbors.max_level)] = face_neighbors
-        return face_neighbors
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
         """Return global `(lo, hi)` bounds in the tree's own coordinate system."""
