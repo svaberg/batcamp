@@ -181,7 +181,7 @@ def _find_cells(
 
 
 def _cell_row_order(cell_depth: np.ndarray, cell_ijk: np.ndarray) -> np.ndarray:
-    """Return lexicographic `(depth, axis0, axis1, axis2)` row order for packed cell addresses."""
+    """Return sorted `(depth, axis0, axis1, axis2)` row order for packed cell addresses."""
     return np.lexsort(np.column_stack((cell_depth, cell_ijk))[:, ::-1].T)
 
 
