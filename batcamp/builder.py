@@ -198,42 +198,6 @@ def root_shape_and_depth(leaf_shape: GridShape) -> tuple[GridShape, int]:
         int(leaf_shape[2]) >> depth,
     ), depth
 
-def build_octree(
-    points: np.ndarray,
-    corners: np.ndarray,
-    *,
-    tree_coord: TreeCoord | None = None,
-    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
-) -> Octree:
-    """Build one octree from explicit points and corners."""
-    with timed_stage("build_octree"):
-        with timed_stage("prepare explicit geometry"):
-            points = np.asarray(points, dtype=np.float64)
-            corners_arr = np.asarray(corners, dtype=np.int64)
-        logger.info(
-            "prepare explicit geometry: n_points=%d n_cells=%d",
-            int(points.shape[0]),
-            int(corners_arr.shape[0]),
-        )
-        tree = Octree(
-            points,
-            corners_arr,
-            tree_coord=tree_coord,
-            axis_rho_tol=axis_rho_tol,
-            level_rtol=level_rtol,
-            level_atol=level_atol,
-        )
-    logger.info(
-        "build_octree: coord=%s n_points=%d n_cells=%d",
-        str(tree.tree_coord),
-        int(points.shape[0]),
-        int(corners_arr.shape[0]),
-    )
-    return tree
-
-
 def _build_octree_state(
     points: np.ndarray,
     corners: np.ndarray,
