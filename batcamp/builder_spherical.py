@@ -19,12 +19,6 @@ def circular_span(cell_azimuth: np.ndarray) -> np.ndarray:
     return 2.0 * np.pi - np.max(gaps, axis=1)
 
 
-def circular_mean(cell_azimuth: np.ndarray) -> np.ndarray:
-    """Compute circular mean for each row of azimuth samples."""
-    mean_complex = np.mean(np.exp(1j * cell_azimuth), axis=1)
-    return np.mod(np.angle(mean_complex), 2.0 * np.pi)
-
-
 def circular_span_and_mean(
     cell_azimuth: np.ndarray,
     *,
@@ -32,7 +26,8 @@ def circular_span_and_mean(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute per-cell circular span and mean with optional corner masking."""
     if ignore_mask is None:
-        return circular_span(cell_azimuth), circular_mean(cell_azimuth)
+        mean_complex = np.mean(np.exp(1j * cell_azimuth), axis=1)
+        return circular_span(cell_azimuth), np.mod(np.angle(mean_complex), 2.0 * np.pi)
     if ignore_mask.shape != cell_azimuth.shape:
         raise ValueError(
             f"ignore_mask shape {ignore_mask.shape} does not match cell_azimuth {cell_azimuth.shape}"
@@ -46,7 +41,8 @@ def circular_span_and_mean(
 
     if np.any(row_no_mask):
         span[row_no_mask] = circular_span(cell_azimuth[row_no_mask])
-        center[row_no_mask] = circular_mean(cell_azimuth[row_no_mask])
+        mean_complex = np.mean(np.exp(1j * cell_azimuth[row_no_mask]), axis=1)
+        center[row_no_mask] = np.mod(np.angle(mean_complex), 2.0 * np.pi)
 
     for cell_id in np.flatnonzero(row_has_mask):
         vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
@@ -56,7 +52,7 @@ def circular_span_and_mean(
             continue
         vals = vals.reshape(1, -1)
         span[cell_id] = circular_span(vals)[0]
-        center[cell_id] = circular_mean(vals)[0]
+        center[cell_id] = np.mod(np.angle(np.mean(np.exp(1j * vals), axis=1)), 2.0 * np.pi)[0]
     return span, center
 
 
@@ -84,21 +80,6 @@ def cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray
         centers[idx] = center
         tolerances[idx] = max(float(np.max(np.abs(arr - center))), float(atol))
     return centers, tolerances
-
-
-def minimal_azimuth_interval(values: np.ndarray) -> tuple[float, float]:
-    """Return the smallest wrapped azimuth interval covering the samples."""
-    vals = np.sort(np.mod(np.asarray(values, dtype=float), 2.0 * np.pi))
-    if vals.size == 0:
-        return 0.0, 2.0 * np.pi
-    if vals.size == 1:
-        return float(vals[0]), 0.0
-    wrapped = np.concatenate((vals, vals[:1] + 2.0 * np.pi))
-    gaps = np.diff(wrapped)
-    k = int(np.argmax(gaps))
-    start = float(wrapped[k + 1] % (2.0 * np.pi))
-    width = float((2.0 * np.pi) - gaps[k])
-    return start, width
 
 
 def minimal_azimuth_intervals(
@@ -135,7 +116,20 @@ def minimal_azimuth_intervals(
         vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
         if vals.size < 2:
             vals = cell_azimuth[cell_id]
-        start[cell_id], width[cell_id] = minimal_azimuth_interval(vals)
+        vals = np.sort(np.mod(np.asarray(vals, dtype=float), 2.0 * np.pi))
+        if vals.size == 0:
+            start[cell_id] = 0.0
+            width[cell_id] = 2.0 * np.pi
+            continue
+        if vals.size == 1:
+            start[cell_id] = float(vals[0])
+            width[cell_id] = 0.0
+            continue
+        wrapped = np.concatenate((vals, vals[:1] + 2.0 * np.pi))
+        gaps = np.diff(wrapped)
+        k = int(np.argmax(gaps))
+        start[cell_id] = float(wrapped[k + 1] % (2.0 * np.pi))
+        width[cell_id] = float((2.0 * np.pi) - gaps[k])
     return start, width
 
 

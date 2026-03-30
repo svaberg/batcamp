@@ -13,6 +13,7 @@ from batread import Dataset
 from numba import njit
 from numba import prange
 
+from .constants import XYZ_VARS
 from .constants import SUPPORTED_TREE_COORDS
 from .shared_types import GridShape
 from .shared_types import LevelCountTable
@@ -509,13 +510,12 @@ class Octree:
     ) -> "Octree":
         """Build one tree from a dataset by extracting explicit points and corners."""
         from .builder import _warn_if_blocks_aux_mismatch
-        from .builder import xyz_points_from_ds
 
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot build octree.")
         logger.debug("from_ds...")
         t0 = time.perf_counter()
-        points = xyz_points_from_ds(ds)
+        points = np.column_stack(tuple(np.asarray(ds[name], dtype=np.float64) for name in XYZ_VARS))
         corners = np.asarray(ds.corners, dtype=np.int64)
         _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
         logger.info(
