@@ -43,11 +43,6 @@ def timed_stage(stage: str):
     logger.info("%s complete in %.2fs", stage, float(time.perf_counter() - t0), stacklevel=2)
 
 
-def xyz_points_from_ds(ds: Dataset) -> np.ndarray:
-    """Extract one explicit `(n_points, 3)` XYZ point array from a dataset."""
-    return np.column_stack(tuple(np.asarray(ds[name], dtype=np.float64) for name in XYZ_VARS))
-
-
 def infer_tree_coord_from_geometry(
     points: np.ndarray,
     corners: np.ndarray,
