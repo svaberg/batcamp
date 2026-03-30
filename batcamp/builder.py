@@ -37,12 +37,10 @@ DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 @contextmanager
 def timed_stage(stage: str):
     """Log one start/finish INFO pair around one builder stage."""
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("%s...", stage, stacklevel=2)
+    logger.debug("%s...", stage, stacklevel=2)
     t0 = time.perf_counter()
     yield
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("%s complete in %.2fs", stage, float(time.perf_counter() - t0), stacklevel=2)
+    logger.info("%s complete in %.2fs", stage, float(time.perf_counter() - t0), stacklevel=2)
 
 
 def xyz_points_from_ds(ds: Dataset) -> np.ndarray:
@@ -217,12 +215,11 @@ def build_octree_from_ds(
             points = xyz_points_from_ds(ds)
             corners = np.asarray(ds.corners, dtype=np.int64)
             _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
-        if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "extract geometry: n_points=%d n_cells=%d",
-                int(points.shape[0]),
-                int(corners.shape[0]),
-            )
+        logger.info(
+            "extract geometry: n_points=%d n_cells=%d",
+            int(points.shape[0]),
+            int(corners.shape[0]),
+        )
         tree = Octree(
             points,
             corners,
@@ -231,13 +228,12 @@ def build_octree_from_ds(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info(
-            "build_octree_from_ds: coord=%s n_points=%d n_cells=%d",
-            str(tree.tree_coord),
-            int(points.shape[0]),
-            int(corners.shape[0]),
-        )
+    logger.info(
+        "build_octree_from_ds: coord=%s n_points=%d n_cells=%d",
+        str(tree.tree_coord),
+        int(points.shape[0]),
+        int(corners.shape[0]),
+    )
     return tree
 
 
@@ -255,12 +251,11 @@ def build_octree(
         with timed_stage("prepare explicit geometry"):
             points = np.asarray(points, dtype=np.float64)
             corners_arr = np.asarray(corners, dtype=np.int64)
-        if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "prepare explicit geometry: n_points=%d n_cells=%d",
-                int(points.shape[0]),
-                int(corners_arr.shape[0]),
-            )
+        logger.info(
+            "prepare explicit geometry: n_points=%d n_cells=%d",
+            int(points.shape[0]),
+            int(corners_arr.shape[0]),
+        )
         tree = Octree(
             points,
             corners_arr,
@@ -269,13 +264,12 @@ def build_octree(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info(
-            "build_octree: coord=%s n_points=%d n_cells=%d",
-            str(tree.tree_coord),
-            int(points.shape[0]),
-            int(corners_arr.shape[0]),
-        )
+    logger.info(
+        "build_octree: coord=%s n_points=%d n_cells=%d",
+        str(tree.tree_coord),
+        int(points.shape[0]),
+        int(corners_arr.shape[0]),
+    )
     return tree
 
 
@@ -312,8 +306,7 @@ def _build_octree_state(
             f"Unsupported tree_coord '{resolved_tree_coord}'; "
             f"expected one of {SUPPORTED_TREE_COORDS}."
         )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
+    logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
     with timed_stage("infer levels"):
         if resolved_tree_coord == "rpa":
@@ -336,8 +329,7 @@ def _build_octree_state(
                 level_rtol=level_rtol,
                 level_atol=level_atol,
             )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
+    logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
 
     with timed_stage("infer leaf shape"):
         if resolved_tree_coord == "rpa":
@@ -350,8 +342,7 @@ def _build_octree_state(
                 levels,
                 max_level=max_level,
             )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
+    logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
     with timed_stage("normalize levels"):
         root_shape, depth = root_shape_and_depth(leaf_shape)
@@ -363,14 +354,13 @@ def _build_octree_state(
         levels = np.asarray(levels, dtype=np.int64)
         levels_abs = np.array(levels, copy=True)
         levels_abs[levels_abs >= 0] += int(level_offset)
-    if logger.isEnabledFor(logging.INFO):
-        logger.info(
-            "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
-            resolved_tree_coord,
-            root_shape,
-            int(depth),
-            int(max_level + level_offset),
-        )
+    logger.info(
+        "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
+        resolved_tree_coord,
+        root_shape,
+        int(depth),
+        int(max_level + level_offset),
+    )
 
     with timed_stage("populate tree state"):
         if resolved_tree_coord == "rpa":
@@ -390,8 +380,7 @@ def _build_octree_state(
                 cell_min=cell_min,
                 cell_max=cell_max,
             )
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("populate tree state: coord=%s", resolved_tree_coord)
+    logger.info("populate tree state: coord=%s", resolved_tree_coord)
     return OctreeState(
         tree_coord=resolved_tree_coord,
         root_shape=tuple(int(v) for v in root_shape),
