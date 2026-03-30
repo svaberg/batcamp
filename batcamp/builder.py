@@ -198,25 +198,6 @@ def root_shape_and_depth(leaf_shape: GridShape) -> tuple[GridShape, int]:
         int(leaf_shape[2]) >> depth,
     ), depth
 
-
-def build_octree_from_ds(
-    ds: Dataset,
-    *,
-    tree_coord: TreeCoord | None = None,
-    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
-) -> Octree:
-    """Secondary dataset convenience wrapper around `Octree.from_ds(...)`."""
-    return Octree.from_ds(
-        ds,
-        tree_coord=tree_coord,
-        axis_rho_tol=axis_rho_tol,
-        level_rtol=level_rtol,
-        level_atol=level_atol,
-    )
-
-
 def build_octree(
     points: np.ndarray,
     corners: np.ndarray,
