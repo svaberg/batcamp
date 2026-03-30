@@ -34,12 +34,10 @@ def timed_info_decorator(func):
     """Decorate one function with a fixed elapsed-time INFO log line."""
     @wraps(func)
     def wrapped(*args, **kwargs):
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("%s...", func.__name__)
+        logger.debug("%s...", func.__name__)
         t0 = time.perf_counter()
         result = func(*args, **kwargs)
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("%s complete in %.2fs", func.__name__, float(time.perf_counter() - t0))
+        logger.info("%s complete in %.2fs", func.__name__, float(time.perf_counter() - t0))
         return result
 
     return wrapped
@@ -355,10 +353,8 @@ class Octree:
             level_atol=level_atol,
             cell_levels=None,
         )
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("_init_from_state: coord=%s", state.tree_coord)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("_init_from_state...")
+        logger.info("_init_from_state: coord=%s", state.tree_coord)
+        logger.debug("_init_from_state...")
         t0 = time.perf_counter()
         self._init_from_state(
             root_shape=state.root_shape,
@@ -368,8 +364,7 @@ class Octree:
             points=points,
             corners=corners,
         )
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("_init_from_state complete in %.2fs", float(time.perf_counter() - t0))
+        logger.info("_init_from_state complete in %.2fs", float(time.perf_counter() - t0))
 
     def _init_from_state(
         self,
@@ -400,10 +395,8 @@ class Octree:
         if corner_rows.ndim != 2 or corner_rows.shape != (leaf_levels.shape[0], 8):
             raise ValueError("corners must have shape (n_cells, 8) matching cell_levels.")
         max_level = int(np.max(leaf_levels))
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("_rebuild_cell_state: coord=%s max_level=%d", self._tree_coord, max_level)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("_rebuild_cell_state...")
+        logger.info("_rebuild_cell_state: coord=%s max_level=%d", self._tree_coord, max_level)
+        logger.debug("_rebuild_cell_state...")
         t0 = time.perf_counter()
         (
             self._cell_depth,
@@ -416,8 +409,7 @@ class Octree:
             leaf_ijk,
             self._tree_coord,
         )
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("_rebuild_cell_state complete in %.2fs", float(time.perf_counter() - t0))
+        logger.info("_rebuild_cell_state complete in %.2fs", float(time.perf_counter() - t0))
         self._leaf_slot_count = int(leaf_levels.shape[0])
         if self._tree_coord == "xyz":
             from .cartesian import _attach_cartesian_coord_state
@@ -427,14 +419,11 @@ class Octree:
             from .spherical import _attach_spherical_coord_state
 
             attach_coord_state = _attach_spherical_coord_state
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("%s: coord=%s", attach_coord_state.__name__, self._tree_coord)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("%s...", attach_coord_state.__name__)
+        logger.info("%s: coord=%s", attach_coord_state.__name__, self._tree_coord)
+        logger.debug("%s...", attach_coord_state.__name__)
         t0 = time.perf_counter()
         cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
-        if logger.isEnabledFor(logging.INFO):
-            logger.info("%s complete in %.2fs", attach_coord_state.__name__, float(time.perf_counter() - t0))
+        logger.info("%s complete in %.2fs", attach_coord_state.__name__, float(time.perf_counter() - t0))
         self._corners = corner_rows
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
