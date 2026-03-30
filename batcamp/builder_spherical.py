@@ -25,9 +25,12 @@ def circular_span_and_mean(
     ignore_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute per-cell circular span and mean with optional corner masking."""
+    def mean_from_rows(values: np.ndarray) -> np.ndarray:
+        mean_complex = np.mean(np.exp(1j * values), axis=1)
+        return np.mod(np.angle(mean_complex), 2.0 * np.pi)
+
     if ignore_mask is None:
-        mean_complex = np.mean(np.exp(1j * cell_azimuth), axis=1)
-        return circular_span(cell_azimuth), np.mod(np.angle(mean_complex), 2.0 * np.pi)
+        return circular_span(cell_azimuth), mean_from_rows(cell_azimuth)
     if ignore_mask.shape != cell_azimuth.shape:
         raise ValueError(
             f"ignore_mask shape {ignore_mask.shape} does not match cell_azimuth {cell_azimuth.shape}"
@@ -41,8 +44,7 @@ def circular_span_and_mean(
 
     if np.any(row_no_mask):
         span[row_no_mask] = circular_span(cell_azimuth[row_no_mask])
-        mean_complex = np.mean(np.exp(1j * cell_azimuth[row_no_mask]), axis=1)
-        center[row_no_mask] = np.mod(np.angle(mean_complex), 2.0 * np.pi)
+        center[row_no_mask] = mean_from_rows(cell_azimuth[row_no_mask])
 
     for cell_id in np.flatnonzero(row_has_mask):
         vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
@@ -52,7 +54,7 @@ def circular_span_and_mean(
             continue
         vals = vals.reshape(1, -1)
         span[cell_id] = circular_span(vals)[0]
-        center[cell_id] = np.mod(np.angle(np.mean(np.exp(1j * vals), axis=1)), 2.0 * np.pi)[0]
+        center[cell_id] = mean_from_rows(vals)[0]
     return span, center
 
 
@@ -88,14 +90,17 @@ def minimal_azimuth_intervals(
     ignore_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return minimal wrapped azimuth interval start/width for each cell row."""
-    if ignore_mask is None:
-        vals = np.sort(np.mod(cell_azimuth, 2.0 * np.pi), axis=1)
+    def intervals_from_rows(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        vals = np.sort(np.mod(values, 2.0 * np.pi), axis=1)
         wrapped = np.concatenate((vals, vals[:, :1] + 2.0 * np.pi), axis=1)
         gaps = np.diff(wrapped, axis=1)
         gap_id = np.argmax(gaps, axis=1)
         start = np.take_along_axis(wrapped[:, 1:], gap_id[:, None], axis=1)[:, 0]
         width = (2.0 * np.pi) - gaps[np.arange(gaps.shape[0]), gap_id]
         return np.mod(start, 2.0 * np.pi), width
+
+    if ignore_mask is None:
+        return intervals_from_rows(cell_azimuth)
     if ignore_mask.shape != cell_azimuth.shape:
         raise ValueError(
             f"ignore_mask shape {ignore_mask.shape} does not match cell_azimuth {cell_azimuth.shape}"
@@ -108,7 +113,7 @@ def minimal_azimuth_intervals(
     row_no_mask = ~row_has_mask
 
     if np.any(row_no_mask):
-        row_start, row_width = minimal_azimuth_intervals(cell_azimuth[row_no_mask])
+        row_start, row_width = intervals_from_rows(cell_azimuth[row_no_mask])
         start[row_no_mask] = row_start
         width[row_no_mask] = row_width
 
@@ -116,20 +121,9 @@ def minimal_azimuth_intervals(
         vals = cell_azimuth[cell_id, ~ignore_mask[cell_id]]
         if vals.size < 2:
             vals = cell_azimuth[cell_id]
-        vals = np.sort(np.mod(np.asarray(vals, dtype=float), 2.0 * np.pi))
-        if vals.size == 0:
-            start[cell_id] = 0.0
-            width[cell_id] = 2.0 * np.pi
-            continue
-        if vals.size == 1:
-            start[cell_id] = float(vals[0])
-            width[cell_id] = 0.0
-            continue
-        wrapped = np.concatenate((vals, vals[:1] + 2.0 * np.pi))
-        gaps = np.diff(wrapped)
-        k = int(np.argmax(gaps))
-        start[cell_id] = float(wrapped[k + 1] % (2.0 * np.pi))
-        width[cell_id] = float((2.0 * np.pi) - gaps[k])
+        row_start, row_width = intervals_from_rows(np.asarray(vals, dtype=float).reshape(1, -1))
+        start[cell_id] = row_start[0]
+        width[cell_id] = row_width[0]
     return start, width
 
 
