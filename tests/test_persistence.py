@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
-from batcamp import build_octree_from_ds
 from batcamp.constants import XYZ_VARS
 from batcamp.persistence import OCTREE_FILE_VERSION
 from fake_dataset import FakeDataset as _FakeDataset
@@ -30,7 +29,7 @@ def tree_dataset_pair() -> tuple[Octree, _FakeDataset]:
             XYZ_VARS[2]: points[:, 2],
         },
     )
-    tree = build_octree_from_ds(ds, tree_coord="rpa")
+    tree = Octree.from_ds(ds, tree_coord="rpa")
     return tree, ds
 
 

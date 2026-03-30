@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 from batcamp import Octree
-from batcamp import build_octree_from_ds
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
@@ -145,7 +144,7 @@ def _assert_plane_ramp_matches_exact_field(
 ) -> None:
     """Assert plane-resampling stays exact over one resolution ramp."""
     xyz = _xyz_points(ds)
-    interp = OctreeInterpolator(build_octree_from_ds(ds, tree_coord="xyz"), np.asarray(ds[field_name]))
+    interp = OctreeInterpolator(Octree.from_ds(ds, tree_coord="xyz"), np.asarray(ds[field_name]))
 
     for resolution in _PLANE_RAMP:
         query = _xy_plane_queries(xyz, resolution=resolution)
@@ -204,7 +203,7 @@ def test_uniform_cartesian_interp_matches_xyz_coordinate_fields() -> None:
     ds = _build_uniform_cartesian_linear_dataset()
     xyz = _xyz_points(ds)
     interp = OctreeInterpolator(
-        build_octree_from_ds(ds, tree_coord="xyz"),
+        Octree.from_ds(ds, tree_coord="xyz"),
         np.column_stack((np.asarray(ds["XCoord"]), np.asarray(ds["YCoord"]), np.asarray(ds["ZCoord"]))),
     )
     query = _random_interior_queries(xyz, n_query=512, seed=123)
@@ -218,7 +217,7 @@ def test_adaptive_cartesian_interp_matches_xyz_coordinate_fields() -> None:
     ds = _build_adaptive_cartesian_linear_dataset()
     xyz = _xyz_points(ds)
     interp = OctreeInterpolator(
-        build_octree_from_ds(ds, tree_coord="xyz"),
+        Octree.from_ds(ds, tree_coord="xyz"),
         np.column_stack((np.asarray(ds["XCoord"]), np.asarray(ds["YCoord"]), np.asarray(ds["ZCoord"]))),
     )
     query = _random_interior_queries(xyz, n_query=512, seed=456)

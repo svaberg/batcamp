@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from batread import Dataset
 
-from batcamp import Octree, OctreeInterpolator, build_octree_from_ds
+from batcamp import Octree, OctreeInterpolator
 from batcamp.builder import infer_tree_coord_from_geometry
 from octree_test_support import cell_bounds
 from sample_data_helper import data_file
@@ -91,7 +91,7 @@ def test_builder_function_matches_constructor(name: str, tree_coord: str) -> Non
     ds = Dataset.from_file(str(data_file(name)))
     points = ds[["X [R]", "Y [R]", "Z [R]"]]
     tree_ctor = Octree(points, ds.corners, tree_coord=tree_coord)
-    tree_fn = build_octree_from_ds(ds, tree_coord=tree_coord)
+    tree_fn = Octree.from_ds(ds, tree_coord=tree_coord)
     assert tree_ctor.tree_coord == tree_fn.tree_coord
     np.testing.assert_array_equal(tree_ctor.cell_levels, tree_fn.cell_levels)
     np.testing.assert_array_equal(tree_ctor.corners, tree_fn.corners)

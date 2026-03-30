@@ -24,7 +24,6 @@ from batread.dataset import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import build_octree_from_ds
 from batcamp.constants import XYZ_VARS
 
 
@@ -190,7 +189,7 @@ def _load_or_build_octree(
                 raise
             cache_path.unlink()
 
-    tree = build_octree_from_ds(ds)
+    tree = Octree.from_ds(ds)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     tree.save(cache_path)
     return tree, "build"
@@ -225,7 +224,7 @@ def _load_or_build_xyz_octree(ds: Dataset, data_path: Path, cache_root: Path) ->
             cache_path.unlink()
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    tree = build_octree_from_ds(ds, tree_coord="xyz")
+    tree = Octree.from_ds(ds, tree_coord="xyz")
     tree.save(cache_path)
     return tree, "build"
 

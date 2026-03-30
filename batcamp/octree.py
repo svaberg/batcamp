@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 
 import numpy as np
+from batread import Dataset
 from numba import njit
 from numba import prange
 
@@ -495,6 +496,43 @@ class Octree:
         out_path = Path(path)
         state.save_npz(out_path)
         logger.info("Saved octree to %s", str(out_path))
+
+    @classmethod
+    def from_ds(
+        cls,
+        ds: Dataset,
+        *,
+        tree_coord: TreeCoord | None = None,
+        axis_rho_tol: float = 1e-12,
+        level_rtol: float = 1e-4,
+        level_atol: float = 1e-9,
+    ) -> "Octree":
+        """Build one tree from a dataset by extracting explicit points and corners."""
+        from .builder import _warn_if_blocks_aux_mismatch
+        from .builder import xyz_points_from_ds
+
+        if ds.corners is None:
+            raise ValueError("Dataset has no corners; cannot build octree.")
+        logger.debug("from_ds...")
+        t0 = time.perf_counter()
+        points = xyz_points_from_ds(ds)
+        corners = np.asarray(ds.corners, dtype=np.int64)
+        _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
+        logger.info(
+            "from_ds: n_points=%d n_cells=%d",
+            int(points.shape[0]),
+            int(corners.shape[0]),
+        )
+        tree = cls(
+            points,
+            corners,
+            tree_coord=tree_coord,
+            axis_rho_tol=axis_rho_tol,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
+        )
+        logger.info("from_ds complete in %.2fs", float(time.perf_counter() - t0))
+        return tree
 
     @classmethod
     def from_state(

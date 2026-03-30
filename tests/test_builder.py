@@ -9,7 +9,6 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import build_octree_from_ds
 from batcamp.builder import DEFAULT_AXIS_RHO_TOL
 from batcamp.builder import _build_octree_state
 from batcamp.builder import _resolve_cell_levels
@@ -317,7 +316,7 @@ def _make_spherical_tree(
 def cartesian_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
     ds = _build_regular_xyz_dataset()
-    tree = build_octree_from_ds(ds, tree_coord="xyz")
+    tree = Octree.from_ds(ds, tree_coord="xyz")
     assert isinstance(tree, Octree)
     interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     return ds, tree, interp
@@ -372,20 +371,20 @@ def test_build_rejects_missing_corners() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Dataset has no corners"):
-        build_octree_from_ds(ds)
+        Octree.from_ds(ds)
 
 
 def test_build_rejects_unknown_tree_coord() -> None:
     """Builder should reject unsupported coordinate-system identifiers."""
     ds = _build_regular_dataset()
     with pytest.raises(ValueError, match="Unsupported tree_coord"):
-        build_octree_from_ds(ds, tree_coord="foo")
+        Octree.from_ds(ds, tree_coord="foo")
 
 
 def test_build_xyz_returns_cartesian_tree() -> None:
     """Builder should construct Cartesian octree when tree_coord='xyz'."""
     ds = _build_regular_xyz_dataset()
-    tree = build_octree_from_ds(ds, tree_coord="xyz")
+    tree = Octree.from_ds(ds, tree_coord="xyz")
     assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
@@ -393,7 +392,7 @@ def test_build_xyz_returns_cartesian_tree() -> None:
 def test_build_default_returns_cartesian_tree() -> None:
     """Default build path should return the Cartesian octree specialization."""
     ds = _build_regular_xyz_dataset()
-    tree = build_octree_from_ds(ds)
+    tree = Octree.from_ds(ds)
     assert isinstance(tree, Octree)
     assert tree.tree_coord == "xyz"
 
@@ -460,7 +459,7 @@ def test_warns_on_incompatible_blocks_aux_without_block_tree(caplog: pytest.LogC
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "7 3x5x9"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = build_octree_from_ds(ds, tree_coord="rpa")
+        tree = Octree.from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert tree.leaf_shape[0] > 0
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
@@ -471,7 +470,7 @@ def test_no_warning_on_compatible_blocks_aux(caplog: pytest.LogCaptureFixture) -
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "1 2x4x8"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = build_octree_from_ds(ds, tree_coord="rpa")
+        tree = Octree.from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert not any("BLOCKS" in rec.getMessage() for rec in caplog.records)
 
@@ -481,7 +480,7 @@ def test_warns_on_blocks_count_mismatch(caplog: pytest.LogCaptureFixture) -> Non
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "5 1x1x1"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = build_octree_from_ds(ds, tree_coord="rpa")
+        tree = Octree.from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
 
@@ -491,7 +490,7 @@ def test_warns_on_impossible_blocks_count(caplog: pytest.LogCaptureFixture) -> N
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "1000 1x1x1"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = build_octree_from_ds(ds, tree_coord="rpa")
+        tree = Octree.from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert any("BLOCKS" in rec.getMessage() and "does not match" in rec.getMessage() for rec in caplog.records)
 
@@ -501,7 +500,7 @@ def test_warns_on_unparseable_blocks_aux(caplog: pytest.LogCaptureFixture) -> No
     ds = _build_regular_dataset()
     ds.aux["BLOCKS"] = "garbage"
     with caplog.at_level(logging.WARNING, logger="batcamp.builder"):
-        tree = build_octree_from_ds(ds, tree_coord="rpa")
+        tree = Octree.from_ds(ds, tree_coord="rpa")
     assert tree.level_counts
     assert any("BLOCKS" in rec.getMessage() and "not parseable" in rec.getMessage() for rec in caplog.records)
 
@@ -548,13 +547,13 @@ def test_rebuild_cells_rejects_parent_child_overlap() -> None:
 
 def test_no_public_depth_for_level_helper() -> None:
     """Depth conversion is internal; no public depth-for-level helper is exposed."""
-    tree = build_octree_from_ds(_build_regular_dataset(), tree_coord="rpa")
+    tree = Octree.from_ds(_build_regular_dataset(), tree_coord="rpa")
     assert not hasattr(tree, "depth_for_level")
 
 
 def test_regular_spherical_tree_uses_absolute_levels() -> None:
     """Uniform spherical trees should store root-relative absolute levels."""
-    tree = build_octree_from_ds(_build_regular_dataset(), tree_coord="rpa")
+    tree = Octree.from_ds(_build_regular_dataset(), tree_coord="rpa")
     assert tree.min_level == tree.max_level
     assert tree.cell_levels is not None
     assert np.all(tree.cell_levels == tree.max_level)
@@ -888,7 +887,7 @@ def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
 def test_lookup_runs_for_xyz() -> None:
     """Lookup APIs should run when the tree is tagged as Cartesian."""
     ds = _build_regular_xyz_dataset()
-    tree = build_octree_from_ds(ds, tree_coord="xyz")
+    tree = Octree.from_ds(ds, tree_coord="xyz")
     assert int(tree.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
     assert not hasattr(tree, "lookup_rpa")
 
@@ -896,7 +895,7 @@ def test_lookup_runs_for_xyz() -> None:
 def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
     """Cartesian lookup should return miss for points in an uncovered bbox gap."""
     ds = _build_disjoint_xyz_dataset()
-    tree = build_octree_from_ds(ds, tree_coord="xyz")
+    tree = Octree.from_ds(ds, tree_coord="xyz")
     q_gap = np.array([5.0, 0.5, 0.5], dtype=float)
     assert int(tree.lookup_points(q_gap, coord="xyz")[0]) < 0
 
@@ -905,4 +904,4 @@ def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:
     """Gappy spherical shells should be rejected by the builder."""
     ds = _build_disjoint_spherical_shell_dataset()
     with pytest.raises(ValueError, match="radial edge count does not match leaf_shape"):
-        build_octree_from_ds(ds, tree_coord="rpa")
+        Octree.from_ds(ds, tree_coord="rpa")

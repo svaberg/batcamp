@@ -5,7 +5,6 @@ import pytest
 from batread import Dataset
 
 from batcamp import Octree
-from batcamp import build_octree_from_ds
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from batcamp.spherical import xyz_to_rpa_components
@@ -33,7 +32,7 @@ def test_xyz_to_rpa_components_stable_and_finite() -> None:
 def test_default_tree_inference_selects_rpa_for_regression_dataset(regression_context) -> None:
     """Default tree inference should stay on spherical geometry for this dataset."""
     ds, _tree = regression_context
-    tree = build_octree_from_ds(ds)
+    tree = Octree.from_ds(ds)
     interp = OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"]))
     assert tree.tree_coord == "rpa"
 
