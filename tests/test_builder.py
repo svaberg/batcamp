@@ -12,7 +12,6 @@ from batcamp import OctreeInterpolator
 from batcamp.builder import DEFAULT_AXIS_RHO_TOL
 from batcamp.builder import _build_octree_state
 from batcamp.builder import _resolve_cell_levels
-from batcamp.builder import build_octree
 import batcamp.builder_cartesian as cartesian_builder
 import batcamp.builder_spherical as spherical_builder
 from batcamp.constants import XYZ_VARS
@@ -402,7 +401,7 @@ def test_build_rejects_bad_point_shape() -> None:
     points = np.array([[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     corners = np.array([[0, 1, 2]], dtype=np.int64)
     with pytest.raises(ValueError, match="points must have shape"):
-        build_octree(points, corners, tree_coord="rpa")
+        Octree(points, corners, tree_coord="rpa")
 
 
 def test_compute_azimuth_spans_reject_bad_corner_rank() -> None:
@@ -433,7 +432,7 @@ def test_compute_azimuth_spans_reject_too_few_corners() -> None:
 
 def test_infer_levels_marks_non_dyadic_span_invalid() -> None:
     """Non-dyadic azimuth spans should map to level -1."""
-    levels = spherical_builder.infer_levels_from_span(np.array([1.0, 0.5, 0.3]))
+    levels, _expected, _coarse = spherical_builder.infer_level_expectation(np.array([1.0, 0.5, 0.3]))
     assert np.array_equal(levels, np.array([0, 1, -1], dtype=np.int64))
 
 

@@ -128,26 +128,6 @@ def _infer_xyz_level_shapes_from_geometry(
     return out
 
 
-def infer_level_shapes(
-    points: np.ndarray,
-    corners: np.ndarray,
-    *,
-    cell_levels: np.ndarray | None = None,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
-) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
-    """Infer Cartesian level-shape map and validated levels."""
-    cell_min, cell_max, cell_span = cartesian_cell_geometry(points, corners)
-    levels, max_level = _infer_levels_from_geometry(
-        cell_span,
-        cell_levels=cell_levels,
-        level_rtol=level_rtol,
-        level_atol=level_atol,
-    )
-    level_shapes = _infer_xyz_level_shapes_from_geometry(cell_min, cell_max, cell_span, levels)
-    return level_shapes, levels, max_level
-
-
 def _infer_leaf_shape_from_geometry(
     cell_min: np.ndarray,
     cell_max: np.ndarray,
@@ -283,4 +263,3 @@ def _populate_tree_state_from_geometry(
         "cell_levels": np.asarray(cell_levels, dtype=np.int64),
         "cell_ijk": cell_ijk,
     }
-

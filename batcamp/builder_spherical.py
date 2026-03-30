@@ -173,21 +173,6 @@ def infer_level_expectation(
     return levels, expected, coarse
 
 
-def infer_levels_from_span(
-    span: np.ndarray,
-    *,
-    rtol: float = 1e-4,
-    atol: float = 1e-9,
-) -> np.ndarray:
-    """Infer integer dyadic levels from per-cell azimuth spans."""
-    levels, _expected, _coarse = infer_level_expectation(
-        span,
-        rtol=rtol,
-        atol=atol,
-    )
-    return levels
-
-
 def compute_azimuth_spans_and_levels(
     points: np.ndarray,
     *,
