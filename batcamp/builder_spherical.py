@@ -127,17 +127,6 @@ def minimal_azimuth_intervals(
     return start, width
 
 
-def axis_corner_mask(points: np.ndarray, corners: np.ndarray, *, axis_rho_tol: float) -> np.ndarray:
-    """Mark corners near the polar axis where azimuth is singular."""
-    rho = np.hypot(points[:, 0], points[:, 1])
-    return rho[corners] <= float(axis_rho_tol)
-
-
-def extract_azimuth(points: np.ndarray) -> np.ndarray:
-    """Extract wrapped azimuth values from Cartesian `X/Y` point coordinates."""
-    return np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-
-
 def infer_level_expectation(
     azimuth_span: np.ndarray,
     *,
@@ -176,9 +165,10 @@ def compute_azimuth_spans_and_levels(
     if corners_arr.shape[1] < 3:
         raise ValueError("Need at least 3 corners per cell to estimate azimuth span.")
 
-    azimuth = extract_azimuth(points)
+    azimuth = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
     cell_azimuth = azimuth[corners_arr]
-    axis_mask = axis_corner_mask(points, corners_arr, axis_rho_tol=axis_rho_tol)
+    rho = np.hypot(points[:, 0], points[:, 1])
+    axis_mask = rho[corners_arr] <= float(axis_rho_tol)
     azimuth_span, azimuth_center = circular_span_and_mean(
         cell_azimuth,
         ignore_mask=axis_mask,
@@ -313,7 +303,8 @@ def populate_tree_state(
     cell_polar_min = np.min(polar_points[corners_arr], axis=1)
     cell_polar_max = np.max(polar_points[corners_arr], axis=1)
     azimuth_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-    axis_mask = axis_corner_mask(points, corners_arr, axis_rho_tol=float(axis_rho_tol))
+    rho = np.hypot(points[:, 0], points[:, 1])
+    axis_mask = rho[corners_arr] <= float(axis_rho_tol)
     azimuth_corners = azimuth_points[corners_arr]
     azimuth_start, azimuth_width = minimal_azimuth_intervals(
         azimuth_corners,

@@ -174,25 +174,6 @@ def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
             cells_per_block,
         )
 
-def root_shape_and_depth(leaf_shape: GridShape) -> tuple[GridShape, int]:
-    """Return dyadic root shape and tree depth implied by one finest leaf shape."""
-    depth: int | None = None
-    for axis_size in leaf_shape:
-        axis_depth = 0
-        value = int(axis_size)
-        while value > 0 and (value % 2) == 0:
-            axis_depth += 1
-            value //= 2
-        if depth is None or axis_depth < depth:
-            depth = axis_depth
-    if depth is None:
-        raise ValueError(f"Invalid leaf_shape={leaf_shape}.")
-    return (
-        int(leaf_shape[0]) >> depth,
-        int(leaf_shape[1]) >> depth,
-        int(leaf_shape[2]) >> depth,
-    ), depth
-
 def _build_octree_state(
     points: np.ndarray,
     corners: np.ndarray,
@@ -265,7 +246,22 @@ def _build_octree_state(
     logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
     with timed_stage("normalize levels"):
-        root_shape, depth = root_shape_and_depth(leaf_shape)
+        depth: int | None = None
+        for axis_size in leaf_shape:
+            axis_depth = 0
+            value = int(axis_size)
+            while value > 0 and (value % 2) == 0:
+                axis_depth += 1
+                value //= 2
+            if depth is None or axis_depth < depth:
+                depth = axis_depth
+        if depth is None:
+            raise ValueError(f"Invalid leaf_shape={leaf_shape}.")
+        root_shape = (
+            int(leaf_shape[0]) >> depth,
+            int(leaf_shape[1]) >> depth,
+            int(leaf_shape[2]) >> depth,
+        )
         level_offset = int(depth) - int(max_level)
         if level_offset < 0:
             raise ValueError(
