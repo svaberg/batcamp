@@ -137,24 +137,24 @@ def _cell_row_order(cell_depth: np.ndarray, cell_ijk: np.ndarray) -> np.ndarray:
 def _pack_cell_keys(cell_depth: np.ndarray, cell_ijk: np.ndarray, axis_bases: np.ndarray) -> np.ndarray:
     """Pack `(depth, axis0, axis1, axis2)` rows into sortable integer keys."""
     depth = cell_depth.astype(np.uint64, copy=False)
-    axis0 = cell_ijk[:, AXIS0].astype(np.uint64, copy=False)
-    axis1 = cell_ijk[:, AXIS1].astype(np.uint64, copy=False)
-    axis2 = cell_ijk[:, AXIS2].astype(np.uint64, copy=False)
-    key = depth * np.uint64(axis_bases[AXIS0]) + axis0
-    key = key * np.uint64(axis_bases[AXIS1]) + axis1
-    key = key * np.uint64(axis_bases[AXIS2]) + axis2
+    ijk = cell_ijk.astype(np.uint64, copy=False)
+    bases = axis_bases.astype(np.uint64, copy=False)
+    key = depth * bases[AXIS0] + ijk[:, AXIS0]
+    key = key * bases[AXIS1] + ijk[:, AXIS1]
+    key = key * bases[AXIS2] + ijk[:, AXIS2]
     return key
 
 
 def _unpack_cell_keys(keys: np.ndarray, axis_bases: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Unpack sortable integer keys into `(depth, cell_ijk)` arrays."""
     key = keys.astype(np.uint64, copy=True)
-    axis2 = (key % np.uint64(axis_bases[AXIS2])).astype(np.int64)
-    key //= np.uint64(axis_bases[AXIS2])
-    axis1 = (key % np.uint64(axis_bases[AXIS1])).astype(np.int64)
-    key //= np.uint64(axis_bases[AXIS1])
-    axis0 = (key % np.uint64(axis_bases[AXIS0])).astype(np.int64)
-    depth = (key // np.uint64(axis_bases[AXIS0])).astype(np.int64)
+    bases = axis_bases.astype(np.uint64, copy=False)
+    axis2 = (key % bases[AXIS2]).astype(np.int64)
+    key //= bases[AXIS2]
+    axis1 = (key % bases[AXIS1]).astype(np.int64)
+    key //= bases[AXIS1]
+    axis0 = (key % bases[AXIS0]).astype(np.int64)
+    depth = (key // bases[AXIS0]).astype(np.int64)
     return depth, np.column_stack((axis0, axis1, axis2))
 
 
