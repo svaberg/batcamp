@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from contextlib import contextmanager
 import logging
 import re
@@ -82,35 +81,6 @@ def median_positive(values: np.ndarray, *, tiny: float = 1e-12) -> float:
     if pos.size == 0:
         raise ValueError("No positive values available to infer spacing.")
     return float(np.median(pos))
-
-
-def point_refinement_levels(
-    n_points: int,
-    corners: np.ndarray,
-    cell_levels: np.ndarray,
-) -> np.ndarray:
-    """Assign each point the finest valid level among its neighboring cells."""
-    out = np.full(n_points, -1, dtype=np.int64)
-    for cell_id, nodes in enumerate(corners):
-        level = int(cell_levels[cell_id])
-        if level < 0:
-            continue
-        out[nodes] = np.maximum(out[nodes], level)
-    return out
-
-
-def format_histogram(levels: np.ndarray) -> str:
-    """Format level histogram text as `level:count` pairs."""
-    counts = Counter(int(v) for v in levels.tolist())
-    return ", ".join(f"{lvl}:{counts[lvl]}" for lvl in sorted(counts))
-
-
-def valid_cell_fraction(levels: np.ndarray) -> tuple[int, int, float]:
-    """Compute valid-level fraction statistics for `levels >= 0`."""
-    total = int(levels.size)
-    valid = int(np.count_nonzero(levels >= 0))
-    frac = float(valid / total) if total > 0 else 0.0
-    return valid, total, frac
 
 
 def _resolve_cell_levels(

@@ -6,7 +6,6 @@ from batread import Dataset
 
 from batcamp import Octree
 from batcamp.builder import DEFAULT_AXIS_RHO_TOL
-from batcamp.builder import point_refinement_levels
 import batcamp.builder_spherical as spherical_builder
 from sample_data_helper import data_file
 
@@ -54,11 +53,12 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
     )
     assert tree.cell_levels is not None
     cell_levels = tree.cell_levels
-    point_levels = point_refinement_levels(
-        n_points=ds.points.shape[0],
-        corners=corners,
-        cell_levels=cell_levels,
-    )
+    point_levels = np.full(ds.points.shape[0], -1, dtype=np.int64)
+    for cell_id, nodes in enumerate(corners):
+        level = int(cell_levels[cell_id])
+        if level < 0:
+            continue
+        point_levels[nodes] = np.maximum(point_levels[nodes], level)
 
     return {
         "ds": ds,
