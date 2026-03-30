@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections import Counter
+
 import numpy as np
 import pytest
 
-from batcamp import DEFAULT_MIN_VALID_CELL_FRACTION
-from batcamp import format_histogram
-from batcamp import valid_cell_fraction
+from batcamp.builder import DEFAULT_MIN_VALID_CELL_FRACTION
 
 
 @pytest.fixture(scope="module")
@@ -22,6 +22,18 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
     polar = float(np.arccos(np.clip(zr, -1.0, 1.0)))
     azimuth = float(np.mod(np.arctan2(q[1], q[0]), 2.0 * np.pi))
     return np.array([r, polar, azimuth], dtype=float)
+
+
+def _format_histogram(levels: np.ndarray) -> str:
+    counts = Counter(int(v) for v in levels.tolist())
+    return ", ".join(f"{lvl}:{counts[lvl]}" for lvl in sorted(counts))
+
+
+def _valid_cell_fraction(levels: np.ndarray) -> tuple[int, int, float]:
+    total = int(levels.size)
+    valid = int(np.count_nonzero(levels >= 0))
+    frac = float(valid / total) if total > 0 else 0.0
+    return valid, total, frac
 
 
 def test_azimuth_level_arrays_shapes(octree_context: dict[str, object]) -> None:
@@ -47,14 +59,14 @@ def test_valid_fraction_and_histograms(octree_context: dict[str, object]) -> Non
     cell_levels = octree_context["cell_levels"]
     point_levels = octree_context["point_levels"]
 
-    valid, total, frac_valid = valid_cell_fraction(cell_levels)
+    valid, total, frac_valid = _valid_cell_fraction(cell_levels)
     assert total == corners.shape[0]
     assert valid > 0
     assert frac_valid >= DEFAULT_MIN_VALID_CELL_FRACTION
 
     assert point_levels.shape[0] == ds.points.shape[0]
-    cell_hist = format_histogram(cell_levels)
-    point_hist = format_histogram(point_levels)
+    cell_hist = _format_histogram(cell_levels)
+    point_hist = _format_histogram(point_levels)
     assert cell_hist
     assert point_hist
 
