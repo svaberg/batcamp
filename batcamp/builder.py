@@ -207,34 +207,14 @@ def build_octree_from_ds(
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
 ) -> Octree:
-    """Build one octree from a dataset by extracting explicit points and corners."""
-    if ds.corners is None:
-        raise ValueError("Dataset has no corners; cannot build octree.")
-    with timed_stage("build_octree_from_ds"):
-        with timed_stage("extract geometry"):
-            points = xyz_points_from_ds(ds)
-            corners = np.asarray(ds.corners, dtype=np.int64)
-            _warn_if_blocks_aux_mismatch(ds, int(corners.shape[0]))
-        logger.info(
-            "extract geometry: n_points=%d n_cells=%d",
-            int(points.shape[0]),
-            int(corners.shape[0]),
-        )
-        tree = Octree(
-            points,
-            corners,
-            tree_coord=tree_coord,
-            axis_rho_tol=axis_rho_tol,
-            level_rtol=level_rtol,
-            level_atol=level_atol,
-        )
-    logger.info(
-        "build_octree_from_ds: coord=%s n_points=%d n_cells=%d",
-        str(tree.tree_coord),
-        int(points.shape[0]),
-        int(corners.shape[0]),
+    """Secondary dataset convenience wrapper around `Octree.from_ds(...)`."""
+    return Octree.from_ds(
+        ds,
+        tree_coord=tree_coord,
+        axis_rho_tol=axis_rho_tol,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
     )
-    return tree
 
 
 def build_octree(

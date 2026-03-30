@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 from batcamp import Octree
-from batcamp import build_octree_from_ds
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
@@ -249,7 +248,7 @@ def _assert_checkerboard_patch(
 def test_xy_plane_resample_preserves_ring_pattern() -> None:
     """Midplane resample of a synthetic ring field should peak on an annulus, not at the center."""
     ds = _build_ring_pattern_dataset()
-    interp = OctreeInterpolator(build_octree_from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
+    interp = OctreeInterpolator(Octree.from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
     xg, yg, img = _resample_xy_plane(interp)
     _assert_ring_pattern(xg, yg, img, center_x=0.0, center_y=0.0, ring_radius=0.55, ring_width=0.08)
 
@@ -257,7 +256,7 @@ def test_xy_plane_resample_preserves_ring_pattern() -> None:
 def test_xy_plane_resample_preserves_adaptive_ring_pattern() -> None:
     """Adaptive builder path should still preserve a ring in the refined patch."""
     ds = _build_adaptive_ring_pattern_dataset()
-    interp = OctreeInterpolator(build_octree_from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
+    interp = OctreeInterpolator(Octree.from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
     xg, yg, img = _resample_xy_plane(interp)
     _assert_ring_pattern(xg, yg, img, center_x=0.5, center_y=0.5, ring_radius=0.25, ring_width=0.07, inner_radius=0.10)
 
@@ -265,7 +264,7 @@ def test_xy_plane_resample_preserves_adaptive_ring_pattern() -> None:
 def test_xy_plane_resample_preserves_checkerboard_pattern() -> None:
     """Midplane resample of a synthetic checkerboard field should alternate tile brightness."""
     ds = _build_checkerboard_pattern_dataset()
-    interp = OctreeInterpolator(build_octree_from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
+    interp = OctreeInterpolator(Octree.from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
     xg, yg, img = _resample_xy_plane(interp)
     _assert_checkerboard_pattern(xg, yg, img)
 
@@ -273,6 +272,6 @@ def test_xy_plane_resample_preserves_checkerboard_pattern() -> None:
 def test_xy_plane_resample_preserves_adaptive_checkerboard_pattern() -> None:
     """Adaptive builder path should still preserve checkerboard alternation."""
     ds = _build_adaptive_checkerboard_pattern_dataset()
-    interp = OctreeInterpolator(build_octree_from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
+    interp = OctreeInterpolator(Octree.from_ds(ds, tree_coord="xyz"), np.asarray(ds["Pattern"]))
     xg, yg, img = _resample_xy_plane(interp)
     _assert_checkerboard_patch(xg, yg, img, x0=0.0, x1=1.0, y0=0.0, y1=1.0, n_tiles=2)

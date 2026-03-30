@@ -5,7 +5,6 @@ import pytest
 from batread import Dataset
 
 from batcamp import Octree
-from batcamp import build_octree_from_ds
 from batcamp.builder import DEFAULT_AXIS_RHO_TOL
 from batcamp.builder import point_refinement_levels
 import batcamp.builder_spherical as spherical_builder
@@ -39,7 +38,7 @@ def _build_difflevels_rpa_context() -> dict[str, object]:
     assert ds.corners is not None
 
     corners = np.asarray(ds.corners, dtype=np.int64)
-    tree = build_octree_from_ds(
+    tree = Octree.from_ds(
         ds,
         tree_coord="rpa",
         axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
