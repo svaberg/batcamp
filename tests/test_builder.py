@@ -637,10 +637,15 @@ def test_cartesian_level_shapes_reject_inconsistent_dx() -> None:
             "Scalar": points[:, 0],
         },
     )
+    cell_min, cell_max, cell_span = cartesian_builder.cartesian_cell_geometry(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(corners, dtype=np.int64),
+    )
     with pytest.raises(ValueError, match="inconsistent dx"):
-        cartesian_builder.infer_xyz_level_shapes(
-            np.asarray(ds.points, dtype=float),
-            np.asarray(corners, dtype=np.int64),
+        cartesian_builder._infer_xyz_level_shapes_from_geometry(
+            cell_min,
+            cell_max,
+            cell_span,
             np.zeros(3, dtype=np.int64),
         )
 
@@ -648,31 +653,17 @@ def test_cartesian_level_shapes_reject_inconsistent_dx() -> None:
 def test_cartesian_infer_leaf_shape_rejects_missing_max_level() -> None:
     """Cartesian finest-shape inference should fail when the requested max level is absent."""
     ds = _build_regular_xyz_dataset(nx=2, ny=2, nz=2)
+    cell_min, cell_max, cell_span = cartesian_builder.cartesian_cell_geometry(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+    )
     with pytest.raises(ValueError, match="No cells found at max_level=1"):
-        cartesian_builder.infer_leaf_shape(
-            np.asarray(ds.points, dtype=float),
-            np.asarray(ds.corners, dtype=np.int64),
+        cartesian_builder._infer_leaf_shape_from_geometry(
+            cell_min,
+            cell_max,
+            cell_span,
             np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
             max_level=1,
-        )
-
-
-def test_cartesian_tree_state_requires_cell_levels() -> None:
-    """Cartesian exact-state construction should fail without cell levels."""
-    ds = _build_regular_xyz_dataset(nx=2, ny=2, nz=2)
-    tree = _make_cartesian_tree(
-        leaf_shape=(2, 2, 2),
-        root_shape=(1, 1, 1),
-        max_level=1,
-        cell_levels=None,
-    )
-    with pytest.raises(ValueError, match="Cartesian tree state requires cell_levels"):
-        cartesian_builder.populate_tree_state(
-            leaf_shape=tree.leaf_shape,
-            max_level=tree.max_level,
-            cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
         )
 
 
@@ -685,13 +676,17 @@ def test_cartesian_tree_state_requires_at_least_one_valid_level() -> None:
         max_level=0,
         cell_levels=np.full(int(np.asarray(ds.corners).shape[0]), -1, dtype=np.int64),
     )
+    cell_min, cell_max, _cell_span = cartesian_builder.cartesian_cell_geometry(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+    )
     with pytest.raises(ValueError, match="at least one valid cell level"):
-        cartesian_builder.populate_tree_state(
+        cartesian_builder._populate_tree_state_from_geometry(
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
+            cell_min=cell_min,
+            cell_max=cell_max,
         )
 
 
@@ -704,13 +699,17 @@ def test_cartesian_tree_state_rejects_depth_above_tree_depth() -> None:
         max_level=0,
         cell_levels=np.ones(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
+    cell_min, cell_max, _cell_span = cartesian_builder.cartesian_cell_geometry(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+    )
     with pytest.raises(ValueError, match="depth exceeds tree_depth=0"):
-        cartesian_builder.populate_tree_state(
+        cartesian_builder._populate_tree_state_from_geometry(
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
+            cell_min=cell_min,
+            cell_max=cell_max,
         )
 
 
@@ -723,13 +722,17 @@ def test_cartesian_tree_state_rejects_width_mismatch() -> None:
         max_level=1,
         cell_levels=np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
+    cell_min, cell_max, _cell_span = cartesian_builder.cartesian_cell_geometry(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+    )
     with pytest.raises(ValueError, match="width does not match inferred level 0"):
-        cartesian_builder.populate_tree_state(
+        cartesian_builder._populate_tree_state_from_geometry(
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
+            cell_min=cell_min,
+            cell_max=cell_max,
         )
 
 

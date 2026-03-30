@@ -128,16 +128,6 @@ def _infer_xyz_level_shapes_from_geometry(
     return out
 
 
-def infer_xyz_level_shapes(
-    points: np.ndarray,
-    corners: np.ndarray,
-    cell_levels: np.ndarray,
-) -> LevelShapeStatsMap:
-    """Infer per-level axis counts/spacings for Cartesian octrees."""
-    cell_min, cell_max, cell_span = cartesian_cell_geometry(points, corners)
-    return _infer_xyz_level_shapes_from_geometry(cell_min, cell_max, cell_span, cell_levels)
-
-
 def infer_level_shapes(
     points: np.ndarray,
     corners: np.ndarray,
@@ -183,24 +173,6 @@ def _infer_leaf_shape_from_geometry(
             f"Invalid finest Cartesian shape inferred: n_x={n_x}, n_y={n_y}, n_z={n_z}."
         )
     return n_x, n_y, n_z
-
-
-def infer_leaf_shape(
-    points: np.ndarray,
-    corners: np.ndarray,
-    cell_levels: np.ndarray,
-    *,
-    max_level: int,
-) -> tuple[int, int, int]:
-    """Infer finest Cartesian `(n_x, n_y, n_z)` counts from geometry at `max_level`."""
-    cell_min, cell_max, cell_span = cartesian_cell_geometry(points, corners)
-    return _infer_leaf_shape_from_geometry(
-        cell_min,
-        cell_max,
-        cell_span,
-        cell_levels,
-        max_level=max_level,
-    )
 
 
 def _populate_tree_state_from_geometry(
@@ -312,23 +284,3 @@ def _populate_tree_state_from_geometry(
         "cell_ijk": cell_ijk,
     }
 
-
-def populate_tree_state(
-    *,
-    leaf_shape: tuple[int, int, int],
-    max_level: int,
-    cell_levels: np.ndarray | None,
-    points: np.ndarray,
-    corners: np.ndarray,
-) -> dict[str, object]:
-    """Return exact Cartesian octree state for one built tree."""
-    if cell_levels is None:
-        raise ValueError("Cartesian tree state requires cell_levels.")
-    cell_min, cell_max, _cell_span = cartesian_cell_geometry(points, corners)
-    return _populate_tree_state_from_geometry(
-        leaf_shape=leaf_shape,
-        max_level=max_level,
-        cell_levels=cell_levels,
-        cell_min=cell_min,
-        cell_max=cell_max,
-    )
