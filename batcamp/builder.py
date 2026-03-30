@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import logging
 import re
-import time
 from typing import TypeAlias
 
 import numpy as np
@@ -15,6 +13,7 @@ from batread import Dataset
 from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
 from .octree import Octree
+from .octree import timed_info_decorator
 from .shared_types import GridShape
 from .shared_types import TreeCoord
 
@@ -31,15 +30,6 @@ DEFAULT_AXIS_RHO_TOL = 1e-12
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 """Default minimum fraction of valid inferred cell levels accepted by builder utilities."""
-
-
-@contextmanager
-def timed_stage(stage: str):
-    """Log one start/finish INFO pair around one builder stage."""
-    logger.debug("%s...", stage, stacklevel=2)
-    t0 = time.perf_counter()
-    yield
-    logger.info("%s complete in %.2fs", stage, float(time.perf_counter() - t0), stacklevel=2)
 
 
 def infer_tree_coord_from_geometry(
@@ -170,8 +160,16 @@ def _build_octree_state(
     corners_arr = np.asarray(corners, dtype=np.int64)
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
-    with timed_stage("resolve tree coord"):
-        resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
+    level_shapes: LevelShapeStatsMap | None = None
+    cell_min: np.ndarray | None = None
+    cell_max: np.ndarray | None = None
+    cell_span: np.ndarray | None = None
+
+    @timed_info_decorator
+    def resolve_tree_coord():
+        return infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
+
+    resolved_tree_coord = resolve_tree_coord()
     if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
         raise ValueError(
             f"Unsupported tree_coord '{resolved_tree_coord}'; "
@@ -179,7 +177,9 @@ def _build_octree_state(
         )
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
-    with timed_stage("infer levels"):
+    @timed_info_decorator
+    def infer_levels():
+        nonlocal level_shapes, cell_min, cell_max, cell_span
         if resolved_tree_coord == "rpa":
             level_shapes, levels, max_level = infer_rpa_level_shapes(
                 points,
@@ -200,22 +200,28 @@ def _build_octree_state(
                 level_rtol=level_rtol,
                 level_atol=level_atol,
             )
+        return levels, max_level
+
+    levels, max_level = infer_levels()
     logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
 
-    with timed_stage("infer leaf shape"):
+    @timed_info_decorator
+    def infer_leaf_shape():
         if resolved_tree_coord == "rpa":
-            leaf_shape = infer_rpa_leaf_shape(level_shapes)
-        else:
-            leaf_shape = _infer_leaf_shape_from_geometry(
-                cell_min,
-                cell_max,
-                cell_span,
-                levels,
-                max_level=max_level,
-            )
+            return infer_rpa_leaf_shape(level_shapes)
+        return _infer_leaf_shape_from_geometry(
+            cell_min,
+            cell_max,
+            cell_span,
+            levels,
+            max_level=max_level,
+        )
+
+    leaf_shape = infer_leaf_shape()
     logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
-    with timed_stage("normalize levels"):
+    @timed_info_decorator
+    def normalize_levels():
         depth: int | None = None
         for axis_size in leaf_shape:
             axis_depth = 0
@@ -237,9 +243,12 @@ def _build_octree_state(
             raise ValueError(
                 f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
             )
-        levels = np.asarray(levels, dtype=np.int64)
-        levels_abs = np.array(levels, copy=True)
+        levels_arr = np.asarray(levels, dtype=np.int64)
+        levels_abs = np.array(levels_arr, copy=True)
         levels_abs[levels_abs >= 0] += int(level_offset)
+        return root_shape, depth, levels_abs, level_offset
+
+    root_shape, depth, levels_abs, level_offset = normalize_levels()
     logger.info(
         "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
         resolved_tree_coord,
@@ -248,9 +257,10 @@ def _build_octree_state(
         int(max_level + level_offset),
     )
 
-    with timed_stage("populate tree state"):
+    @timed_info_decorator
+    def populate_tree_state():
         if resolved_tree_coord == "rpa":
-            state_payload = populate_rpa_tree_state(
+            return populate_rpa_tree_state(
                 leaf_shape=leaf_shape,
                 max_level=int(max_level + level_offset),
                 cell_levels=levels_abs,
@@ -258,14 +268,15 @@ def _build_octree_state(
                 points=points,
                 corners=corners_arr,
             )
-        else:
-            state_payload = _populate_tree_state_from_geometry(
-                leaf_shape=leaf_shape,
-                max_level=int(max_level + level_offset),
-                cell_levels=levels_abs,
-                cell_min=cell_min,
-                cell_max=cell_max,
-            )
+        return _populate_tree_state_from_geometry(
+            leaf_shape=leaf_shape,
+            max_level=int(max_level + level_offset),
+            cell_levels=levels_abs,
+            cell_min=cell_min,
+            cell_max=cell_max,
+        )
+
+    state_payload = populate_tree_state()
     logger.info("populate tree state: coord=%s", resolved_tree_coord)
     return OctreeState(
         tree_coord=resolved_tree_coord,
