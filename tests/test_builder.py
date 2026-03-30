@@ -7,13 +7,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from batcamp import DEFAULT_AXIS_RHO_TOL
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp import build_octree
 from batcamp import build_octree_from_ds
+from batcamp.builder import DEFAULT_AXIS_RHO_TOL
 from batcamp.builder import _build_octree_state
 from batcamp.builder import _resolve_cell_levels
+from batcamp.builder import build_octree
 import batcamp.builder_cartesian as cartesian_builder
 import batcamp.builder_spherical as spherical_builder
 from batcamp.constants import XYZ_VARS
