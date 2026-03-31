@@ -23,11 +23,11 @@ def _attach_cartesian_coord_state(tree, points: np.ndarray, corners: np.ndarray)
     xyz_max = np.max(points, axis=0).astype(np.float64, copy=False)
     xyz_span = np.maximum(xyz_max - xyz_min, np.finfo(np.float64).tiny)
     fine_step = xyz_span / np.asarray(tree.leaf_shape, dtype=np.float64)
-    n_cells = int(tree._cell_depth.shape[0])
-    occupied_ids = np.flatnonzero(tree._cell_depth >= 0)
-    cell_shift = int(tree.max_level) - tree._cell_depth[occupied_ids]
+    n_cells = int(tree.cell_depth.shape[0])
+    occupied_ids = np.flatnonzero(tree.cell_depth >= 0)
+    cell_shift = int(tree.max_level) - tree.cell_depth[occupied_ids]
     cell_width = np.left_shift(np.ones_like(cell_shift, dtype=np.int64), cell_shift)
-    cell_start_f = np.left_shift(tree._cell_ijk[occupied_ids], cell_shift[:, None])
+    cell_start_f = np.left_shift(tree.cell_ijk[occupied_ids], cell_shift[:, None])
     cell_bounds = np.empty((n_cells, 3, 2), dtype=np.float64)
     cell_bounds.fill(np.nan)
     cell_bounds[occupied_ids, :, START] = xyz_min + cell_start_f * fine_step

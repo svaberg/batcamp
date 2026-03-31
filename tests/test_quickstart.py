@@ -86,12 +86,12 @@ def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
 
 
 @pytest.mark.parametrize("name,tree_coord", _CASES)
-def test_builder_function_matches_constructor(name: str, tree_coord: str) -> None:
-    """Secondary builder helper should match direct constructor output."""
+def test_from_ds_matches_constructor(name: str, tree_coord: str) -> None:
+    """`Octree.from_ds(...)` should match direct constructor output."""
     ds = Dataset.from_file(str(data_file(name)))
     points = ds[["X [R]", "Y [R]", "Z [R]"]]
     tree_ctor = Octree(points, ds.corners, tree_coord=tree_coord)
-    tree_fn = Octree.from_ds(ds, tree_coord=tree_coord)
-    assert tree_ctor.tree_coord == tree_fn.tree_coord
-    np.testing.assert_array_equal(tree_ctor.cell_levels, tree_fn.cell_levels)
-    np.testing.assert_array_equal(tree_ctor.corners, tree_fn.corners)
+    tree_from_ds = Octree.from_ds(ds, tree_coord=tree_coord)
+    assert tree_ctor.tree_coord == tree_from_ds.tree_coord
+    np.testing.assert_array_equal(tree_ctor.cell_levels, tree_from_ds.cell_levels)
+    np.testing.assert_array_equal(tree_ctor.corners, tree_from_ds.corners)

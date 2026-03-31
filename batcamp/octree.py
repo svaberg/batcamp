@@ -489,6 +489,26 @@ class Octree:
         """Return exact persisted leaf-slot levels, including unused slots as `-1`."""
         return self._cell_depth[: self._leaf_slot_count]
 
+    @property
+    def cell_depth(self) -> np.ndarray:
+        """Return rebuilt runtime cell depths."""
+        return self._cell_depth
+
+    @property
+    def cell_ijk(self) -> np.ndarray:
+        """Return rebuilt runtime cell addresses."""
+        return self._cell_ijk
+
+    @property
+    def radial_edges(self) -> np.ndarray:
+        """Return finest radial edge locations for spherical trees."""
+        return self._radial_edges
+
+    @radial_edges.setter
+    def radial_edges(self, radial_edges: np.ndarray) -> None:
+        """Store finest radial edge locations for spherical trees."""
+        self._radial_edges = radial_edges
+
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
         from .persistence import OctreeState

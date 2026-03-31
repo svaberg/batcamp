@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from time import perf_counter
 
 import numpy as np
@@ -16,10 +15,7 @@ from batcamp.constants import XYZ_VARS
 
 pytestmark = [
     pytest.mark.design_lockin,
-    pytest.mark.skipif(
-        os.getenv("STARWINDS_RUN_PERF_TESTS", "0") != "1",
-        reason="Set STARWINDS_RUN_PERF_TESTS=1 to run performance checks.",
-    ),
+    pytest.mark.perf,
 ]
 
 
