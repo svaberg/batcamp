@@ -32,7 +32,7 @@ class OctreeState:
             tree_coord=str(tree.tree_coord),
             root_shape=tuple(int(v) for v in tree.root_shape),
             cell_levels=np.asarray(tree.cell_levels, dtype=np.int64),
-            cell_ijk=np.asarray(tree._cell_ijk[:leaf_row_count], dtype=np.int64),
+            cell_ijk=np.asarray(tree.cell_ijk[:leaf_row_count], dtype=np.int64),
         )
 
     def save_npz(self, path: str | Path) -> None:

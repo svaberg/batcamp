@@ -10,12 +10,6 @@ from batcamp.constants import XYZ_VARS
 from batcamp.spherical import xyz_to_rpa_components
 
 
-@pytest.fixture(scope="module")
-def regression_context(difflevels_rpa_context: dict[str, object]) -> tuple[Dataset, Octree]:
-    """Reuse session-cached difflevels dataset/tree pair."""
-    return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
-
-
 def test_xyz_to_rpa_components_stable_and_finite() -> None:
     """Regression: xyz->rpa conversion should be finite and non-recursive."""
     q = np.array([1.0, 0.0, 0.0], dtype=float)
@@ -29,9 +23,11 @@ def test_xyz_to_rpa_components_stable_and_finite() -> None:
 
 
 @pytest.mark.slow
-def test_default_tree_inference_selects_rpa_for_regression_dataset(regression_context) -> None:
+def test_default_tree_inference_selects_rpa_for_regression_dataset(
+    difflevels_rpa_case: tuple[Dataset, Octree],
+) -> None:
     """Default tree inference should stay on spherical geometry for this dataset."""
-    ds, _tree = regression_context
+    ds, _tree = difflevels_rpa_case
     tree = Octree.from_ds(ds)
     interp = OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"]))
     assert tree.tree_coord == "rpa"
@@ -43,9 +39,9 @@ def test_default_tree_inference_selects_rpa_for_regression_dataset(regression_co
 
 
 @pytest.mark.slow
-def test_lookup_outside_domain_returns_none(regression_context) -> None:
+def test_lookup_outside_domain_returns_none(difflevels_rpa_case: tuple[Dataset, Octree]) -> None:
     """Regression: lookup outside radial domain should not snap to nearest cell."""
-    _ds, tree = regression_context
+    _ds, tree = difflevels_rpa_case
     _r_lo, r_hi = tree.domain_bounds(coord="rpa")
     r_max = float(r_hi[0])
     q = np.array([r_max + 50.0, 0.0, 0.0], dtype=float)
@@ -53,9 +49,12 @@ def test_lookup_outside_domain_returns_none(regression_context) -> None:
 
 
 @pytest.mark.slow
-def test_load_uses_dataset_corners(tmp_path, regression_context) -> None:
+def test_load_uses_dataset_corners(
+    tmp_path,
+    difflevels_rpa_case: tuple[Dataset, Octree],
+) -> None:
     """Regression: loaded trees should resolve lookups from explicit point/corner geometry."""
-    ds, tree = regression_context
+    ds, tree = difflevels_rpa_case
     path = tmp_path / "tree_regression.npz"
     tree.save(path)
 

@@ -208,7 +208,22 @@ def _build_octree_state(
     @timed_info_decorator
     def infer_leaf_shape():
         if resolved_tree_coord == "rpa":
-            return infer_rpa_leaf_shape(level_shapes)
+            try:
+                return infer_rpa_leaf_shape(level_shapes)
+            except ValueError as exc:
+                if tree_coord is None:
+                    message = (
+                        "Could not build a spherical octree from these points and corners. "
+                        "The geometry was inferred as `tree_coord='rpa'`, but it does not match "
+                        "the current spherical builder assumptions."
+                    )
+                else:
+                    message = (
+                        f"Could not build a spherical octree from these points and corners with "
+                        f"`tree_coord={tree_coord!r}`. The geometry does not match the current "
+                        "spherical builder assumptions."
+                    )
+                raise ValueError(message) from exc
         return _infer_leaf_shape_from_geometry(
             cell_min,
             cell_max,

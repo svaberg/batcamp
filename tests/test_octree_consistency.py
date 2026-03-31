@@ -8,13 +8,6 @@ from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from octree_test_support import cell_bounds
 
-
-@pytest.fixture(scope="module")
-def advanced_context(difflevels_rpa_context: dict[str, object]) -> tuple[object, Octree]:
-    """Reuse session-cached difflevels dataset/tree pair."""
-    return difflevels_rpa_context["ds"], difflevels_rpa_context["tree"]
-
-
 def _select_interior_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarray:
     """Private test helper: pick deterministic random interior query points."""
     rng = np.random.default_rng(seed)
@@ -39,9 +32,9 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.slow
-def test_lookup_xyz_rpa_consistency(advanced_context) -> None:
+def test_lookup_xyz_rpa_consistency(difflevels_rpa_case: tuple[object, Octree]) -> None:
     """Many interior points should map to the same cell in xyz and rpa lookup coords."""
-    _ds, tree = advanced_context
+    _ds, tree = difflevels_rpa_case
     queries = _select_interior_queries(tree, n_query=64, seed=1)
 
     for q in queries:
@@ -53,9 +46,9 @@ def test_lookup_xyz_rpa_consistency(advanced_context) -> None:
 
 
 @pytest.mark.slow
-def test_loaded_tree_interpolator_match(advanced_context, tmp_path) -> None:
+def test_loaded_tree_interpolator_match(difflevels_rpa_case: tuple[object, Octree], tmp_path) -> None:
     """Interpolator outputs should be equal when using original vs loaded tree."""
-    ds, tree = advanced_context
+    ds, tree = difflevels_rpa_case
     path = tmp_path / "advanced_interp_tree.npz"
     tree.save(path)
     loaded = Octree.load(

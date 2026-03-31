@@ -26,7 +26,7 @@ def _attach_spherical_coord_state(tree, points: np.ndarray, corners: np.ndarray)
     valid_ids = np.flatnonzero(cell_levels >= 0)
     shifts = int(tree.max_level) - cell_levels[valid_ids]
     width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
-    r0_f = np.left_shift(tree._cell_ijk[valid_ids, AXIS0], shifts)
+    r0_f = np.left_shift(tree.cell_ijk[valid_ids, AXIS0], shifts)
     r1_f = r0_f + width_units
     n_r_edges = int(tree.leaf_shape[0]) + 1
     point_r = np.sqrt(x * x + y * y + z * z)
@@ -43,28 +43,28 @@ def _attach_spherical_coord_state(tree, points: np.ndarray, corners: np.ndarray)
     if np.any(radial_count == 0):
         missing_edge = int(np.flatnonzero(radial_count == 0)[0])
         raise ValueError(f"Spherical lookup could not reconstruct radial edge {missing_edge}.")
-    tree._radial_edges = radial_sum / radial_count
-    r_min = float(tree._radial_edges[0])
-    r_max = float(tree._radial_edges[-1])
+    tree.radial_edges = radial_sum / radial_count
+    r_min = float(tree.radial_edges[0])
+    r_max = float(tree.radial_edges[-1])
     d_polar_f = math.pi / float(int(tree.leaf_shape[1]))
     d_azimuth_f = (2.0 * math.pi) / float(int(tree.leaf_shape[2]))
-    n_octree_cells = int(tree._cell_depth.shape[0])
+    n_octree_cells = int(tree.cell_depth.shape[0])
     octree_cell_r_min = np.full(n_octree_cells, np.nan, dtype=np.float64)
     octree_cell_r_max = np.full(n_octree_cells, np.nan, dtype=np.float64)
     octree_cell_polar_min = np.full(n_octree_cells, np.nan, dtype=np.float64)
     octree_cell_polar_max = np.full(n_octree_cells, np.nan, dtype=np.float64)
     octree_cell_azimuth_start = np.full(n_octree_cells, np.nan, dtype=np.float64)
     octree_cell_azimuth_width = np.full(n_octree_cells, np.nan, dtype=np.float64)
-    occupied_ids = np.flatnonzero(tree._cell_depth >= 0)
-    cell_shift = int(tree.max_level) - tree._cell_depth[occupied_ids]
+    occupied_ids = np.flatnonzero(tree.cell_depth >= 0)
+    cell_shift = int(tree.max_level) - tree.cell_depth[occupied_ids]
     cell_width = np.left_shift(np.ones_like(cell_shift, dtype=np.int64), cell_shift)
-    cell_r0_f = np.left_shift(tree._cell_ijk[occupied_ids, AXIS0], cell_shift)
+    cell_r0_f = np.left_shift(tree.cell_ijk[occupied_ids, AXIS0], cell_shift)
     cell_r1_f = cell_r0_f + cell_width
-    cell_polar0_f = np.left_shift(tree._cell_ijk[occupied_ids, AXIS1], cell_shift)
+    cell_polar0_f = np.left_shift(tree.cell_ijk[occupied_ids, AXIS1], cell_shift)
     cell_polar1_f = cell_polar0_f + cell_width
-    cell_azimuth0_f = np.left_shift(tree._cell_ijk[occupied_ids, AXIS2], cell_shift)
-    octree_cell_r_min[occupied_ids] = tree._radial_edges[cell_r0_f]
-    octree_cell_r_max[occupied_ids] = tree._radial_edges[cell_r1_f]
+    cell_azimuth0_f = np.left_shift(tree.cell_ijk[occupied_ids, AXIS2], cell_shift)
+    octree_cell_r_min[occupied_ids] = tree.radial_edges[cell_r0_f]
+    octree_cell_r_max[occupied_ids] = tree.radial_edges[cell_r1_f]
     octree_cell_polar_min[occupied_ids] = cell_polar0_f * d_polar_f
     octree_cell_polar_max[occupied_ids] = cell_polar1_f * d_polar_f
     octree_cell_azimuth_start[occupied_ids] = np.mod(cell_azimuth0_f * d_azimuth_f, 2.0 * math.pi)

@@ -321,14 +321,6 @@ def cartesian_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator
     return ds, tree, interp
 
 
-def test_xyz_fixture_builds_tree(cartesian_octree_context) -> None:
-    """Fixture should provide a bound Cartesian tree and xyz interpolator."""
-    _ds, tree, interp = cartesian_octree_context
-    assert isinstance(tree, Octree)
-    assert tree.tree_coord == "xyz"
-    assert interp.tree is tree
-
-
 def test_xyz_lookup_hits_cell_midpoints(cartesian_octree_context) -> None:
     """Cartesian lookup should resolve each cell midpoint to its own cell id."""
     _ds, tree, _interp = cartesian_octree_context
@@ -877,7 +869,7 @@ def test_build_rejects_inconsistent_corners_for_spherical_inference() -> None:
     corners_full = np.array(ds.corners, copy=True)
     ds.corners = np.array(corners_full[:2], copy=True)
 
-    with pytest.raises(ValueError, match="Could not infer integer finest n_axis0"):
+    with pytest.raises(ValueError, match="Could not build a spherical octree"):
         _tree_from_state_build(
             np.asarray(ds.points, dtype=float),
             np.asarray(ds.corners, dtype=np.int64),
