@@ -20,23 +20,14 @@ from batcamp.constants import XYZ_VARS
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
-from resample_grid_vs_ray import _configure_progress_logging
-from resample_grid_vs_ray import _configure_builder_logging
-from resample_grid_vs_ray import _load_or_build_octree
-from resample_grid_vs_ray import _ProgressReporter
-from resample_grid_vs_ray import _resolution_ramp
-from resample_grid_vs_ray import _time_call
-from resample_grid_vs_ray import DatasetCase
-from resample_grid_vs_ray import resolve_data_file
-
-
-def _octree_prepare_detail(*, tree_source: str, tree_coord: str, no_cache: bool) -> str:
-    """Return one readable octree-prep detail string."""
-    if no_cache:
-        return f"coord={tree_coord}"
-    if tree_source == "cache":
-        return f"cached octree coord={tree_coord}"
-    return f"built octree and refreshed cache coord={tree_coord}"
+from _resample_common import _configure_progress_logging
+from _resample_common import _configure_builder_logging
+from _resample_common import _build_octree
+from _resample_common import _ProgressReporter
+from _resample_common import _resolution_ramp
+from _resample_common import _time_call
+from _resample_common import DatasetCase
+from _resample_common import resolve_data_file
 
 
 def _xy_plane_image(
@@ -464,11 +455,6 @@ def main() -> None:
         default="artifacts/resample_xy_plane",
         help="Output directory for PNGs and tables.",
     )
-    parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="Ignore any existing octree cache, rebuild fresh, and update the shared cache.",
-    )
     args = parser.parse_args()
 
     resolutions = _resolution_ramp(int(args.min_resolution), int(args.max_resolution))
@@ -478,7 +464,6 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parent
     out_root = (repo_root / args.output_dir).resolve()
-    cache_root = (repo_root / "artifacts" / "resampling_compare_octree_cache").resolve()
     progress_log_path = out_root / "progress.log"
     progress_log_path.parent.mkdir(parents=True, exist_ok=True)
     progress_log_path.write_text("", encoding="utf-8")
@@ -505,21 +490,11 @@ def main() -> None:
         ds, read_s = _time_call(Dataset.from_file, str(data_path))
         progress.complete(f"[{case.label}] read dataset", read_s)
         progress.start(f"[{case.label}] prepare octree")
-        (tree, tree_source), tree_s = _time_call(
-            _load_or_build_octree,
-            ds,
-            data_path,
-            cache_root,
-            use_cache=not bool(args.no_cache),
-        )
+        tree, tree_s = _time_call(_build_octree, ds)
         progress.complete(
             f"[{case.label}] prepare octree",
             tree_s,
-            detail=_octree_prepare_detail(
-                tree_source=tree_source,
-                tree_coord=str(tree.tree_coord),
-                no_cache=bool(args.no_cache),
-            ),
+            detail=f"coord={tree.tree_coord}",
         )
         progress.start(f"[{case.label}] build interpolator")
         interp, interp_s = _time_call(OctreeInterpolator, tree, np.asarray(ds[args.variable], dtype=float))
