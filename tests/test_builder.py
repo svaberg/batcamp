@@ -251,14 +251,14 @@ def _build_disjoint_spherical_shell_dataset() -> _FakeDataset:
             for iazimuth in range(azimuth_edges.size - 1):
                 corners.append(
                     [
-                        int(node_index[0, ipolar, iazimuth]),
-                        int(node_index[1, ipolar, iazimuth]),
-                        int(node_index[1, ipolar + 1, iazimuth]),
                         int(node_index[0, ipolar + 1, iazimuth]),
-                        int(node_index[0, ipolar, iazimuth + 1]),
-                        int(node_index[1, ipolar, iazimuth + 1]),
+                        int(node_index[1, ipolar + 1, iazimuth]),
                         int(node_index[1, ipolar + 1, iazimuth + 1]),
                         int(node_index[0, ipolar + 1, iazimuth + 1]),
+                        int(node_index[0, ipolar, iazimuth]),
+                        int(node_index[1, ipolar, iazimuth]),
+                        int(node_index[1, ipolar, iazimuth + 1]),
+                        int(node_index[0, ipolar, iazimuth + 1]),
                     ]
                 )
 
