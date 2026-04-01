@@ -11,6 +11,7 @@ from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
 from octree_test_support import cell_bounds
+from octree_test_support import find_shared_face_pair
 
 
 def _build_uniform_spherical_hex_dataset(
@@ -132,7 +133,6 @@ def _interpolation_valid_cells(
     good = [int(cell_id) for cell_id in ids.tolist() if np.unique(interp.tree.corners[int(cell_id)]).size == 8]
     return np.array(good, dtype=np.int64)
 
-
 def test_lookup_hits_cell_midpoints(synthetic_context) -> None:
     """Lookup of each synthetic cell midpoint should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context
@@ -192,6 +192,82 @@ def test_interp_matches_linear_field_rpa_wrap(synthetic_context) -> None:
 
     assert np.array_equal(cell_ids, choose)
     assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
+
+
+def test_interp_is_continuous_across_shared_azimuth_face(synthetic_context) -> None:
+    """Spherical interpolation should stay continuous across one shared azimuth face."""
+    ds, tree, _field, coeffs = synthetic_context
+    a, b, c, d = coeffs
+    interp = OctreeInterpolator(tree, np.asarray(ds["LinField"]))
+    valid = _interpolation_valid_cells(tree, interp=interp)
+    left_id, right_id, lo_left, hi_left = find_shared_face_pair(tree, valid, face_axis=2)
+    r = 0.5 * (float(lo_left[0]) + float(hi_left[0]))
+    polar = 0.5 * (float(lo_left[1]) + float(hi_left[1]))
+    face = float(hi_left[2])
+    eps = 1.0e-8 * float(hi_left[2] - lo_left[2])
+    q = np.array([[r, polar, face - eps], [r, polar, face + eps]], dtype=float)
+    vals, cell_ids = interp(q, query_coord="rpa", return_cell_ids=True)
+    expected = a * q[:, 0] + b * q[:, 1] + c * q[:, 2] + d
+
+    assert np.array_equal(cell_ids, np.array([left_id, right_id], dtype=np.int64))
+    assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
+    assert np.allclose(vals[0], vals[1], atol=1e-8, rtol=0.0)
+
+
+def test_interp_is_continuous_across_shared_polar_face(synthetic_context) -> None:
+    """Spherical interpolation should stay continuous across one shared polar face."""
+    ds, tree, _field, coeffs = synthetic_context
+    a, b, c, d = coeffs
+    interp = OctreeInterpolator(tree, np.asarray(ds["LinField"]))
+    valid = _interpolation_valid_cells(tree, interp=interp)
+    left_id, right_id, lo_left, hi_left = find_shared_face_pair(tree, valid, face_axis=1)
+    r = 0.5 * (float(lo_left[0]) + float(hi_left[0]))
+    azimuth = float(lo_left[2] + 0.37 * ((hi_left[2] - lo_left[2]) % (2.0 * math.pi)))
+    face = float(hi_left[1])
+    eps = 1.0e-8 * float(hi_left[1] - lo_left[1])
+    q = np.array([[r, face - eps, azimuth], [r, face + eps, azimuth]], dtype=float)
+    vals, cell_ids = interp(q, query_coord="rpa", return_cell_ids=True)
+    expected = a * q[:, 0] + b * q[:, 1] + c * q[:, 2] + d
+
+    assert np.array_equal(cell_ids, np.array([left_id, right_id], dtype=np.int64))
+    assert np.allclose(vals, expected, atol=1e-9, rtol=0.0)
+    assert np.allclose(vals[0], vals[1], atol=1e-8, rtol=0.0)
+
+
+def test_interp_is_azimuth_invariant_on_pole_for_single_valued_field(synthetic_context) -> None:
+    """One single-valued field should stay constant when azimuth varies at the north pole."""
+    ds, tree, _field, _coeffs = synthetic_context
+    interp = OctreeInterpolator(tree, np.asarray(ds[XYZ_VARS[2]]))
+    r_query = 2.25
+    azimuth = np.linspace(0.0, 2.0 * math.pi, 33, endpoint=False, dtype=float)
+    values, cell_ids = interp(
+        np.full_like(azimuth, r_query),
+        np.zeros_like(azimuth),
+        azimuth,
+        query_coord="rpa",
+        return_cell_ids=True,
+    )
+
+    assert np.all(cell_ids >= 0)
+    assert np.allclose(values, values[0], atol=1e-12, rtol=0.0)
+    assert np.allclose(values, r_query, atol=1e-12, rtol=0.0)
+
+
+def test_rpa_array_queries_match_split_component_queries(synthetic_context) -> None:
+    """One `(…, 3)` rpa query array should match the split-component rpa call exactly."""
+    ds, tree, _field, _coeffs = synthetic_context
+    interp = OctreeInterpolator(tree, np.asarray(ds["LinField"]))
+    polar = np.linspace(0.0, math.pi, 19, dtype=float)
+    azimuth = np.linspace(0.0, 2.0 * math.pi, 37, endpoint=False, dtype=float)
+    aa, pp = np.meshgrid(azimuth, polar, indexing="xy")
+    rr = np.full_like(aa, 2.25)
+    q = np.stack((rr, pp, aa), axis=-1)
+
+    vals_array, cells_array = interp(q, query_coord="rpa", return_cell_ids=True)
+    vals_split, cells_split = interp(rr, pp, aa, query_coord="rpa", return_cell_ids=True)
+
+    assert np.array_equal(cells_array, cells_split)
+    assert np.allclose(vals_array, vals_split, atol=1e-12, rtol=0.0)
 
 
 def test_vector_interp_shape_and_values(synthetic_context) -> None:

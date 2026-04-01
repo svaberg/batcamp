@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _TWO_PI = 2.0 * math.pi
 _TINY = np.finfo(np.float64).tiny
-_BRICK_TRILINEAR_BITS = np.array(
+_XYZ_TRILINEAR_BITS = np.array(
     [
         [0, 0, 0],
         [1, 0, 0],
@@ -32,6 +32,21 @@ _BRICK_TRILINEAR_BITS = np.array(
         [1, 0, 1],
         [1, 1, 1],
         [0, 1, 1],
+    ],
+    dtype=np.int8,
+)
+# BATSRUS spherical cells arrive in a fixed corner order that differs from the
+# plain `(axis0, axis1, axis2)` low/high bit order used by Cartesian hexes.
+_RPA_TRILINEAR_BITS = np.array(
+    [
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+        [0, 1, 1],
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
     ],
     dtype=np.int8,
 )
@@ -46,8 +61,9 @@ def _accumulate_trilinear(
     frac_axis2: float,
     corners: np.ndarray,
     point_values: np.ndarray,
+    bits: np.ndarray,
 ) -> None:
-    """Write one trilinear interpolation row from Tecplot/BATSRUS brick-ordered corners."""
+    """Write one trilinear interpolation row from one 8-corner low/high bit table."""
     cell_id = int(cell_id)
     frac_axis0_lo = 1.0 - frac_axis0
     frac_axis1_lo = 1.0 - frac_axis1
@@ -55,9 +71,9 @@ def _accumulate_trilinear(
     cell_corner_ids = corners[cell_id]
     out_row[:] = 0.0
     for corner_ord in range(8):
-        bit0 = _BRICK_TRILINEAR_BITS[corner_ord, AXIS0]
-        bit1 = _BRICK_TRILINEAR_BITS[corner_ord, AXIS1]
-        bit2 = _BRICK_TRILINEAR_BITS[corner_ord, AXIS2]
+        bit0 = bits[corner_ord, AXIS0]
+        bit1 = bits[corner_ord, AXIS1]
+        bit2 = bits[corner_ord, AXIS2]
         weight = frac_axis0 if bit0 else frac_axis0_lo
         weight *= frac_axis1 if bit1 else frac_axis1_lo
         weight *= frac_axis2 if bit2 else frac_axis2_lo
@@ -119,6 +135,7 @@ def _interp_cell_rpa(
         frac_a,
         corners,
         point_values,
+        _RPA_TRILINEAR_BITS,
     )
 
 
@@ -165,6 +182,7 @@ def _interp_cell_xyz(
         frac_z,
         corners,
         point_values,
+        _XYZ_TRILINEAR_BITS,
     )
 
 

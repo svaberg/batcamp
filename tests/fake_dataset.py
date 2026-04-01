@@ -60,14 +60,14 @@ def build_spherical_hex_mesh(
             for iazimuth in range(int(nazimuth)):
                 corners.append(
                     [
-                        int(node_index[ir, ipolar, iazimuth]),
-                        int(node_index[ir + 1, ipolar, iazimuth]),
-                        int(node_index[ir + 1, ipolar + 1, iazimuth]),
                         int(node_index[ir, ipolar + 1, iazimuth]),
-                        int(node_index[ir, ipolar, iazimuth + 1]),
-                        int(node_index[ir + 1, ipolar, iazimuth + 1]),
+                        int(node_index[ir + 1, ipolar + 1, iazimuth]),
                         int(node_index[ir + 1, ipolar + 1, iazimuth + 1]),
                         int(node_index[ir, ipolar + 1, iazimuth + 1]),
+                        int(node_index[ir, ipolar, iazimuth]),
+                        int(node_index[ir + 1, ipolar, iazimuth]),
+                        int(node_index[ir + 1, ipolar, iazimuth + 1]),
+                        int(node_index[ir, ipolar, iazimuth + 1]),
                     ]
                 )
     return np.array(xyz_list, dtype=float), np.array(corners, dtype=np.int64)
