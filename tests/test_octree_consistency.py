@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
@@ -31,7 +30,6 @@ def _xyz_to_rpa_numpy(q_xyz: np.ndarray) -> np.ndarray:
     return np.array([r, polar, azimuth], dtype=float)
 
 
-@pytest.mark.slow
 def test_lookup_xyz_rpa_consistency(difflevels_rpa_case: tuple[object, Octree]) -> None:
     """Many interior points should map to the same cell in xyz and rpa lookup coords."""
     _ds, tree = difflevels_rpa_case
@@ -45,7 +43,6 @@ def test_lookup_xyz_rpa_consistency(difflevels_rpa_case: tuple[object, Octree]) 
         assert cell_id_xyz == cell_id_rpa
 
 
-@pytest.mark.slow
 def test_loaded_tree_interpolator_match(difflevels_rpa_case: tuple[object, Octree], tmp_path) -> None:
     """Interpolator outputs should be equal when using original vs loaded tree."""
     ds, tree = difflevels_rpa_case

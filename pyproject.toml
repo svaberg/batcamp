@@ -44,11 +44,9 @@ include = ["batcamp*"]
 license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
-addopts = "-m 'not slow'"
 pythonpath = [".", "tests"]
 markers = [
-  "slow: expensive tests excluded from the default unit-test run",
   "design_lockin: implementation-locking tests",
-  "pooch: tests that fetch sample files via pooch/network (opt-in with --run-pooch)",
-  "perf: performance-sensitive tests (opt-in with --run-perf)",
+  "pooch: tests that fetch sample files via pooch/network",
+  "perf: performance-sensitive tests",
 ]

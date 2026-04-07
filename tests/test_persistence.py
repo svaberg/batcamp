@@ -60,7 +60,6 @@ def test_save_load_roundtrip_preserves_core_arrays(tree_dataset_pair, tmp_path) 
     assert int(tree.lookup_points(q_xyz, coord="xyz")[0]) == int(loaded.lookup_points(q_xyz, coord="xyz")[0])
 
 
-@pytest.mark.slow
 def test_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> None:
     """Loading requires explicit point/corner geometry so lookup remains fully bound."""
     tree, ds = tree_dataset_pair
@@ -71,7 +70,6 @@ def test_load_requires_dataset_binding(tree_dataset_pair, tmp_path) -> None:
     assert int(loaded.lookup_points(np.array([1.0, 0.0, 0.0], dtype=float), coord="xyz")[0]) >= 0
 
 
-@pytest.mark.slow
 def test_persistence_omits_legacy_corners_payload(tree_dataset_pair, tmp_path) -> None:
     """Persistence file should contain only minimal saved state."""
     tree, ds = tree_dataset_pair

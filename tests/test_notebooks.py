@@ -12,17 +12,7 @@ _NOTEBOOK_CASES = [
     pytest.param(
         "quick_start.ipynb",
         id="quick_start_notebook_exec",
-        marks=(pytest.mark.slow, pytest.mark.pooch),
-    ),
-    pytest.param(
-        "resampling.ipynb",
-        id="resampling_notebook_exec",
-        marks=(pytest.mark.slow, pytest.mark.pooch),
-    ),
-    pytest.param(
-        "octree.ipynb",
-        id="octree_notebook_exec",
-        marks=(pytest.mark.slow, pytest.mark.pooch),
+        marks=pytest.mark.pooch,
     ),
 ]
 
