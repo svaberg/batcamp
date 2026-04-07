@@ -10,7 +10,6 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
-from .constants import SUPPORTED_TREE_COORDS
 from .shared_types import TreeCoord
 from .timing import timed_info_decorator
 
@@ -163,11 +162,6 @@ def _build_octree_state(
         return infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
 
     resolved_tree_coord = resolve_tree_coord()
-    if resolved_tree_coord not in SUPPORTED_TREE_COORDS:
-        raise ValueError(
-            f"Unsupported tree_coord '{resolved_tree_coord}'; "
-            f"expected one of {SUPPORTED_TREE_COORDS}."
-        )
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
     if resolved_tree_coord == "rpa":
@@ -206,7 +200,7 @@ def _build_octree_state(
                 "points": points,
                 "corners": corners_arr,
             }
-    else:
+    elif resolved_tree_coord == "xyz":
         from .builder_cartesian import infer_leaf_shape
         from .builder_cartesian import infer_levels
         from .builder_cartesian import populate_tree_state
@@ -231,6 +225,10 @@ def _build_octree_state(
                 "cell_min": cell_min,
                 "cell_max": cell_max,
             }
+    else:
+        raise ValueError(
+            f"Unsupported tree_coord '{resolved_tree_coord}'; expected 'rpa' or 'xyz'."
+        )
 
     levels, max_level, leaf_shape, populate_kwargs = prepare_build_state()
     logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
