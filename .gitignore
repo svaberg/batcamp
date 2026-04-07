@@ -6,3 +6,4 @@ __pycache__/
 
 # Local copied data for demos/tests (not versioned)
 sample_data/
+artifacts/
