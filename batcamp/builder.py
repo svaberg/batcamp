@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
 from typing import TypeAlias
 
 import numpy as np
@@ -16,6 +17,9 @@ from .octree import Octree
 from .octree import timed_info_decorator
 from .shared_types import GridShape
 from .shared_types import TreeCoord
+
+if TYPE_CHECKING:
+    from .persistence import OctreeState
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""
