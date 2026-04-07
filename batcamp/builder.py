@@ -194,9 +194,6 @@ def _build_octree_state(
             )
             return levels, max_level
 
-        levels, max_level = infer_levels()
-        logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
-
         @timed_info_decorator
         def infer_leaf_shape():
             try:
@@ -216,8 +213,16 @@ def _build_octree_state(
                     )
                 raise ValueError(message) from exc
 
-        leaf_shape = infer_leaf_shape()
-        logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
+        @timed_info_decorator
+        def populate_tree_state(max_level_abs: int, levels_abs: np.ndarray, leaf_shape: tuple[int, int, int]):
+            return populate_rpa_tree_state(
+                leaf_shape=leaf_shape,
+                max_level=max_level_abs,
+                cell_levels=levels_abs,
+                axis_tol=axis_tol,
+                points=points,
+                corners=corners_arr,
+            )
     else:
         from .builder_cartesian import cell_geometry
         from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
@@ -239,9 +244,6 @@ def _build_octree_state(
             )
             return levels, max_level
 
-        levels, max_level = infer_levels()
-        logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
-
         @timed_info_decorator
         def infer_leaf_shape():
             return infer_xyz_leaf_shape(
@@ -252,8 +254,21 @@ def _build_octree_state(
                 max_level=max_level,
             )
 
-        leaf_shape = infer_leaf_shape()
-        logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
+        @timed_info_decorator
+        def populate_tree_state(max_level_abs: int, levels_abs: np.ndarray, leaf_shape: tuple[int, int, int]):
+            return populate_xyz_tree_state(
+                leaf_shape=leaf_shape,
+                max_level=max_level_abs,
+                cell_levels=levels_abs,
+                cell_min=cell_min,
+                cell_max=cell_max,
+            )
+
+    levels, max_level = infer_levels()
+    logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
+
+    leaf_shape = infer_leaf_shape()
+    logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
     @timed_info_decorator
     def normalize_levels():
@@ -292,31 +307,11 @@ def _build_octree_state(
         int(max_level + level_offset),
     )
 
-    if resolved_tree_coord == "rpa":
-
-        @timed_info_decorator
-        def populate_tree_state():
-            return populate_rpa_tree_state(
-                leaf_shape=leaf_shape,
-                max_level=int(max_level + level_offset),
-                cell_levels=levels_abs,
-                axis_tol=axis_tol,
-                points=points,
-                corners=corners_arr,
-            )
-    else:
-
-        @timed_info_decorator
-        def populate_tree_state():
-            return populate_xyz_tree_state(
-                leaf_shape=leaf_shape,
-                max_level=int(max_level + level_offset),
-                cell_levels=levels_abs,
-                cell_min=cell_min,
-                cell_max=cell_max,
-            )
-
-    state_payload = populate_tree_state()
+    state_payload = populate_tree_state(
+        int(max_level + level_offset),
+        levels_abs,
+        leaf_shape,
+    )
     logger.info("populate tree state: coord=%s", resolved_tree_coord)
     from .persistence import OctreeState
 
