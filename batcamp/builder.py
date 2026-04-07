@@ -11,7 +11,6 @@ import numpy as np
 from batread import Dataset
 
 from .shared_types import TreeCoord
-from .timing import timed_info_decorator
 
 if TYPE_CHECKING:
     from .persistence import OctreeState
@@ -157,11 +156,7 @@ def _build_octree_state(
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
 
-    @timed_info_decorator
-    def resolve_tree_coord():
-        return infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
-
-    resolved_tree_coord = resolve_tree_coord()
+    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
     if resolved_tree_coord == "rpa":
@@ -169,85 +164,74 @@ def _build_octree_state(
         from .builder_spherical import infer_level_shapes
         from .builder_spherical import populate_tree_state
 
-        @timed_info_decorator
-        def prepare_build_state():
-            level_shapes, levels, max_level = infer_level_shapes(
-                points,
-                corners_arr,
-                cell_levels=cell_levels,
-                axis_tol=axis_tol,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
-            leaf_shape = infer_leaf_shape(level_shapes)
-            return levels, max_level, leaf_shape, {
-                "axis_tol": axis_tol,
-                "points": points,
-                "corners": corners_arr,
-            }
+        level_shapes, levels, max_level = infer_level_shapes(
+            points,
+            corners_arr,
+            cell_levels=cell_levels,
+            axis_tol=axis_tol,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
+        )
+        leaf_shape = infer_leaf_shape(level_shapes)
+        populate_kwargs = {
+            "axis_tol": axis_tol,
+            "points": points,
+            "corners": corners_arr,
+        }
     elif resolved_tree_coord == "xyz":
         from .builder_cartesian import infer_leaf_shape
         from .builder_cartesian import infer_levels
         from .builder_cartesian import populate_tree_state
 
-        @timed_info_decorator
-        def prepare_build_state():
-            levels, max_level, cell_min, cell_max, cell_span = infer_levels(
-                points,
-                corners_arr,
-                cell_levels=cell_levels,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
-            leaf_shape = infer_leaf_shape(
-                cell_min,
-                cell_max,
-                cell_span,
-                levels,
-                max_level=max_level,
-            )
-            return levels, max_level, leaf_shape, {
-                "cell_min": cell_min,
-                "cell_max": cell_max,
-            }
+        levels, max_level, cell_min, cell_max, cell_span = infer_levels(
+            points,
+            corners_arr,
+            cell_levels=cell_levels,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
+        )
+        leaf_shape = infer_leaf_shape(
+            cell_min,
+            cell_max,
+            cell_span,
+            levels,
+            max_level=max_level,
+        )
+        populate_kwargs = {
+            "cell_min": cell_min,
+            "cell_max": cell_max,
+        }
     else:
         raise ValueError(
             f"Unsupported tree_coord '{resolved_tree_coord}'; expected 'rpa' or 'xyz'."
         )
-
-    levels, max_level, leaf_shape, populate_kwargs = prepare_build_state()
     logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
     logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
-    @timed_info_decorator
-    def normalize_levels():
-        depth: int | None = None
-        for axis_size in leaf_shape:
-            axis_depth = 0
-            value = int(axis_size)
-            while value > 0 and (value % 2) == 0:
-                axis_depth += 1
-                value //= 2
-            if depth is None or axis_depth < depth:
-                depth = axis_depth
-        if depth is None:
-            raise ValueError(f"Invalid leaf_shape={leaf_shape}.")
-        root_shape = (
-            int(leaf_shape[0]) >> depth,
-            int(leaf_shape[1]) >> depth,
-            int(leaf_shape[2]) >> depth,
+    depth: int | None = None
+    for axis_size in leaf_shape:
+        axis_depth = 0
+        value = int(axis_size)
+        while value > 0 and (value % 2) == 0:
+            axis_depth += 1
+            value //= 2
+        if depth is None or axis_depth < depth:
+            depth = axis_depth
+    if depth is None:
+        raise ValueError(f"Invalid leaf_shape={leaf_shape}.")
+    root_shape = (
+        int(leaf_shape[0]) >> depth,
+        int(leaf_shape[1]) >> depth,
+        int(leaf_shape[2]) >> depth,
+    )
+    level_offset = int(depth) - int(max_level)
+    if level_offset < 0:
+        raise ValueError(
+            f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
         )
-        level_offset = int(depth) - int(max_level)
-        if level_offset < 0:
-            raise ValueError(
-                f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
-            )
-        levels_arr = np.asarray(levels, dtype=np.int64)
-        levels_abs = np.array(levels_arr, copy=True)
-        levels_abs[levels_abs >= 0] += int(level_offset)
-        return root_shape, depth, levels_abs, level_offset
-
-    root_shape, depth, levels_abs, level_offset = normalize_levels()
+    levels_arr = np.asarray(levels, dtype=np.int64)
+    levels_abs = np.array(levels_arr, copy=True)
+    levels_abs[levels_abs >= 0] += int(level_offset)
     logger.info(
         "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
         resolved_tree_coord,
