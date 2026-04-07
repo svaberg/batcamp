@@ -90,7 +90,13 @@ def _find_cells(
                 cell_id = -1
             else:
                 current = int(hint_cell_id)
-                while current >= 0 and not _contains_box(q, cell_bounds[current], axis2_period, axis2_periodic, 1.0e-10):
+                while current >= 0 and not _contains_box(
+                    q,
+                    cell_bounds[current],
+                    axis2_period,
+                    axis2_periodic,
+                    1.0e-10,
+                ):
                     current = int(cell_parent[current])
 
                 if current < 0:
