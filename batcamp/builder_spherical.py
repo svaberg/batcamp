@@ -247,8 +247,8 @@ def infer_level_shapes(
         cell_levels=cell_levels,
         expected_shape=auto_levels.shape,
     )
-    level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
     try:
+        level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
         infer_leaf_shape(level_shapes)
     except ValueError as exc:
         raise ValueError(
