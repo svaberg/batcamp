@@ -9,6 +9,7 @@ and writes plots and timing reports under `artifacts/`.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import time
 
 import matplotlib.pyplot as plt

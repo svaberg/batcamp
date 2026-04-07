@@ -7,6 +7,7 @@ from functools import wraps
 import logging
 from pathlib import Path
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 from batread import Dataset
@@ -18,6 +19,9 @@ from .constants import SUPPORTED_TREE_COORDS
 from .shared_types import GridShape
 from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
+
+if TYPE_CHECKING:
+    from .persistence import OctreeState
 
 logger = logging.getLogger(__name__)
 
