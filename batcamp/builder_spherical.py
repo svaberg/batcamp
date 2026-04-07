@@ -248,6 +248,13 @@ def infer_level_shapes(
         expected_shape=auto_levels.shape,
     )
     level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
+    try:
+        infer_leaf_shape(level_shapes)
+    except ValueError as exc:
+        raise ValueError(
+            "Could not build a spherical octree from these points and corners. "
+            "The geometry does not match the current spherical builder assumptions."
+        ) from exc
     return level_shapes, levels, max_level
 
 
