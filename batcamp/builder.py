@@ -224,7 +224,6 @@ def _build_octree_state(
                 corners=corners_arr,
             )
     else:
-        from .builder_cartesian import cell_geometry
         from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
         from .builder_cartesian import infer_levels as infer_xyz_levels
         from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
@@ -232,12 +231,9 @@ def _build_octree_state(
         @timed_info_decorator
         def infer_levels():
             nonlocal cell_min, cell_max, cell_span
-            cell_min, cell_max, cell_span = cell_geometry(
+            levels, max_level, cell_min, cell_max, cell_span = infer_xyz_levels(
                 points,
                 corners_arr,
-            )
-            levels, max_level = infer_xyz_levels(
-                cell_span,
                 cell_levels=cell_levels,
                 level_rtol=level_rtol,
                 level_atol=level_atol,
