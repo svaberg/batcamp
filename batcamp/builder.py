@@ -149,10 +149,10 @@ def _build_octree_state(
     cell_levels: np.ndarray | None = None,
 ) -> "OctreeState":
     """Infer exact octree state from explicit points/corners."""
-    from .builder_cartesian import cartesian_cell_geometry
-    from .builder_cartesian import _infer_leaf_shape_from_geometry
-    from .builder_cartesian import _infer_levels_from_geometry
-    from .builder_cartesian import _populate_tree_state_from_geometry
+    from .builder_cartesian import cell_geometry
+    from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
+    from .builder_cartesian import infer_levels as infer_xyz_levels
+    from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
     from .builder_spherical import infer_leaf_shape as infer_rpa_leaf_shape
     from .builder_spherical import infer_level_shapes as infer_rpa_level_shapes
     from .builder_spherical import populate_tree_state as populate_rpa_tree_state
@@ -194,11 +194,11 @@ def _build_octree_state(
                 level_atol=level_atol,
             )
         else:
-            cell_min, cell_max, cell_span = cartesian_cell_geometry(
+            cell_min, cell_max, cell_span = cell_geometry(
                 points,
                 corners_arr,
             )
-            levels, max_level = _infer_levels_from_geometry(
+            levels, max_level = infer_xyz_levels(
                 cell_span,
                 cell_levels=cell_levels,
                 level_rtol=level_rtol,
@@ -228,7 +228,7 @@ def _build_octree_state(
                         "spherical builder assumptions."
                     )
                 raise ValueError(message) from exc
-        return _infer_leaf_shape_from_geometry(
+        return infer_xyz_leaf_shape(
             cell_min,
             cell_max,
             cell_span,
@@ -287,7 +287,7 @@ def _build_octree_state(
                 points=points,
                 corners=corners_arr,
             )
-        return _populate_tree_state_from_geometry(
+        return populate_xyz_tree_state(
             leaf_shape=leaf_shape,
             max_level=int(max_level + level_offset),
             cell_levels=levels_abs,

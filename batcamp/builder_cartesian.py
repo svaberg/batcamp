@@ -10,7 +10,7 @@ from .builder import median_positive
 from .builder import _resolve_cell_levels
 
 
-def cartesian_cell_geometry(
+def cell_geometry(
     points: np.ndarray,
     corners: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -62,7 +62,7 @@ def infer_xyz_levels_from_cell_spans(
     return levels
 
 
-def _infer_levels_from_geometry(
+def infer_levels(
     cell_span: np.ndarray,
     *,
     cell_levels: np.ndarray | None = None,
@@ -86,7 +86,7 @@ def _infer_levels_from_geometry(
     )
 
 
-def _infer_xyz_level_shapes_from_geometry(
+def infer_level_shapes(
     cell_min: np.ndarray,
     cell_max: np.ndarray,
     cell_span: np.ndarray,
@@ -128,7 +128,7 @@ def _infer_xyz_level_shapes_from_geometry(
     return out
 
 
-def _infer_leaf_shape_from_geometry(
+def infer_leaf_shape(
     cell_min: np.ndarray,
     cell_max: np.ndarray,
     cell_span: np.ndarray,
@@ -155,7 +155,7 @@ def _infer_leaf_shape_from_geometry(
     return n_x, n_y, n_z
 
 
-def _populate_tree_state_from_geometry(
+def populate_tree_state(
     *,
     leaf_shape: tuple[int, int, int],
     max_level: int,
