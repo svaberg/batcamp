@@ -102,7 +102,7 @@ def _resolve_cell_levels(
 
 
 def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
-    """Warn when `ds.aux['BLOCKS']` exists but conflicts with dataset cell count."""
+    """Warn when BLOCKS metadata is malformed or disagrees with the dataset cell count."""
     raw = ds.aux.get("BLOCKS")
     if raw is None:
         return
