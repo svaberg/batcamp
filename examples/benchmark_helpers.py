@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared helpers for the remaining resampling benchmark scripts."""
+"""Shared helpers for the benchmark scripts in `examples/`."""
 
 from __future__ import annotations
 
