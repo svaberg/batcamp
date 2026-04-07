@@ -69,8 +69,8 @@ def infer_levels(
     cell_levels: np.ndarray | None = None,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
-) -> tuple[np.ndarray, int, np.ndarray, np.ndarray, np.ndarray]:
-    """Infer or validate Cartesian levels and return the per-cell Cartesian geometry."""
+) -> tuple[np.ndarray, int, tuple[int, int, int]]:
+    """Infer or validate Cartesian levels and return the finest Cartesian shape."""
     cell_min, cell_max, cell_span = cell_geometry(points, corners)
     inferred_levels: np.ndarray | None = None
     if cell_levels is None:
@@ -88,7 +88,7 @@ def infer_levels(
     )
     try:
         infer_level_shapes(cell_min, cell_max, cell_span, levels)
-        infer_leaf_shape(
+        leaf_shape = infer_leaf_shape(
             cell_min,
             cell_max,
             cell_span,
@@ -100,7 +100,7 @@ def infer_levels(
             "Could not build a Cartesian octree from these points and corners. "
             "The geometry does not match the current Cartesian builder assumptions."
         ) from exc
-    return levels, max_level, cell_min, cell_max, cell_span
+    return levels, max_level, leaf_shape
 
 
 def infer_level_shapes(
@@ -177,10 +177,14 @@ def populate_tree_state(
     leaf_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray,
-    cell_min: np.ndarray,
-    cell_max: np.ndarray,
+    points: np.ndarray,
+    corners: np.ndarray,
 ) -> dict[str, object]:
-    """Return exact Cartesian octree state from precomputed per-cell bounds."""
+    """Return exact Cartesian octree state."""
+    cell_min, cell_max, _cell_span = cell_geometry(
+        np.asarray(points, dtype=np.float64),
+        np.asarray(corners, dtype=np.int64),
+    )
     xyz_min = np.min(cell_min, axis=0).astype(float, copy=False)
     xyz_max = np.max(cell_max, axis=0).astype(float, copy=False)
     xyz_span = np.maximum(xyz_max - xyz_min, np.finfo(float).tiny)

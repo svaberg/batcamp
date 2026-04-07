@@ -225,7 +225,7 @@ def infer_level_angular_shapes(
     return out
 
 
-def infer_level_shapes(
+def infer_levels(
     points: np.ndarray,
     corners: np.ndarray,
     *,
@@ -233,8 +233,8 @@ def infer_level_shapes(
     axis_tol: float = DEFAULT_AXIS_TOL,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
-) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
-    """Infer spherical level-shape map and validated levels."""
+) -> tuple[np.ndarray, int, tuple[int, int, int]]:
+    """Infer spherical levels and return the finest spherical shape."""
     azimuth_span, _azimuth_center, auto_levels, _expected, _coarse = compute_azimuth_spans_and_levels(
         points,
         corners=corners,
@@ -249,13 +249,13 @@ def infer_level_shapes(
     )
     try:
         level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
-        infer_leaf_shape(level_shapes)
+        leaf_shape = infer_leaf_shape(level_shapes)
     except ValueError as exc:
         raise ValueError(
             "Could not build a spherical octree from these points and corners. "
             "The geometry does not match the current spherical builder assumptions."
         ) from exc
-    return level_shapes, levels, max_level
+    return levels, max_level, leaf_shape
 
 
 def infer_leaf_shape(
