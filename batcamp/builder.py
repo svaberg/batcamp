@@ -256,7 +256,7 @@ def _build_octree_state(
         int(max_level + level_offset),
     )
 
-    state_payload = populate_tree_state(
+    built_state = populate_tree_state(
         leaf_shape=leaf_shape,
         max_level=int(max_level + level_offset),
         cell_levels=levels_abs,
@@ -264,9 +264,12 @@ def _build_octree_state(
     )
     logger.info("populate tree state: coord=%s", resolved_tree_coord)
     from .persistence import OctreeState
+    cell_levels = np.asarray(built_state["cell_levels"], dtype=np.int64)
+    cell_ijk = np.asarray(built_state["cell_ijk"], dtype=np.int64)
 
     return OctreeState(
         tree_coord=resolved_tree_coord,
         root_shape=tuple(int(v) for v in root_shape),
-        **state_payload,
+        cell_levels=cell_levels,
+        cell_ijk=cell_ijk,
     )
