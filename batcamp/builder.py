@@ -179,22 +179,7 @@ def _build_octree_state(
                 level_rtol=level_rtol,
                 level_atol=level_atol,
             )
-            try:
-                leaf_shape = infer_leaf_shape(level_shapes)
-            except ValueError as exc:
-                if tree_coord is None:
-                    message = (
-                        "Could not build a spherical octree from these points and corners. "
-                        "The geometry was inferred as `tree_coord='rpa'`, but it does not match "
-                        "the current spherical builder assumptions."
-                    )
-                else:
-                    message = (
-                        f"Could not build a spherical octree from these points and corners with "
-                        f"`tree_coord={tree_coord!r}`. The geometry does not match the current "
-                        "spherical builder assumptions."
-                    )
-                raise ValueError(message) from exc
+            leaf_shape = infer_leaf_shape(level_shapes)
             return levels, max_level, leaf_shape, {
                 "axis_tol": axis_tol,
                 "points": points,
