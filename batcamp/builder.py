@@ -104,8 +104,8 @@ def _resolve_cell_levels(
 
 def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
     """Warn when `ds.aux['BLOCKS']` exists but conflicts with dataset cell count."""
-    aux = getattr(ds, "aux", None)
-    if not hasattr(aux, "get"):
+    aux = ds.aux
+    if aux is None:
         return
     raw = aux.get("BLOCKS")
     if raw is None:
