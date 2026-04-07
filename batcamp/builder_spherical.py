@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .builder import DEFAULT_AXIS_RHO_TOL
+from .builder import DEFAULT_AXIS_TOL
 from .builder import LevelShapeStatsMap
 from .builder import median_positive
 from .builder import _resolve_cell_levels
@@ -156,7 +156,7 @@ def compute_azimuth_spans_and_levels(
     corners: np.ndarray,
     rtol: float = 1e-4,
     atol: float = 1e-9,
-    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    axis_tol: float = DEFAULT_AXIS_TOL,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     """Compute per-cell azimuth spans and inferred dyadic refinement levels."""
     corners_arr = np.asarray(corners, dtype=np.int64)
@@ -167,8 +167,8 @@ def compute_azimuth_spans_and_levels(
 
     azimuth = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
     cell_azimuth = azimuth[corners_arr]
-    rho = np.hypot(points[:, 0], points[:, 1])
-    axis_mask = rho[corners_arr] <= float(axis_rho_tol)
+    cyl_radius = np.hypot(points[:, 0], points[:, 1])
+    axis_mask = cyl_radius[corners_arr] <= axis_tol
     azimuth_span, azimuth_center = circular_span_and_mean(
         cell_azimuth,
         ignore_mask=axis_mask,
@@ -230,7 +230,7 @@ def infer_level_shapes(
     corners: np.ndarray,
     *,
     cell_levels: np.ndarray | None = None,
-    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    axis_tol: float = DEFAULT_AXIS_TOL,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
 ) -> tuple[LevelShapeStatsMap, np.ndarray, int]:
@@ -240,7 +240,7 @@ def infer_level_shapes(
         corners=corners,
         rtol=level_rtol,
         atol=level_atol,
-        axis_rho_tol=axis_rho_tol,
+        axis_tol=axis_tol,
     )
     levels, max_level = _resolve_cell_levels(
         inferred_levels=auto_levels,
@@ -280,7 +280,7 @@ def populate_tree_state(
     leaf_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray | None,
-    axis_rho_tol: float,
+    axis_tol: float,
     points: np.ndarray,
     corners: np.ndarray,
 ) -> dict[str, object]:
@@ -303,8 +303,8 @@ def populate_tree_state(
     cell_polar_min = np.min(polar_points[corners_arr], axis=1)
     cell_polar_max = np.max(polar_points[corners_arr], axis=1)
     azimuth_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-    rho = np.hypot(points[:, 0], points[:, 1])
-    axis_mask = rho[corners_arr] <= float(axis_rho_tol)
+    cyl_radius = np.hypot(points[:, 0], points[:, 1])
+    axis_mask = cyl_radius[corners_arr] <= axis_tol
     azimuth_corners = azimuth_points[corners_arr]
     azimuth_start, azimuth_width = minimal_azimuth_intervals(
         azimuth_corners,

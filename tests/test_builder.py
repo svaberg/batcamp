@@ -9,7 +9,7 @@ import pytest
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.builder import DEFAULT_AXIS_RHO_TOL
+from batcamp.builder import DEFAULT_AXIS_TOL
 from batcamp.builder import _build_octree_state
 from batcamp.builder import _resolve_cell_levels
 import batcamp.builder_cartesian as cartesian_builder
@@ -769,7 +769,7 @@ def test_spherical_tree_state_requires_cell_levels() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
+            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
@@ -789,7 +789,7 @@ def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
+            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
@@ -809,7 +809,7 @@ def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
+            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
@@ -829,7 +829,7 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_rho_tol=float(DEFAULT_AXIS_RHO_TOL),
+            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
         )
