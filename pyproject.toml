@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "batcamp"
 version = "0.2.0"
 description = "Octree reconstruction and interpolation utilities"
-readme = "README.md"
+readme = "pypi.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
