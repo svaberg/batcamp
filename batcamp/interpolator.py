@@ -250,6 +250,7 @@ def _interp_cells_xyz(
         )
     return out
 
+
 class OctreeInterpolator:
     """LinearNDInterpolator-like callable built on octree leaf lookup.
 

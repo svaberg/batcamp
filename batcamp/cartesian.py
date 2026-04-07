@@ -10,9 +10,6 @@ Cartesian backend are exact under this axis-aligned representation.
 from __future__ import annotations
 import numpy as np
 
-from .octree import AXIS0
-from .octree import AXIS1
-from .octree import AXIS2
 from .octree import START
 from .octree import WIDTH
 

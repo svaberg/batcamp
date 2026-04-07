@@ -7,6 +7,7 @@ from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from octree_test_support import cell_bounds
 
+
 def _select_interior_queries(tree: Octree, *, n_query: int, seed: int) -> np.ndarray:
     """Private test helper: pick deterministic random interior query points."""
     rng = np.random.default_rng(seed)
