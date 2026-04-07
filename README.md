@@ -4,13 +4,12 @@
 
 ## What it does
 
-- Rebuilds a usable octree from simulation output
-- Supports saving and loading reconstructed octrees
-- Fast, octree-aware resampling to e.g. planes, spheres, and rays
+- Rebuilds a usable octree from simulation output, and
+- provides fast, octree-aware resampling to e.g. planes, spheres, and rays.
 
 ## Why
 
-Many outputs provide leaf-cell values without storing the octree data. `batcamp` rebuilds that structure, permitting rapid interpolation and resampling.
+Some numerical codes provide leaf-cell values without storing the octree data. `batcamp` rebuilds that structure, permitting rapid interpolation and resampling.
 
 ## Quick start
 After cloning the repository, the package may be installed with `pip` in the regular way. From the repository root run:
