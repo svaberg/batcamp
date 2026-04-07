@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Compare random-point resampling with octree and SciPy ND interpolators."""
+"""Random-point resampling benchmark.
+
+This script builds one octree interpolator and compares its random-point
+resampling runtime and output against the SciPy ND interpolators on the same
+datasets. It writes plots and timing reports under `artifacts/`.
+"""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-import sys
 import time
 
 import matplotlib.pyplot as plt
@@ -17,17 +20,14 @@ from scipy.spatial import Delaunay
 
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
-_SCRIPT_DIR = Path(__file__).resolve().parent
-if str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
-from _resample_common import _configure_progress_logging
-from _resample_common import _configure_builder_logging
-from _resample_common import _build_octree
-from _resample_common import _ProgressReporter
-from _resample_common import _resolution_ramp
-from _resample_common import _time_call
-from _resample_common import DatasetCase
-from _resample_common import resolve_data_file
+from benchmark_helpers import _configure_progress_logging
+from benchmark_helpers import _configure_builder_logging
+from benchmark_helpers import _build_octree
+from benchmark_helpers import _ProgressReporter
+from benchmark_helpers import _resolution_ramp
+from benchmark_helpers import _time_call
+from benchmark_helpers import DatasetCase
+from benchmark_helpers import resolve_data_file
 
 _RNG_SEED = 0
 _MAX_LINEAR_REFERENCE_POINTS = 20_000
