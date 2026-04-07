@@ -14,7 +14,11 @@ from .octree import START
 from .octree import WIDTH
 
 
-def _attach_cartesian_coord_state(tree, points: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+def _attach_cartesian_coord_state(
+    tree,
+    points: np.ndarray,
+    corners: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float, bool]:
     """Derive Cartesian cell bounds, domain bounds, and axis-2 periodic metadata from point/corner geometry."""
     xyz_min = np.min(points, axis=0).astype(np.float64, copy=False)
     xyz_max = np.max(points, axis=0).astype(np.float64, copy=False)

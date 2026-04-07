@@ -222,7 +222,11 @@ def _write_report(
     """Write one readable markdown summary with build and query timings."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     octree_build_total = octree_tree_s + octree_interp_s
-    linear_build_total = None if linear_delaunay_s is None or linear_interp_s is None else linear_delaunay_s + linear_interp_s
+    linear_build_total = (
+        None
+        if linear_delaunay_s is None or linear_interp_s is None
+        else linear_delaunay_s + linear_interp_s
+    )
 
     lines = [
         f"# {dataset_label}",
@@ -287,7 +291,11 @@ def _write_report(
                 f"{float(row['octree_query_s']):.6f} | "
                 f"{float(row['linear_query_s']):.6f} | "
                 f"{float(row['nearest_query_s']):.6f} | "
-                f"{_fastest_label(octree_query_s=float(row['octree_query_s']), linear_query_s=float(row['linear_query_s']), nearest_query_s=float(row['nearest_query_s']))} | "
+                f"{_fastest_label(
+                    octree_query_s=float(row['octree_query_s']),
+                    linear_query_s=float(row['linear_query_s']),
+                    nearest_query_s=float(row['nearest_query_s']),
+                )} | "
                 f"{int(row['linear_finite'])}/{int(row['query_count'])} |"
             )
     else:
@@ -314,7 +322,10 @@ def _write_report(
                 f"{int(row['query_count'])} | "
                 f"{float(row['octree_query_s']):.6f} | "
                 f"{float(row['nearest_query_s']):.6f} | "
-                f"{_fastest_label(octree_query_s=float(row['octree_query_s']), nearest_query_s=float(row['nearest_query_s']))} |"
+                f"{_fastest_label(
+                    octree_query_s=float(row['octree_query_s']),
+                    nearest_query_s=float(row['nearest_query_s']),
+                )} |"
             )
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -455,7 +466,12 @@ def _parity_axis(
     xlabel: str,
 ) -> None:
     """Draw one log-log parity scatter for positive finite overlap."""
-    positive = np.isfinite(reference_vals) & np.isfinite(candidate_vals) & (reference_vals > 0.0) & (candidate_vals > 0.0)
+    positive = (
+        np.isfinite(reference_vals)
+        & np.isfinite(candidate_vals)
+        & (reference_vals > 0.0)
+        & (candidate_vals > 0.0)
+    )
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -652,7 +668,11 @@ def main() -> None:
                 octree_tree_s=float(octree_tree_s),
                 octree_interp_s=float(octree_interp_s),
                 nearest_build_s=float(nearest_build_s),
-                linear_build_total=None if linear_delaunay_s is None or linear_interp_s is None else float(linear_delaunay_s + linear_interp_s),
+                linear_build_total=(
+                    None
+                    if linear_delaunay_s is None or linear_interp_s is None
+                    else float(linear_delaunay_s + linear_interp_s)
+                ),
             )}"
         )
 

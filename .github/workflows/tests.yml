@@ -21,9 +21,9 @@ jobs:
         shell: bash -l {0}
         run: pip install -e '.[tests]'
 
-      - name: Run useful flake8 checks
+      - name: Run flake8
         shell: bash -l {0}
-        run: flake8 batcamp tests examples --count --select=E9,F63,F7,F82 --show-source --statistics
+        run: flake8 batcamp tests examples --count --statistics
 
   default:
     runs-on: ubuntu-latest

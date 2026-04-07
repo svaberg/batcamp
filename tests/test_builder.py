@@ -431,9 +431,11 @@ def test_infer_levels_marks_non_dyadic_span_invalid() -> None:
 def test_build_tree_rejects_all_invalid_levels() -> None:
     """Tree construction should fail when all provided levels are invalid."""
     ds = _build_regular_dataset()
-    azimuth_span, _azimuth_center, _cell_levels, _expected, _coarse = spherical_builder.compute_azimuth_spans_and_levels(
-        np.asarray(ds.points, dtype=float),
-        corners=np.asarray(ds.corners, dtype=np.int64),
+    azimuth_span, _azimuth_center, _cell_levels, _expected, _coarse = (
+        spherical_builder.compute_azimuth_spans_and_levels(
+            np.asarray(ds.points, dtype=float),
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
     )
     all_invalid = np.full(azimuth_span.shape, -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
@@ -559,7 +561,10 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
         tree_coord="xyz",
     )
     assert xyz_tree.cell_levels is not None
-    assert np.asarray(xyz_tree._cell_ijk[: xyz_tree.cell_levels.shape[0]], dtype=np.int64).shape == (xyz_tree.cell_levels.shape[0], 3)
+    assert np.asarray(
+        xyz_tree._cell_ijk[: xyz_tree.cell_levels.shape[0]],
+        dtype=np.int64,
+    ).shape == (xyz_tree.cell_levels.shape[0], 3)
     assert np.asarray(xyz_tree._cell_depth, dtype=np.int64).ndim == 1
     assert np.asarray(xyz_tree._cell_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(xyz_tree._root_cell_ids, dtype=np.int64).ndim == 1
@@ -572,7 +577,10 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
         tree_coord="rpa",
     )
     assert rpa_tree.cell_levels is not None
-    assert np.asarray(rpa_tree._cell_ijk[: rpa_tree.cell_levels.shape[0]], dtype=np.int64).shape == (rpa_tree.cell_levels.shape[0], 3)
+    assert np.asarray(
+        rpa_tree._cell_ijk[: rpa_tree.cell_levels.shape[0]],
+        dtype=np.int64,
+    ).shape == (rpa_tree.cell_levels.shape[0], 3)
     assert np.asarray(rpa_tree._cell_depth, dtype=np.int64).ndim == 1
     assert np.asarray(rpa_tree._cell_child, dtype=np.int64).shape[1] == 8
     assert np.asarray(rpa_tree._root_cell_ids, dtype=np.int64).ndim == 1
@@ -582,9 +590,11 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
 def test_spherical_lookup_rejects_non_exact_geometry() -> None:
     """Irregular spherical geometry should fail in the builder."""
     regular = _build_regular_dataset()
-    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = spherical_builder.compute_azimuth_spans_and_levels(
-        np.asarray(regular.points, dtype=float),
-        corners=np.asarray(regular.corners, dtype=np.int64),
+    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = (
+        spherical_builder.compute_azimuth_spans_and_levels(
+            np.asarray(regular.points, dtype=float),
+            corners=np.asarray(regular.corners, dtype=np.int64),
+        )
     )
     irregular = _build_irregular_spherical_dataset()
     with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
@@ -854,9 +864,11 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
 def test_build_returns_bound_tree() -> None:
     """Builder should return a tree with lookup geometry ready for use."""
     ds = _build_regular_dataset()
-    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = spherical_builder.compute_azimuth_spans_and_levels(
-        np.asarray(ds.points, dtype=float),
-        corners=np.asarray(ds.corners, dtype=np.int64),
+    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = (
+        spherical_builder.compute_azimuth_spans_and_levels(
+            np.asarray(ds.points, dtype=float),
+            corners=np.asarray(ds.corners, dtype=np.int64),
+        )
     )
     tree = _tree_from_state_build(
         np.asarray(ds.points, dtype=float),

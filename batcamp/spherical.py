@@ -17,7 +17,11 @@ from .octree import WIDTH
 _TWO_PI = 2.0 * math.pi
 
 
-def _attach_spherical_coord_state(tree, points: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+def _attach_spherical_coord_state(
+    tree,
+    points: np.ndarray,
+    corners: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float, bool]:
     """Derive spherical cell bounds, domain bounds, and axis-2 periodic metadata from point/corner geometry."""
     x = points[:, 0]
     y = points[:, 1]
