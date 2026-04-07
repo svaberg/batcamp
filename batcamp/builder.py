@@ -221,23 +221,15 @@ def _build_octree_state(
         int(max_level + level_offset),
     )
 
-    if resolved_tree_coord == "rpa":
-        built_state = populate_tree_state(
-            leaf_shape=leaf_shape,
-            max_level=int(max_level + level_offset),
-            cell_levels=levels_abs,
-            points=points,
-            corners=corners_arr,
-            axis_tol=axis_tol,
-        )
-    else:
-        built_state = populate_tree_state(
-            leaf_shape=leaf_shape,
-            max_level=int(max_level + level_offset),
-            cell_levels=levels_abs,
-            points=points,
-            corners=corners_arr,
-        )
+    axis_tol_kwargs = {"axis_tol": axis_tol} if resolved_tree_coord == "rpa" else {}
+    built_state = populate_tree_state(
+        leaf_shape=leaf_shape,
+        max_level=int(max_level + level_offset),
+        cell_levels=levels_abs,
+        points=points,
+        corners=corners_arr,
+        **axis_tol_kwargs,
+    )
     logger.info("populate tree state: coord=%s", resolved_tree_coord)
     from .persistence import OctreeState
     cell_levels = np.asarray(built_state["cell_levels"], dtype=np.int64)
