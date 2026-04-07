@@ -10,23 +10,20 @@
 
 ## What it does
 
-- Rebuilds a usable octree from simulation output
-- Provides fast, octree-aware resampling to planes, spheres, and rays
+- Rebuilds a usable octree from simulation output, and
+- provides fast, octree-aware resampling to e.g. planes, spheres, and rays.
 
 ## Why
 
 Some numerical codes provide leaf-cell values without storing the octree data. `batcamp` rebuilds that structure, permitting rapid interpolation and resampling.
 
-## Installation
+## Quick start
+Install the package with `pip`:
 
 ```bash
 pip install batcamp
 ```
-
-## Quick start
-
-The following code plots a two-dimensional density slice.
-
+The following code plots a two dimensional density slice.
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
@@ -35,27 +32,25 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 
-# Read the dataset.
+# Read the dataset
 ds = Dataset.from_file("MY_FILE")
 print(ds)
 
-points = ds[["X [R]", "Y [R]", "Z [R]"]]
-corners = ds.corners
+points = ds[["X [R]", "Y [R]", "Z [R]"]]  # Point-coordinate array with shape (n_points, 3).
+corners = ds.corners  # Cell-to-corner connectivity with shape (n_cells, 8).
 
-# Build the octree and the interpolator.
+# Build the octree from points and corners, then create the interpolator on top of it.
 octree = Octree(points, corners)
 print(octree)
 density_values = ds["Rho [g/cm^3]"]
 interp = OctreeInterpolator(octree, density_values)
 print(interp)
 
-# Create a grid of points and interpolate the density.
+# Create a grid of points and interpolate the density
 X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))
 Z = np.zeros_like(X)
 density = interp(X, Y, Z)
 plt.pcolormesh(X, Y, density, norm="log")
 ```
 
-For a fuller worked example, see
-[examples/quick_start.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/quick_start.ipynb)
-in the repository.
+See the examples folder [examples/quick_start.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/quick_start.ipynb) for a running example.
