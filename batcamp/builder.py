@@ -212,6 +212,8 @@ def _build_octree_state(
         )
     levels_arr = np.asarray(levels, dtype=np.int64)
     levels_abs = np.array(levels_arr, copy=True)
+    # Backend inference returns levels relative to the coarsest observed cells.
+    # Shift them onto the final octree depth implied by the inferred leaf shape.
     levels_abs[levels_abs >= 0] += int(level_offset)
     logger.info(
         "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
