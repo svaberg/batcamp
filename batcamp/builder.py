@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING
 from typing import TypeAlias
 
@@ -108,15 +107,22 @@ def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
     if raw is None:
         return
     raw_text = str(raw)
-    match = re.search(r"(\d+)\s+(\d+)\s*x\s*(\d+)\s*x\s*(\d+)", raw_text)
-    if match is None:
+    tokens = raw_text.replace("x", " ").replace("X", " ").split()
+    if len(tokens) != 4:
         logger.warning(
             "Dataset aux BLOCKS='%s' is not parseable; ignoring BLOCKS metadata.",
             raw_text,
         )
         return
-    block_count = int(match.group(1))
-    block_cells_xyz = (int(match.group(2)), int(match.group(3)), int(match.group(4)))
+    try:
+        block_count, nx, ny, nz = (int(token) for token in tokens)
+    except ValueError:
+        logger.warning(
+            "Dataset aux BLOCKS='%s' is not parseable; ignoring BLOCKS metadata.",
+            raw_text,
+        )
+        return
+    block_cells_xyz = (nx, ny, nz)
     cells_per_block = int(np.prod(np.asarray(block_cells_xyz, dtype=np.int64)))
     block_match = (
         block_count > 0
