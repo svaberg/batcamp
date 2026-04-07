@@ -176,12 +176,14 @@ def _build_octree_state(
         )
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
-    @timed_info_decorator
-    def infer_levels():
-        nonlocal level_shapes, cell_min, cell_max, cell_span
-        if resolved_tree_coord == "rpa":
-            from .builder_spherical import infer_level_shapes as infer_rpa_level_shapes
+    if resolved_tree_coord == "rpa":
+        from .builder_spherical import infer_leaf_shape as infer_rpa_leaf_shape
+        from .builder_spherical import infer_level_shapes as infer_rpa_level_shapes
+        from .builder_spherical import populate_tree_state as populate_rpa_tree_state
 
+        @timed_info_decorator
+        def infer_levels():
+            nonlocal level_shapes
             level_shapes, levels, max_level = infer_rpa_level_shapes(
                 points,
                 corners_arr,
@@ -190,30 +192,13 @@ def _build_octree_state(
                 level_rtol=level_rtol,
                 level_atol=level_atol,
             )
-        else:
-            from .builder_cartesian import cell_geometry
-            from .builder_cartesian import infer_levels as infer_xyz_levels
+            return levels, max_level
 
-            cell_min, cell_max, cell_span = cell_geometry(
-                points,
-                corners_arr,
-            )
-            levels, max_level = infer_xyz_levels(
-                cell_span,
-                cell_levels=cell_levels,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
-        return levels, max_level
+        levels, max_level = infer_levels()
+        logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
 
-    levels, max_level = infer_levels()
-    logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
-
-    @timed_info_decorator
-    def infer_leaf_shape():
-        if resolved_tree_coord == "rpa":
-            from .builder_spherical import infer_leaf_shape as infer_rpa_leaf_shape
-
+        @timed_info_decorator
+        def infer_leaf_shape():
             try:
                 return infer_rpa_leaf_shape(level_shapes)
             except ValueError as exc:
@@ -230,9 +215,35 @@ def _build_octree_state(
                         "spherical builder assumptions."
                     )
                 raise ValueError(message) from exc
-        else:
-            from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
 
+        leaf_shape = infer_leaf_shape()
+        logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
+    else:
+        from .builder_cartesian import cell_geometry
+        from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
+        from .builder_cartesian import infer_levels as infer_xyz_levels
+        from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
+
+        @timed_info_decorator
+        def infer_levels():
+            nonlocal cell_min, cell_max, cell_span
+            cell_min, cell_max, cell_span = cell_geometry(
+                points,
+                corners_arr,
+            )
+            levels, max_level = infer_xyz_levels(
+                cell_span,
+                cell_levels=cell_levels,
+                level_rtol=level_rtol,
+                level_atol=level_atol,
+            )
+            return levels, max_level
+
+        levels, max_level = infer_levels()
+        logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
+
+        @timed_info_decorator
+        def infer_leaf_shape():
             return infer_xyz_leaf_shape(
                 cell_min,
                 cell_max,
@@ -241,8 +252,8 @@ def _build_octree_state(
                 max_level=max_level,
             )
 
-    leaf_shape = infer_leaf_shape()
-    logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
+        leaf_shape = infer_leaf_shape()
+        logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
     @timed_info_decorator
     def normalize_levels():
@@ -281,11 +292,10 @@ def _build_octree_state(
         int(max_level + level_offset),
     )
 
-    @timed_info_decorator
-    def populate_tree_state():
-        if resolved_tree_coord == "rpa":
-            from .builder_spherical import populate_tree_state as populate_rpa_tree_state
+    if resolved_tree_coord == "rpa":
 
+        @timed_info_decorator
+        def populate_tree_state():
             return populate_rpa_tree_state(
                 leaf_shape=leaf_shape,
                 max_level=int(max_level + level_offset),
@@ -294,9 +304,10 @@ def _build_octree_state(
                 points=points,
                 corners=corners_arr,
             )
-        else:
-            from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
+    else:
 
+        @timed_info_decorator
+        def populate_tree_state():
             return populate_xyz_tree_state(
                 leaf_shape=leaf_shape,
                 max_level=int(max_level + level_offset),
