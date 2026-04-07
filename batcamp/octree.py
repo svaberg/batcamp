@@ -171,7 +171,7 @@ def _rebuild_cells(
     same_leaf = sorted_leaf_keys[1:] == sorted_leaf_keys[:-1]
     if np.any(same_leaf):
         dup = int(np.flatnonzero(same_leaf)[0])
-        dup_depth, dup_ijk = _unpack_cell_keys(sorted_leaf_keys[dup : dup + 1], axis_bases)
+        dup_depth, dup_ijk = _unpack_cell_keys(sorted_leaf_keys[dup:dup + 1], axis_bases)
         raise ValueError(
             "Cells overlap at octree address "
             f"{(int(dup_depth[0]), *(int(v) for v in dup_ijk[0]))}."
@@ -289,7 +289,7 @@ def _rebuild_cell_state(
     cell_levels: np.ndarray,
     cell_ijk: np.ndarray,
     tree_coord: str,
-    ) -> tuple[np.ndarray, ...]:
+) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied cells from leaf addresses."""
 
     if cell_ijk.ndim != 2 or cell_ijk.shape[1] != 3:
@@ -317,6 +317,7 @@ def _rebuild_cell_state(
         int(cell_levels.shape[0]),
     )
     return cell_depth, cell_ijk_rt, cell_child, root_cell_ids, cell_parent
+
 
 class Octree:
     """Adaptive octree summary plus bound lookup entrypoints.

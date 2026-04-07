@@ -133,6 +133,7 @@ def _interpolation_valid_cells(
     good = [int(cell_id) for cell_id in ids.tolist() if np.unique(interp.tree.corners[int(cell_id)]).size == 8]
     return np.array(good, dtype=np.int64)
 
+
 def test_lookup_hits_cell_midpoints(synthetic_context) -> None:
     """Lookup of each synthetic cell midpoint should return the corresponding cell id."""
     _ds, tree, _field, _coeffs = synthetic_context

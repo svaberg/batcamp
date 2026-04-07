@@ -11,9 +11,6 @@ import numpy as np
 from batread import Dataset
 
 from .constants import SUPPORTED_TREE_COORDS
-from .constants import XYZ_VARS
-from .octree import Octree
-from .shared_types import GridShape
 from .shared_types import TreeCoord
 from .timing import timed_info_decorator
 
@@ -142,6 +139,7 @@ def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
             cells_per_block,
         )
 
+
 def _build_octree_state(
     points: np.ndarray,
     corners: np.ndarray,
@@ -159,6 +157,7 @@ def _build_octree_state(
     corners_arr = np.asarray(corners, dtype=np.int64)
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
+
     @timed_info_decorator
     def resolve_tree_coord():
         return infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord

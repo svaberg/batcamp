@@ -10,7 +10,6 @@ import sys
 import tarfile
 import time
 
-import numpy as np
 import pooch
 from batread.dataset import Dataset
 

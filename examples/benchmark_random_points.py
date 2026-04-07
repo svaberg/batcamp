@@ -86,7 +86,7 @@ def _random_queries(
         accepted = candidates[keep]
         n_take = min(remaining, int(accepted.shape[0]))
         if n_take > 0:
-            out[filled : filled + n_take] = accepted[:n_take]
+            out[filled:filled + n_take] = accepted[:n_take]
             filled += n_take
     return out
 
