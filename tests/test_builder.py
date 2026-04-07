@@ -783,9 +783,9 @@ def test_spherical_tree_state_requires_cell_levels() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
+            axis_tol=DEFAULT_AXIS_TOL,
         )
 
 
@@ -803,9 +803,9 @@ def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
+            axis_tol=DEFAULT_AXIS_TOL,
         )
 
 
@@ -823,9 +823,9 @@ def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
+            axis_tol=DEFAULT_AXIS_TOL,
         )
 
 
@@ -843,9 +843,9 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            axis_tol=DEFAULT_AXIS_TOL,
             points=np.asarray(ds.points, dtype=float),
             corners=np.asarray(ds.corners, dtype=np.int64),
+            axis_tol=DEFAULT_AXIS_TOL,
         )
 
 
