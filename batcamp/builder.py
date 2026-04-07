@@ -172,26 +172,66 @@ def _build_octree_state(
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
     if resolved_tree_coord == "rpa":
-        from .builder_spherical import _prepare_build_state
-        from .builder_spherical import populate_tree_state as populate_rpa_tree_state
-        populate_tree_state = populate_rpa_tree_state
-        build_state_kwargs = {"tree_coord": tree_coord, "axis_tol": axis_tol}
-    else:
-        from .builder_cartesian import _prepare_build_state
-        from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
-        populate_tree_state = populate_xyz_tree_state
-        build_state_kwargs = {}
+        from .builder_spherical import infer_leaf_shape
+        from .builder_spherical import infer_level_shapes
+        from .builder_spherical import populate_tree_state
 
-    @timed_info_decorator
-    def prepare_build_state():
-        return _prepare_build_state(
-            points,
-            corners_arr,
-            cell_levels=cell_levels,
-            level_rtol=level_rtol,
-            level_atol=level_atol,
-            **build_state_kwargs,
-        )
+        @timed_info_decorator
+        def prepare_build_state():
+            level_shapes, levels, max_level = infer_level_shapes(
+                points,
+                corners_arr,
+                cell_levels=cell_levels,
+                axis_tol=axis_tol,
+                level_rtol=level_rtol,
+                level_atol=level_atol,
+            )
+            try:
+                leaf_shape = infer_leaf_shape(level_shapes)
+            except ValueError as exc:
+                if tree_coord is None:
+                    message = (
+                        "Could not build a spherical octree from these points and corners. "
+                        "The geometry was inferred as `tree_coord='rpa'`, but it does not match "
+                        "the current spherical builder assumptions."
+                    )
+                else:
+                    message = (
+                        f"Could not build a spherical octree from these points and corners with "
+                        f"`tree_coord={tree_coord!r}`. The geometry does not match the current "
+                        "spherical builder assumptions."
+                    )
+                raise ValueError(message) from exc
+            return levels, max_level, leaf_shape, {
+                "axis_tol": axis_tol,
+                "points": points,
+                "corners": corners_arr,
+            }
+    else:
+        from .builder_cartesian import infer_leaf_shape
+        from .builder_cartesian import infer_levels
+        from .builder_cartesian import populate_tree_state
+
+        @timed_info_decorator
+        def prepare_build_state():
+            levels, max_level, cell_min, cell_max, cell_span = infer_levels(
+                points,
+                corners_arr,
+                cell_levels=cell_levels,
+                level_rtol=level_rtol,
+                level_atol=level_atol,
+            )
+            leaf_shape = infer_leaf_shape(
+                cell_min,
+                cell_max,
+                cell_span,
+                levels,
+                max_level=max_level,
+            )
+            return levels, max_level, leaf_shape, {
+                "cell_min": cell_min,
+                "cell_max": cell_max,
+            }
 
     levels, max_level, leaf_shape, populate_kwargs = prepare_build_state()
     logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
