@@ -217,11 +217,11 @@ def _build_octree_state(
     # Shift them so the finest inferred level lands at the tree depth implied by leaf_shape.
     levels_abs[levels_abs >= 0] += level_offset
     logger.info(
-        "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
+        "normalize levels: coord=%s root_shape=%s tree_depth=%d level_offset=%d",
         resolved_tree_coord,
         root_shape,
         tree_depth,
-        tree_depth,
+        level_offset,
     )
 
     axis_tol_kwargs = {"axis_tol": axis_tol} if resolved_tree_coord == "rpa" else {}
