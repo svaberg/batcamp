@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from functools import wraps
 import logging
 from pathlib import Path
 import time
@@ -19,6 +18,7 @@ from .constants import SUPPORTED_TREE_COORDS
 from .shared_types import GridShape
 from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
+from .timing import timed_info_decorator
 
 if TYPE_CHECKING:
     from .persistence import OctreeState
@@ -35,18 +35,6 @@ _CHILD_IJK_OFFSETS = np.array(
     [[(k >> 2) & 1, (k >> 1) & 1, k & 1] for k in range(8)],
     dtype=np.int64,
 )
-
-def timed_info_decorator(func):
-    """Decorate one function with a fixed elapsed-time INFO log line."""
-    @wraps(func)
-    def wrapped(*args, **kwargs):
-        logger.debug("%s...", func.__name__)
-        t0 = time.perf_counter()
-        result = func(*args, **kwargs)
-        logger.info("%s complete in %.2fs", func.__name__, float(time.perf_counter() - t0))
-        return result
-
-    return wrapped
 
 
 @njit(cache=True)

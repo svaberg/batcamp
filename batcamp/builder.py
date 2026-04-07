@@ -14,9 +14,9 @@ from batread import Dataset
 from .constants import SUPPORTED_TREE_COORDS
 from .constants import XYZ_VARS
 from .octree import Octree
-from .octree import timed_info_decorator
 from .shared_types import GridShape
 from .shared_types import TreeCoord
+from .timing import timed_info_decorator
 
 if TYPE_CHECKING:
     from .persistence import OctreeState
