@@ -641,6 +641,22 @@ def test_cartesian_level_shapes_reject_inconsistent_dx() -> None:
         )
 
 
+def test_build_rejects_inconsistent_cartesian_geometry() -> None:
+    """Cartesian build should fail with the higher-level builder message on inconsistent same-level geometry."""
+    points, corners = _build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0, 2.0, 2.3], dtype=float),
+        y_edges=np.array([0.0, 1.0], dtype=float),
+        z_edges=np.array([0.0, 1.0], dtype=float),
+    )
+    with pytest.raises(ValueError, match="Could not build a Cartesian octree"):
+        _tree_from_state_build(
+            np.asarray(points, dtype=float),
+            np.asarray(corners, dtype=np.int64),
+            tree_coord="xyz",
+            cell_levels=np.zeros(3, dtype=np.int64),
+        )
+
+
 def test_cartesian_infer_leaf_shape_rejects_missing_max_level() -> None:
     """Cartesian finest-shape inference should fail when the requested max level is absent."""
     ds = _build_regular_xyz_dataset(nx=2, ny=2, nz=2)

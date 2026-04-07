@@ -86,6 +86,20 @@ def infer_levels(
         cell_levels=cell_levels,
         expected_shape=cell_span.shape[:1],
     )
+    try:
+        infer_level_shapes(cell_min, cell_max, cell_span, levels)
+        infer_leaf_shape(
+            cell_min,
+            cell_max,
+            cell_span,
+            levels,
+            max_level=max_level,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Could not build a Cartesian octree from these points and corners. "
+            "The geometry does not match the current Cartesian builder assumptions."
+        ) from exc
     return levels, max_level, cell_min, cell_max, cell_span
 
 
