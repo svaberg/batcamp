@@ -186,13 +186,13 @@ def _build_octree_state(
         raise ValueError(
             f"Unsupported tree_coord '{resolved_tree_coord}'; expected 'rpa' or 'xyz'."
         )
-    logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
+    logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, max_level)
     logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
     depth: int | None = None
     for axis_size in leaf_shape:
         axis_depth = 0
-        value = int(axis_size)
+        value = axis_size
         while value > 0 and (value % 2) == 0:
             axis_depth += 1
             value //= 2
@@ -200,33 +200,34 @@ def _build_octree_state(
             depth = axis_depth
     if depth is None:
         raise ValueError(f"Invalid leaf_shape={leaf_shape}.")
+    tree_depth = depth
     root_shape = (
-        int(leaf_shape[0]) >> depth,
-        int(leaf_shape[1]) >> depth,
-        int(leaf_shape[2]) >> depth,
+        leaf_shape[0] >> tree_depth,
+        leaf_shape[1] >> tree_depth,
+        leaf_shape[2] >> tree_depth,
     )
-    level_offset = int(depth) - int(max_level)
+    level_offset = tree_depth - max_level
     if level_offset < 0:
         raise ValueError(
-            f"Inferred level offset is negative: depth={depth}, max_level={max_level}."
+            f"Inferred level offset is negative: depth={tree_depth}, max_level={max_level}."
         )
     levels_arr = np.asarray(levels, dtype=np.int64)
     levels_abs = np.array(levels_arr, copy=True)
     # Backend inference labels levels relative to the coarsest cells present in the data.
     # Shift them so the finest inferred level lands at the tree depth implied by leaf_shape.
-    levels_abs[levels_abs >= 0] += int(level_offset)
+    levels_abs[levels_abs >= 0] += level_offset
     logger.info(
         "normalize levels: coord=%s root_shape=%s depth=%d max_level=%d",
         resolved_tree_coord,
         root_shape,
-        int(depth),
-        int(max_level + level_offset),
+        tree_depth,
+        tree_depth,
     )
 
     axis_tol_kwargs = {"axis_tol": axis_tol} if resolved_tree_coord == "rpa" else {}
     built_state = populate_tree_state(
         leaf_shape=leaf_shape,
-        max_level=int(max_level + level_offset),
+        max_level=tree_depth,
         cell_levels=levels_abs,
         points=points,
         corners=corners_arr,
