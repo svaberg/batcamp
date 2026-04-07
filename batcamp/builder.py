@@ -29,7 +29,7 @@ LevelShapeStatsMap: TypeAlias = dict[int, LevelShapeStatsRow]
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_AXIS_RHO_TOL = 1e-12
+DEFAULT_AXIS_TOL = 1e-12
 """Default polar-axis radius tolerance used only during spherical builder inference."""
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
@@ -143,7 +143,7 @@ def _build_octree_state(
     corners: np.ndarray,
     *,
     tree_coord: TreeCoord | None = None,
-    axis_rho_tol: float = DEFAULT_AXIS_RHO_TOL,
+    axis_tol: float = DEFAULT_AXIS_TOL,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
     cell_levels: np.ndarray | None = None,
@@ -189,7 +189,7 @@ def _build_octree_state(
                 points,
                 corners_arr,
                 cell_levels=cell_levels,
-                axis_rho_tol=axis_rho_tol,
+                axis_tol=axis_tol,
                 level_rtol=level_rtol,
                 level_atol=level_atol,
             )
@@ -283,7 +283,7 @@ def _build_octree_state(
                 leaf_shape=leaf_shape,
                 max_level=int(max_level + level_offset),
                 cell_levels=levels_abs,
-                axis_rho_tol=float(axis_rho_tol),
+                axis_tol=axis_tol,
                 points=points,
                 corners=corners_arr,
             )

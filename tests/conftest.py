@@ -4,7 +4,7 @@ import pytest
 from batread import Dataset
 
 from batcamp import Octree
-from batcamp.builder import DEFAULT_AXIS_RHO_TOL
+from batcamp.builder import DEFAULT_AXIS_TOL
 from sample_data_helper import data_file
 
 
@@ -47,7 +47,7 @@ def _build_difflevels_rpa_case() -> tuple[Dataset, Octree]:
     tree = Octree.from_ds(
         ds,
         tree_coord="rpa",
-        axis_rho_tol=DEFAULT_AXIS_RHO_TOL,
+        axis_rho_tol=DEFAULT_AXIS_TOL,
         level_rtol=1e-4,
         level_atol=1e-9,
     )

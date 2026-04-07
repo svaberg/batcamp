@@ -354,7 +354,7 @@ class Octree:
             points,
             corners,
             tree_coord=tree_coord,
-            axis_rho_tol=axis_rho_tol,
+            axis_tol=axis_rho_tol,
             level_rtol=level_rtol,
             level_atol=level_atol,
             cell_levels=None,
