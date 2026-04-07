@@ -159,11 +159,6 @@ def _build_octree_state(
     corners_arr = np.asarray(corners, dtype=np.int64)
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
-    level_shapes: LevelShapeStatsMap | None = None
-    cell_min: np.ndarray | None = None
-    cell_max: np.ndarray | None = None
-    cell_span: np.ndarray | None = None
-
     @timed_info_decorator
     def resolve_tree_coord():
         return infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
@@ -177,93 +172,29 @@ def _build_octree_state(
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
     if resolved_tree_coord == "rpa":
-        from .builder_spherical import infer_leaf_shape as infer_rpa_leaf_shape
-        from .builder_spherical import infer_level_shapes as infer_rpa_level_shapes
+        from .builder_spherical import _prepare_build_state
         from .builder_spherical import populate_tree_state as populate_rpa_tree_state
-
-        @timed_info_decorator
-        def infer_levels():
-            nonlocal level_shapes
-            level_shapes, levels, max_level = infer_rpa_level_shapes(
-                points,
-                corners_arr,
-                cell_levels=cell_levels,
-                axis_tol=axis_tol,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
-            return levels, max_level
-
-        @timed_info_decorator
-        def infer_leaf_shape():
-            try:
-                return infer_rpa_leaf_shape(level_shapes)
-            except ValueError as exc:
-                if tree_coord is None:
-                    message = (
-                        "Could not build a spherical octree from these points and corners. "
-                        "The geometry was inferred as `tree_coord='rpa'`, but it does not match "
-                        "the current spherical builder assumptions."
-                    )
-                else:
-                    message = (
-                        f"Could not build a spherical octree from these points and corners with "
-                        f"`tree_coord={tree_coord!r}`. The geometry does not match the current "
-                        "spherical builder assumptions."
-                    )
-                raise ValueError(message) from exc
-
-        @timed_info_decorator
-        def populate_tree_state(max_level_abs: int, levels_abs: np.ndarray, leaf_shape: tuple[int, int, int]):
-            return populate_rpa_tree_state(
-                leaf_shape=leaf_shape,
-                max_level=max_level_abs,
-                cell_levels=levels_abs,
-                axis_tol=axis_tol,
-                points=points,
-                corners=corners_arr,
-            )
+        populate_tree_state = populate_rpa_tree_state
+        build_state_kwargs = {"tree_coord": tree_coord, "axis_tol": axis_tol}
     else:
-        from .builder_cartesian import infer_leaf_shape as infer_xyz_leaf_shape
-        from .builder_cartesian import infer_levels as infer_xyz_levels
+        from .builder_cartesian import _prepare_build_state
         from .builder_cartesian import populate_tree_state as populate_xyz_tree_state
+        populate_tree_state = populate_xyz_tree_state
+        build_state_kwargs = {}
 
-        @timed_info_decorator
-        def infer_levels():
-            nonlocal cell_min, cell_max, cell_span
-            levels, max_level, cell_min, cell_max, cell_span = infer_xyz_levels(
-                points,
-                corners_arr,
-                cell_levels=cell_levels,
-                level_rtol=level_rtol,
-                level_atol=level_atol,
-            )
-            return levels, max_level
+    @timed_info_decorator
+    def prepare_build_state():
+        return _prepare_build_state(
+            points,
+            corners_arr,
+            cell_levels=cell_levels,
+            level_rtol=level_rtol,
+            level_atol=level_atol,
+            **build_state_kwargs,
+        )
 
-        @timed_info_decorator
-        def infer_leaf_shape():
-            return infer_xyz_leaf_shape(
-                cell_min,
-                cell_max,
-                cell_span,
-                levels,
-                max_level=max_level,
-            )
-
-        @timed_info_decorator
-        def populate_tree_state(max_level_abs: int, levels_abs: np.ndarray, leaf_shape: tuple[int, int, int]):
-            return populate_xyz_tree_state(
-                leaf_shape=leaf_shape,
-                max_level=max_level_abs,
-                cell_levels=levels_abs,
-                cell_min=cell_min,
-                cell_max=cell_max,
-            )
-
-    levels, max_level = infer_levels()
+    levels, max_level, leaf_shape, populate_kwargs = prepare_build_state()
     logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, int(max_level))
-
-    leaf_shape = infer_leaf_shape()
     logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
 
     @timed_info_decorator
@@ -304,9 +235,10 @@ def _build_octree_state(
     )
 
     state_payload = populate_tree_state(
-        int(max_level + level_offset),
-        levels_abs,
-        leaf_shape,
+        leaf_shape=leaf_shape,
+        max_level=int(max_level + level_offset),
+        cell_levels=levels_abs,
+        **populate_kwargs,
     )
     logger.info("populate tree state: coord=%s", resolved_tree_coord)
     from .persistence import OctreeState
