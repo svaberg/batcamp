@@ -160,11 +160,10 @@ def _build_octree_state(
     logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
 
     if resolved_tree_coord == "rpa":
-        from .builder_spherical import infer_leaf_shape
-        from .builder_spherical import infer_level_shapes
+        from .builder_spherical import infer_levels
         from .builder_spherical import populate_tree_state
 
-        level_shapes, levels, max_level = infer_level_shapes(
+        levels, max_level, leaf_shape = infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
@@ -172,25 +171,16 @@ def _build_octree_state(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
-        leaf_shape = infer_leaf_shape(level_shapes)
     elif resolved_tree_coord == "xyz":
-        from .builder_cartesian import infer_leaf_shape
         from .builder_cartesian import infer_levels
         from .builder_cartesian import populate_tree_state
 
-        levels, max_level, cell_min, cell_max, cell_span = infer_levels(
+        levels, max_level, leaf_shape = infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
             level_rtol=level_rtol,
             level_atol=level_atol,
-        )
-        leaf_shape = infer_leaf_shape(
-            cell_min,
-            cell_max,
-            cell_span,
-            levels,
-            max_level=max_level,
         )
     else:
         raise ValueError(
@@ -245,8 +235,8 @@ def _build_octree_state(
             leaf_shape=leaf_shape,
             max_level=int(max_level + level_offset),
             cell_levels=levels_abs,
-            cell_min=cell_min,
-            cell_max=cell_max,
+            points=points,
+            corners=corners_arr,
         )
     logger.info("populate tree state: coord=%s", resolved_tree_coord)
     from .persistence import OctreeState
