@@ -63,13 +63,15 @@ def infer_xyz_levels_from_cell_spans(
 
 
 def infer_levels(
-    cell_span: np.ndarray,
+    points: np.ndarray,
+    corners: np.ndarray,
     *,
     cell_levels: np.ndarray | None = None,
     level_rtol: float = 1e-4,
     level_atol: float = 1e-9,
-) -> tuple[np.ndarray, int]:
-    """Infer or validate Cartesian levels from precomputed per-cell spans."""
+) -> tuple[np.ndarray, int, np.ndarray, np.ndarray, np.ndarray]:
+    """Infer or validate Cartesian levels and return the per-cell Cartesian geometry."""
+    cell_min, cell_max, cell_span = cell_geometry(points, corners)
     inferred_levels: np.ndarray | None = None
     if cell_levels is None:
         inferred_levels = infer_xyz_levels_from_cell_spans(
@@ -79,11 +81,12 @@ def infer_levels(
             rtol=max(2e-2, float(level_rtol)),
             atol=max(1e-10, float(level_atol)),
         )
-    return _resolve_cell_levels(
+    levels, max_level = _resolve_cell_levels(
         inferred_levels=inferred_levels,
         cell_levels=cell_levels,
         expected_shape=cell_span.shape[:1],
     )
+    return levels, max_level, cell_min, cell_max, cell_span
 
 
 def infer_level_shapes(
