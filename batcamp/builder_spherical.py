@@ -287,9 +287,9 @@ def populate_tree_state(
     leaf_shape: tuple[int, int, int],
     max_level: int,
     cell_levels: np.ndarray | None,
-    axis_tol: float,
     points: np.ndarray,
     corners: np.ndarray,
+    axis_tol: float,
 ) -> dict[str, object]:
     """Return exact spherical octree state for one built tree."""
     if cell_levels is None:

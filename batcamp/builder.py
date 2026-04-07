@@ -226,9 +226,9 @@ def _build_octree_state(
             leaf_shape=leaf_shape,
             max_level=int(max_level + level_offset),
             cell_levels=levels_abs,
-            axis_tol=axis_tol,
             points=points,
             corners=corners_arr,
+            axis_tol=axis_tol,
         )
     else:
         built_state = populate_tree_state(
