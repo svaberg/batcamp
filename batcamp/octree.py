@@ -564,7 +564,8 @@ class Octree:
     ) -> "Octree":
         """Instantiate one tree from exact saved state and explicit point/corner geometry."""
         tree = cls.__new__(cls)
-        tree._init_from_state(
+        cls._init_from_state(
+            tree,
             root_shape=tuple(int(v) for v in state.root_shape),
             tree_coord=state.tree_coord,
             cell_levels=state.cell_levels,
