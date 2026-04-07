@@ -107,6 +107,7 @@ def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
     if raw is None:
         return
     raw_text = str(raw)
+    # Parse `nblock nx x ny x nz` by normalizing both `x` and `X` separators to spaces.
     tokens = raw_text.replace("x", " ").replace("X", " ").split()
     if len(tokens) != 4:
         logger.warning(
