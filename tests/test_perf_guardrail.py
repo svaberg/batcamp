@@ -83,7 +83,7 @@ def test_build_and_query_runtime_guardrail() -> None:
     ("file_name", "tree_coord"),
     [
         ("3d__var_2_n00006003.plt", "xyz"),
-        ("3d__var_2_n00060005.plt", "rpa"),
+        ("3d__var_1_n00000000.plt", "rpa"),
     ],
     ids=["cartesian_midplane", "spherical_midplane"],
 )

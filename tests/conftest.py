@@ -13,30 +13,33 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--run-pooch",
         action="store_true",
         default=False,
-        help="run tests that fetch files via pooch/network",
+        help="include pooch/network tests in an unqualified test run",
     )
     parser.addoption(
         "--run-perf",
         action="store_true",
         default=False,
-        help="run performance-sensitive tests",
+        help="include performance-sensitive tests in an unqualified test run",
     )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # Explicit nodeids or file paths should run as requested; marker gating only
+    # applies to broad unqualified runs like plain `pytest`.
+    explicit_selection = bool(config.invocation_params.args)
     skip_pooch = pytest.mark.skip(reason="need --run-pooch option to run")
     skip_perf = pytest.mark.skip(reason="need --run-perf option to run")
     for item in items:
-        if "pooch" in item.keywords and not config.getoption("--run-pooch"):
+        if "pooch" in item.keywords and not config.getoption("--run-pooch") and not explicit_selection:
             item.add_marker(skip_pooch)
-        if "perf" in item.keywords and not config.getoption("--run-perf"):
+        if "perf" in item.keywords and not config.getoption("--run-perf") and not explicit_selection:
             item.add_marker(skip_perf)
 
 
 @lru_cache(maxsize=1)
 def _build_difflevels_rpa_case() -> tuple[Dataset, Octree]:
     """Build and cache one representative spherical dataset/tree pair."""
-    input_file = data_file("3d__var_4_n00005000.plt")
+    input_file = data_file("3d__var_1_n00000000.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
     assert ds.corners is not None

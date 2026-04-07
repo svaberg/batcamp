@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from batread import Dataset
 
 from batcamp import Octree
@@ -22,7 +21,6 @@ def test_xyz_to_rpa_components_stable_and_finite() -> None:
     assert np.isclose(azimuth, 0.0, rtol=0.0, atol=1e-15)
 
 
-@pytest.mark.slow
 def test_default_tree_inference_selects_rpa_for_regression_dataset(
     difflevels_rpa_case: tuple[Dataset, Octree],
 ) -> None:
@@ -38,7 +36,6 @@ def test_default_tree_inference_selects_rpa_for_regression_dataset(
     assert np.isfinite(float(np.asarray(vals).reshape(-1)[0]))
 
 
-@pytest.mark.slow
 def test_lookup_outside_domain_returns_none(difflevels_rpa_case: tuple[Dataset, Octree]) -> None:
     """Regression: lookup outside radial domain should not snap to nearest cell."""
     _ds, tree = difflevels_rpa_case
@@ -48,7 +45,6 @@ def test_lookup_outside_domain_returns_none(difflevels_rpa_case: tuple[Dataset, 
     assert int(tree.lookup_points(q, coord="xyz")[0]) < 0
 
 
-@pytest.mark.slow
 def test_load_uses_dataset_corners(
     tmp_path,
     difflevels_rpa_case: tuple[Dataset, Octree],
