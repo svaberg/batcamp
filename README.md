@@ -36,15 +36,15 @@ corners = ds.corners  # Cell-to-corner connectivity with shape (n_cells, 8).
 # Build the octree from points and corners, then create the interpolator on top of it.
 octree = Octree(points, corners)
 print(octree)
-rho_values = ds["Rho [g/cm^3]"]
-interp = OctreeInterpolator(octree, rho_values)
+density_values = ds["Rho [g/cm^3]"]
+interp = OctreeInterpolator(octree, density_values)
 print(interp)
 
 # Create a grid of points and interpolate the density
 X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))
 Z = np.zeros_like(X)
-rho = interp(X, Y, Z)
-plt.pcolormesh(X, Y, rho, norm="log")
+density = interp(X, Y, Z)
+plt.pcolormesh(X, Y, density, norm="log")
 ```
 
 See the examples folder [examples/quick_start.ipynb](examples/quick_start.ipynb) for a running example.
