@@ -89,6 +89,32 @@ def infer_levels(
     return levels, max_level, cell_min, cell_max, cell_span
 
 
+def _prepare_build_state(
+    points: np.ndarray,
+    corners: np.ndarray,
+    *,
+    cell_levels: np.ndarray | None = None,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+) -> tuple[np.ndarray, int, tuple[int, int, int], dict[str, np.ndarray]]:
+    """Infer Cartesian levels, finest shape, and exact-state inputs from explicit geometry."""
+    levels, max_level, cell_min, cell_max, cell_span = infer_levels(
+        points,
+        corners,
+        cell_levels=cell_levels,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
+    )
+    leaf_shape = infer_leaf_shape(
+        cell_min,
+        cell_max,
+        cell_span,
+        levels,
+        max_level=max_level,
+    )
+    return levels, max_level, leaf_shape, {"cell_min": cell_min, "cell_max": cell_max}
+
+
 def infer_level_shapes(
     cell_min: np.ndarray,
     cell_max: np.ndarray,

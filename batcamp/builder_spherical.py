@@ -9,6 +9,7 @@ from .builder import DEFAULT_AXIS_TOL
 from .builder import LevelShapeStatsMap
 from .builder import median_positive
 from .builder import _resolve_cell_levels
+from .shared_types import TreeCoord
 
 
 def circular_span(cell_azimuth: np.ndarray) -> np.ndarray:
@@ -249,6 +250,48 @@ def infer_level_shapes(
     )
     level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
     return level_shapes, levels, max_level
+
+
+def _prepare_build_state(
+    points: np.ndarray,
+    corners: np.ndarray,
+    *,
+    cell_levels: np.ndarray | None = None,
+    tree_coord: TreeCoord | None = None,
+    axis_tol: float = DEFAULT_AXIS_TOL,
+    level_rtol: float = 1e-4,
+    level_atol: float = 1e-9,
+) -> tuple[np.ndarray, int, tuple[int, int, int], dict[str, object]]:
+    """Infer spherical levels, finest shape, and exact-state inputs from explicit geometry."""
+    level_shapes, levels, max_level = infer_level_shapes(
+        points,
+        corners,
+        cell_levels=cell_levels,
+        axis_tol=axis_tol,
+        level_rtol=level_rtol,
+        level_atol=level_atol,
+    )
+    try:
+        leaf_shape = infer_leaf_shape(level_shapes)
+    except ValueError as exc:
+        if tree_coord is None:
+            message = (
+                "Could not build a spherical octree from these points and corners. "
+                "The geometry was inferred as `tree_coord='rpa'`, but it does not match "
+                "the current spherical builder assumptions."
+            )
+        else:
+            message = (
+                f"Could not build a spherical octree from these points and corners with "
+                f"`tree_coord={tree_coord!r}`. The geometry does not match the current "
+                "spherical builder assumptions."
+            )
+        raise ValueError(message) from exc
+    return levels, max_level, leaf_shape, {
+        "axis_tol": axis_tol,
+        "points": points,
+        "corners": np.asarray(corners, dtype=np.int64),
+    }
 
 
 def infer_leaf_shape(
