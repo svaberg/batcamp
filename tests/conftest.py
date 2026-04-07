@@ -47,9 +47,9 @@ def _build_difflevels_rpa_case() -> tuple[Dataset, Octree]:
     tree = Octree.from_ds(
         ds,
         tree_coord="rpa",
-        axis_rho_tol=DEFAULT_AXIS_TOL,
-        level_rtol=1e-4,
-        level_atol=1e-9,
+        build_axis_tol=DEFAULT_AXIS_TOL,
+        build_level_rtol=1e-4,
+        build_level_atol=1e-9,
     )
     return ds, tree
 

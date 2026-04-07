@@ -343,20 +343,24 @@ class Octree:
         corners: np.ndarray,
         *,
         tree_coord: TreeCoord | None = None,
-        axis_rho_tol: float = 1e-12,
-        level_rtol: float = 1e-4,
-        level_atol: float = 1e-9,
+        build_axis_tol: float = 1e-12,
+        build_level_rtol: float = 1e-4,
+        build_level_atol: float = 1e-9,
     ) -> None:
-        """Build one octree from explicit point coordinates and cell corners."""
+        """Build an octree from explicit point coordinates and cell corners.
+
+        `tree_coord` optionally fixes the coordinate system. The `build_*`
+        arguments only affect geometric inference during construction.
+        """
         from .builder import _build_octree_state
 
         state = _build_octree_state(
             points,
             corners,
             tree_coord=tree_coord,
-            axis_tol=axis_rho_tol,
-            level_rtol=level_rtol,
-            level_atol=level_atol,
+            axis_tol=build_axis_tol,
+            level_rtol=build_level_rtol,
+            level_atol=build_level_atol,
             cell_levels=None,
         )
         logger.info("_init_from_state: coord=%s", state.tree_coord)
@@ -528,11 +532,15 @@ class Octree:
         ds: Dataset,
         *,
         tree_coord: TreeCoord | None = None,
-        axis_rho_tol: float = 1e-12,
-        level_rtol: float = 1e-4,
-        level_atol: float = 1e-9,
+        build_axis_tol: float = 1e-12,
+        build_level_rtol: float = 1e-4,
+        build_level_atol: float = 1e-9,
     ) -> "Octree":
-        """Build one tree from a dataset by extracting explicit points and corners."""
+        """Build an octree from a dataset by extracting explicit points and corners.
+
+        `tree_coord` optionally fixes the coordinate system. The `build_*`
+        arguments only affect geometric inference during construction.
+        """
         from .builder import _warn_if_blocks_aux_mismatch
 
         if ds.corners is None:
@@ -551,9 +559,9 @@ class Octree:
             points,
             corners,
             tree_coord=tree_coord,
-            axis_rho_tol=axis_rho_tol,
-            level_rtol=level_rtol,
-            level_atol=level_atol,
+            build_axis_tol=build_axis_tol,
+            build_level_rtol=build_level_rtol,
+            build_level_atol=build_level_atol,
         )
         logger.info("from_ds complete in %.2fs", float(time.perf_counter() - t0))
         return tree
