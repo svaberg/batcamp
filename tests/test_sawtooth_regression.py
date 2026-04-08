@@ -15,8 +15,8 @@ from sample_data_helper import data_file
 
 @pytest.fixture(scope="module")
 def sc_context() -> tuple[Dataset, Octree]:
-    """Return one real SC sample dataset with its spherical tree."""
-    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    """Return one real spherical sample dataset with its spherical tree."""
+    ds = Dataset.from_file(str(data_file("3d__var_2_n00060005.plt")))
     points = ds[XYZ_VARS]
     tree = Octree(points, ds.corners, tree_coord="rpa")
     return ds, tree

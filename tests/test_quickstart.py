@@ -9,7 +9,7 @@ from sample_data_helper import data_file
 
 
 _CASES = [
-    pytest.param("3d__var_1_n00000000.plt", "rpa", id="example_file"),
+    pytest.param("3d__var_2_n00060005.plt", "rpa", id="local_rpa"),
     pytest.param(
         "3d__var_4_n00044000.plt",
         "rpa",
