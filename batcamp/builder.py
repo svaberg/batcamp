@@ -156,10 +156,10 @@ def _build_octree_state(
     if corners_arr.ndim != 2 or corners_arr.shape[1] != 8:
         raise ValueError("corners must have shape (n_cells, 8).")
 
-    resolved_tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
-    logger.info("resolve tree coord: coord=%s", resolved_tree_coord)
+    tree_coord = infer_tree_coord_from_geometry(points, corners_arr) if tree_coord is None else tree_coord
+    logger.info("resolve tree coord: coord=%s", tree_coord)
 
-    if resolved_tree_coord == "rpa":
+    if tree_coord == "rpa":
         from .builder_spherical import infer_levels
         from .builder_spherical import populate_tree_state
 
@@ -171,7 +171,7 @@ def _build_octree_state(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
-    elif resolved_tree_coord == "xyz":
+    elif tree_coord == "xyz":
         from .builder_cartesian import infer_levels
         from .builder_cartesian import populate_tree_state
 
@@ -184,10 +184,10 @@ def _build_octree_state(
         )
     else:
         raise ValueError(
-            f"Unsupported tree_coord '{resolved_tree_coord}'; expected 'rpa' or 'xyz'."
+            f"Unsupported tree_coord '{tree_coord}'; expected 'rpa' or 'xyz'."
         )
-    logger.info("infer levels: coord=%s max_level=%d", resolved_tree_coord, max_level)
-    logger.info("infer leaf shape: coord=%s leaf_shape=%s", resolved_tree_coord, leaf_shape)
+    logger.info("infer levels: coord=%s max_level=%d", tree_coord, max_level)
+    logger.info("infer leaf shape: coord=%s leaf_shape=%s", tree_coord, leaf_shape)
 
     depth: int | None = None
     for axis_size in leaf_shape:
@@ -218,13 +218,13 @@ def _build_octree_state(
     levels_abs[levels_abs >= 0] += level_offset
     logger.info(
         "normalize levels: coord=%s root_shape=%s tree_depth=%d level_offset=%d",
-        resolved_tree_coord,
+        tree_coord,
         root_shape,
         tree_depth,
         level_offset,
     )
 
-    axis_tol_kwargs = {"axis_tol": axis_tol} if resolved_tree_coord == "rpa" else {}
+    axis_tol_kwargs = {"axis_tol": axis_tol} if tree_coord == "rpa" else {}
     built_state = populate_tree_state(
         leaf_shape=leaf_shape,
         max_level=tree_depth,
@@ -233,13 +233,13 @@ def _build_octree_state(
         corners=corners_arr,
         **axis_tol_kwargs,
     )
-    logger.info("populate tree state: coord=%s", resolved_tree_coord)
+    logger.info("populate tree state: coord=%s", tree_coord)
     from .persistence import OctreeState
     cell_levels = np.asarray(built_state["cell_levels"], dtype=np.int64)
     cell_ijk = np.asarray(built_state["cell_ijk"], dtype=np.int64)
 
     return OctreeState(
-        tree_coord=resolved_tree_coord,
+        tree_coord=tree_coord,
         root_shape=tuple(int(v) for v in root_shape),
         cell_levels=cell_levels,
         cell_ijk=cell_ijk,
