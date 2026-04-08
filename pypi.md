@@ -1,4 +1,4 @@
-<h1><img src="https://raw.githubusercontent.com/svaberg/batcamp/v0.2.0/assets/batcamp.png" alt="batcamp logo"> batcamp</h1>
+<h1><img src="https://raw.githubusercontent.com/svaberg/batcamp/v0.2.1/assets/batcamp.png" alt="batcamp logo"> batcamp</h1>
 
 [![Tests](https://github.com/svaberg/batcamp/actions/workflows/tests.yml/badge.svg)](https://github.com/svaberg/batcamp/actions/workflows/tests.yml) [![PyPI version](https://badge.fury.io/py/batcamp.svg)](https://pypi.org/project/batcamp/) [![Codacy Badge](https://app.codacy.com/project/badge/Grade/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard) [![Codacy Badge](https://app.codacy.com/project/badge/Coverage/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard) [![DOI](https://zenodo.org/badge/1177665095.svg)](https://doi.org/10.5281/zenodo.19163499)
 
