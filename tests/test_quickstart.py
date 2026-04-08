@@ -4,7 +4,7 @@ from batread import Dataset
 
 from batcamp import Octree, OctreeInterpolator
 from batcamp.builder import infer_tree_coord_from_geometry
-from octree_test_support import cell_bounds
+from tests.octree_test_support import cell_bounds
 from sample_data_helper import data_file
 
 

@@ -10,8 +10,8 @@ from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
-from octree_test_support import cell_bounds
-from octree_test_support import find_shared_face_pair
+from tests.octree_test_support import cell_bounds
+from tests.octree_test_support import find_shared_face_pair
 
 
 def _build_uniform_spherical_hex_dataset(
