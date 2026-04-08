@@ -6,7 +6,12 @@ from __future__ import annotations
 import numpy as np
 
 from .builder import DEFAULT_AXIS_TOL
+from .builder import DEFAULT_LEVEL_ATOL
+from .builder import DEFAULT_LEVEL_RTOL
+from .builder import DEFAULT_POSITIVE_TINY
 from .builder import LevelShapeStatsMap
+from .builder import SHAPE_MATCH_ATOL
+from .builder import SHAPE_MATCH_RTOL
 from .builder import median_positive
 from .builder import _resolve_cell_levels
 
@@ -130,13 +135,13 @@ def minimal_azimuth_intervals(
 def infer_level_expectation(
     azimuth_span: np.ndarray,
     *,
-    rtol: float = 1e-4,
-    atol: float = 1e-9,
+    rtol: float = DEFAULT_LEVEL_RTOL,
+    atol: float = DEFAULT_LEVEL_ATOL,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Infer dyadic levels and expected spans from observed azimuth spans."""
     levels = np.full(azimuth_span.shape, -1, dtype=np.int64)
     expected = np.full(azimuth_span.shape, np.nan, dtype=float)
-    positive = azimuth_span > max(float(atol), 1e-12)
+    positive = azimuth_span > max(float(atol), DEFAULT_POSITIVE_TINY)
     if not np.any(positive):
         return levels, expected, float("nan")
 
@@ -154,8 +159,8 @@ def compute_azimuth_spans_and_levels(
     points: np.ndarray,
     *,
     corners: np.ndarray,
-    rtol: float = 1e-4,
-    atol: float = 1e-9,
+    rtol: float = DEFAULT_LEVEL_RTOL,
+    atol: float = DEFAULT_LEVEL_ATOL,
     axis_tol: float = DEFAULT_AXIS_TOL,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     """Compute per-cell azimuth spans and inferred dyadic refinement levels."""
@@ -213,11 +218,11 @@ def infer_level_angular_shapes(
 
         ref_dazimuth = (2.0 * np.pi) / n_azimuth
         ref_dpolar = np.pi / n_polar
-        if not np.isclose(med_dazimuth, ref_dazimuth, rtol=2e-2, atol=1e-9):
+        if not np.isclose(med_dazimuth, ref_dazimuth, rtol=SHAPE_MATCH_RTOL, atol=SHAPE_MATCH_ATOL):
             raise ValueError(
                 f"Level {level} has inconsistent dazimuth={med_dazimuth:.6e} vs inferred {ref_dazimuth:.6e}."
             )
-        if not np.isclose(med_dpolar, ref_dpolar, rtol=2e-2, atol=1e-9):
+        if not np.isclose(med_dpolar, ref_dpolar, rtol=SHAPE_MATCH_RTOL, atol=SHAPE_MATCH_ATOL):
             raise ValueError(
                 f"Level {level} has inconsistent dpolar={med_dpolar:.6e} vs inferred {ref_dpolar:.6e}."
             )
@@ -231,8 +236,8 @@ def infer_levels(
     *,
     cell_levels: np.ndarray | None = None,
     axis_tol: float = DEFAULT_AXIS_TOL,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
+    level_rtol: float = DEFAULT_LEVEL_RTOL,
+    level_atol: float = DEFAULT_LEVEL_ATOL,
 ) -> tuple[np.ndarray, int, tuple[int, int, int]]:
     """Infer spherical levels and return the finest spherical shape."""
     azimuth_span, _azimuth_center, auto_levels, _expected, _coarse = compute_azimuth_spans_and_levels(

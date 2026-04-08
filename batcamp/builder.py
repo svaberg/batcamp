@@ -23,8 +23,32 @@ LevelShapeStatsMap: TypeAlias = dict[int, LevelShapeStatsRow]
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TREE_COORD_SAMPLE_SIZE = 2048
+"""Default number of cells sampled when guessing tree coordinates from geometry."""
+
+TREE_COORD_ROUND_DECIMALS = 12
+"""Decimal rounding used when classifying sampled cells as axis-aligned."""
+
+XYZ_AXIS_LIKE_FRACTION_THRESHOLD = 0.98
+"""Minimum sampled axis-aligned fraction required to classify geometry as Cartesian."""
+
 DEFAULT_AXIS_TOL = 1e-12
 """Default polar-axis radius tolerance used only during spherical builder inference."""
+
+DEFAULT_LEVEL_RTOL = 1e-4
+"""Default relative tolerance for backend level inference from mesh geometry."""
+
+DEFAULT_LEVEL_ATOL = 1e-9
+"""Default absolute tolerance for backend level inference from mesh geometry."""
+
+DEFAULT_POSITIVE_TINY = 1e-12
+"""Default lower cutoff for values that must be strictly positive."""
+
+SHAPE_MATCH_RTOL = 2e-2
+"""Relative tolerance for matching inferred dyadic shapes back to observed geometry."""
+
+SHAPE_MATCH_ATOL = 1e-9
+"""Absolute tolerance for matching inferred dyadic shapes back to observed geometry."""
 
 DEFAULT_MIN_VALID_CELL_FRACTION = 0.5
 """Default minimum fraction of valid inferred cell levels accepted by builder utilities."""
@@ -34,7 +58,7 @@ def infer_tree_coord_from_geometry(
     points: np.ndarray,
     corners: np.ndarray,
     *,
-    sample_size: int = 2048,
+    sample_size: int = DEFAULT_TREE_COORD_SAMPLE_SIZE,
 ) -> TreeCoord:
     """Guess whether point/corner geometry is Cartesian (`xyz`) or spherical-like (`rpa`)."""
     points = np.asarray(points, dtype=float)
@@ -50,9 +74,9 @@ def infer_tree_coord_from_geometry(
     else:
         sample = corners_arr
 
-    xr = np.round(points[sample, 0], 12)
-    yr = np.round(points[sample, 1], 12)
-    zr = np.round(points[sample, 2], 12)
+    xr = np.round(points[sample, 0], TREE_COORD_ROUND_DECIMALS)
+    yr = np.round(points[sample, 1], TREE_COORD_ROUND_DECIMALS)
+    zr = np.round(points[sample, 2], TREE_COORD_ROUND_DECIMALS)
 
     ux = np.array([np.unique(row).size for row in xr], dtype=np.int64)
     uy = np.array([np.unique(row).size for row in yr], dtype=np.int64)
@@ -64,10 +88,10 @@ def infer_tree_coord_from_geometry(
         frac_axis_like,
         int(axis_like.size),
     )
-    return "xyz" if frac_axis_like >= 0.98 else "rpa"
+    return "xyz" if frac_axis_like >= XYZ_AXIS_LIKE_FRACTION_THRESHOLD else "rpa"
 
 
-def median_positive(values: np.ndarray, *, tiny: float = 1e-12) -> float:
+def median_positive(values: np.ndarray, *, tiny: float = DEFAULT_POSITIVE_TINY) -> float:
     """Compute the median of positive values above `tiny`."""
     pos = np.asarray(values, dtype=float)
     pos = pos[pos > float(tiny)]
@@ -149,8 +173,8 @@ def _build_octree_state(
     *,
     tree_coord: TreeCoord | None = None,
     axis_tol: float = DEFAULT_AXIS_TOL,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
+    level_rtol: float = DEFAULT_LEVEL_RTOL,
+    level_atol: float = DEFAULT_LEVEL_ATOL,
     cell_levels: np.ndarray | None = None,
 ) -> "OctreeState":
     """Infer exact octree state from explicit points/corners."""
