@@ -76,7 +76,7 @@ jobs:
         shell: bash -l {0}
         run: python -m twine check dist/*
 
-  slow:
+  perf:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -93,9 +93,9 @@ jobs:
         shell: bash -l {0}
         run: pip install -e '.[tests]'
 
-      - name: Run slow tests
+      - name: Run perf tests
         shell: bash -l {0}
-        run: pytest -q -m slow -o addopts=''
+        run: pytest -q -m perf --run-perf -o addopts=''
 
   pooch:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -116,4 +116,4 @@ jobs:
 
       - name: Run pooch integration tests
         shell: bash -l {0}
-        run: pytest -q -m pooch -o addopts=''
+        run: pytest -q -m pooch --run-pooch -o addopts=''
