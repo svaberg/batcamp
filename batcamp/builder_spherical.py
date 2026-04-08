@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.optimize import Bounds
+from scipy.optimize import LinearConstraint
+from scipy.optimize import milp
 
 from .builder import DEFAULT_AXIS_TOL
 from .builder import DEFAULT_LEVEL_ATOL
@@ -87,6 +90,17 @@ def cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray
         centers[idx] = center
         tolerances[idx] = max(float(np.max(np.abs(arr - center))), float(atol))
     return centers, tolerances
+
+
+def nearest_cluster_indices(centers: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Map each value to the nearest sorted cluster center index."""
+    search = np.searchsorted(centers, values, side="left").astype(np.int64)
+    next_idx = np.clip(search, 0, centers.size - 1)
+    prev_idx = np.clip(search - 1, 0, centers.size - 1)
+    use_prev = (search > 0) & (
+        np.abs(centers[prev_idx] - values) <= np.abs(centers[next_idx] - values)
+    )
+    return np.where(use_prev, prev_idx, next_idx).astype(np.int64)
 
 
 def minimal_azimuth_intervals(
@@ -256,7 +270,12 @@ def infer_levels(
         level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
         angular_leaf_shape = infer_leaf_shape(level_shapes)
         leaf_shape = (
-            infer_log_radial_count(points, corners, levels),
+            infer_log_radial_count(
+                points,
+                corners,
+                levels,
+                n_axis0_f=int(angular_leaf_shape[0]),
+            ),
             int(angular_leaf_shape[1]),
             int(angular_leaf_shape[2]),
         )
@@ -292,15 +311,17 @@ def infer_leaf_shape(
     return n_axis0, n_axis1_f, n_axis2_f
 
 
-def infer_log_radial_count(
+def recover_log_radial_lattice(
     points: np.ndarray,
     corners: np.ndarray,
     cell_levels: np.ndarray,
-) -> int:
-    """Infer finest radial count by clustering observed `log(r)` shell boundaries."""
+    *,
+    n_axis0_f: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Recover one integer fine-grid coordinate for each observed radial boundary."""
     valid = np.asarray(cell_levels, dtype=np.int64) >= 0
     if not np.any(valid):
-        raise ValueError("No valid (>=0) cell levels available to infer radial count.")
+        raise ValueError("No valid (>=0) cell levels available to recover the radial lattice.")
     point_r = np.linalg.norm(points, axis=1)
     if np.any(point_r <= 0.0):
         raise ValueError("Spherical builder requires strictly positive radius for log-radial reconstruction.")
@@ -311,13 +332,61 @@ def infer_log_radial_count(
     log_r_min = float(np.min(cell_log_r_min[valid]))
     log_r_max = float(np.max(cell_log_r_max[valid]))
     radial_tol = 1e-7 * max(float(log_r_max - log_r_min), 1.0)
-    radial_edges, _radial_edge_tol = cluster_close_values(
+    radial_edges, radial_edge_tol = cluster_close_values(
         np.concatenate((cell_log_r_min[valid], cell_log_r_max[valid])),
         atol=radial_tol,
     )
     if radial_edges.size < 2:
         raise ValueError("Could not infer at least one radial shell from log-r boundaries.")
-    return int(radial_edges.size - 1)
+
+    valid_ids = np.flatnonzero(valid).astype(np.int64)
+    r0_edge_id = nearest_cluster_indices(radial_edges, cell_log_r_min[valid_ids])
+    r1_edge_id = nearest_cluster_indices(radial_edges, cell_log_r_max[valid_ids])
+    max_level = int(np.max(cell_levels[valid]))
+    width_units = np.left_shift(np.ones(valid_ids.size, dtype=np.int64), max_level - cell_levels[valid_ids])
+
+    n_gaps = int(radial_edges.size - 1)
+    constraints = np.zeros((valid_ids.size + 1, n_gaps), dtype=float)
+    for row, (start_edge, stop_edge) in enumerate(zip(r0_edge_id, r1_edge_id, strict=True)):
+        if stop_edge <= start_edge:
+            bad = int(valid_ids[row])
+            raise ValueError(f"Spherical cell {bad} has non-positive radial span.")
+        constraints[row, start_edge:stop_edge] = 1.0
+    constraints[-1, :] = 1.0
+    rhs = np.concatenate((width_units.astype(float), np.array([float(n_axis0_f)])))
+    result = milp(
+        c=np.zeros(n_gaps, dtype=float),
+        integrality=np.ones(n_gaps, dtype=np.int8),
+        bounds=Bounds(np.zeros(n_gaps, dtype=float), np.full(n_gaps, float(n_axis0_f))),
+        constraints=LinearConstraint(constraints, rhs, rhs),
+    )
+    if not result.success or result.x is None:
+        raise ValueError("Could not recover a self-consistent log-radial lattice from spherical cell boundaries.")
+    gap_units = np.rint(result.x).astype(np.int64)
+    edge_units = np.concatenate((np.array([0], dtype=np.int64), np.cumsum(gap_units, dtype=np.int64)))
+    if int(edge_units[-1]) != int(n_axis0_f):
+        raise ValueError(
+            "Recovered log-radial lattice does not end on the inferred finest radial count: "
+            f"got={int(edge_units[-1])}, expected={int(n_axis0_f)}."
+        )
+    return radial_edges, radial_edge_tol, edge_units, r0_edge_id, r1_edge_id, valid_ids
+
+
+def infer_log_radial_count(
+    points: np.ndarray,
+    corners: np.ndarray,
+    cell_levels: np.ndarray,
+    *,
+    n_axis0_f: int,
+) -> int:
+    """Infer finest radial count by validating one log-radial lattice against cell widths."""
+    recover_log_radial_lattice(
+        points,
+        corners,
+        cell_levels,
+        n_axis0_f=n_axis0_f,
+    )
+    return int(n_axis0_f)
 
 
 def snap_polar_bounds(
@@ -339,6 +408,64 @@ def snap_polar_bounds(
             return i0, i1, tol
         tol *= 2.0
     raise ValueError("Could not snap polar bounds onto the inferred spherical grid.")
+
+
+def validate_one_level_neighbors(
+    *,
+    leaf_shape: tuple[int, int, int],
+    cell_levels: np.ndarray,
+    valid_ids: np.ndarray,
+    r0_f: np.ndarray,
+    i1_f: np.ndarray,
+    i2_f: np.ndarray,
+    width_units: np.ndarray,
+) -> None:
+    """Require face-neighboring spherical cells to differ by at most one level."""
+    owner = np.full(tuple(int(v) for v in leaf_shape), -1, dtype=np.int64)
+    for row, cell_id in enumerate(valid_ids):
+        width = int(width_units[row])
+        r0 = int(r0_f[row])
+        p0 = int(i1_f[row])
+        a0 = int(i2_f[row])
+        owner[r0:r0 + width, p0:p0 + width, a0:a0 + width] = int(cell_id)
+
+    def check_axis(axis: int, *, periodic: bool = False) -> tuple[int, int] | None:
+        slicer0 = [slice(None), slice(None), slice(None)]
+        slicer1 = [slice(None), slice(None), slice(None)]
+        slicer0[axis] = slice(0, owner.shape[axis] - 1)
+        slicer1[axis] = slice(1, owner.shape[axis])
+        left = owner[tuple(slicer0)]
+        right = owner[tuple(slicer1)]
+        face_mask = (left >= 0) & (right >= 0) & (left != right)
+        if periodic:
+            wrap_left = np.take(owner, owner.shape[axis] - 1, axis=axis)
+            wrap_right = np.take(owner, 0, axis=axis)
+            wrap_mask = (wrap_left >= 0) & (wrap_right >= 0) & (wrap_left != wrap_right)
+            if np.any(wrap_mask):
+                left = np.concatenate((left[face_mask], wrap_left[wrap_mask]))
+                right = np.concatenate((right[face_mask], wrap_right[wrap_mask]))
+            else:
+                left = left[face_mask]
+                right = right[face_mask]
+        else:
+            left = left[face_mask]
+            right = right[face_mask]
+        if left.size == 0:
+            return None
+        level_diff = np.abs(cell_levels[left] - cell_levels[right])
+        if np.any(level_diff > 1):
+            bad = int(np.flatnonzero(level_diff > 1)[0])
+            return int(left[bad]), int(right[bad])
+        return None
+
+    for axis, periodic in ((0, False), (1, False), (2, True)):
+        bad_pair = check_axis(axis, periodic=periodic)
+        if bad_pair is not None:
+            left_id, right_id = bad_pair
+            raise ValueError(
+                "Spherical neighboring cells differ by more than one refinement level: "
+                f"cells {left_id} and {right_id}."
+            )
 
 
 def populate_tree_state(
@@ -382,19 +509,12 @@ def populate_tree_state(
         ignore_mask=axis_mask,
     )
 
-    log_r_min = float(np.min(cell_log_r_min[valid]))
-    log_r_max = float(np.max(cell_log_r_max[valid]))
-    radial_tol = 1e-7 * max(float(log_r_max - log_r_min), 1.0)
-    radial_edges, radial_edge_tol = cluster_close_values(
-        np.concatenate((cell_log_r_min[valid], cell_log_r_max[valid])),
-        atol=radial_tol,
+    radial_edges, radial_edge_tol, radial_edge_units, r0_edge_id, r1_edge_id, valid_ids = recover_log_radial_lattice(
+        points,
+        corners,
+        levels,
+        n_axis0_f=int(leaf_shape[0]),
     )
-    expected_edges = int(leaf_shape[0]) + 1
-    if radial_edges.size != expected_edges:
-        raise ValueError(
-            "Spherical radial edge count does not match leaf_shape: "
-            f"edges={int(radial_edges.size)}, expected={expected_edges}."
-        )
 
     tree_depth = int(max_level)
     depths = np.asarray(levels[valid_ids], dtype=np.int64)
@@ -407,28 +527,14 @@ def populate_tree_state(
     d_polar_f = np.pi / float(int(leaf_shape[1]))
     d_azimuth_f = (2.0 * np.pi) / float(int(leaf_shape[2]))
     azimuth_tol = max(1e-7 * 2.0 * np.pi, 2e-5 * d_azimuth_f)
-    r0_search = np.searchsorted(radial_edges, cell_log_r_min[valid_ids], side="left").astype(np.int64)
-    r1_search = np.searchsorted(radial_edges, cell_log_r_max[valid_ids], side="left").astype(np.int64)
-    r0_next = np.clip(r0_search, 0, radial_edges.size - 1)
-    r1_next = np.clip(r1_search, 0, radial_edges.size - 1)
-    r0_prev = np.clip(r0_search - 1, 0, radial_edges.size - 1)
-    r1_prev = np.clip(r1_search - 1, 0, radial_edges.size - 1)
-    r0_use_prev = (r0_search > 0) & (
-        np.abs(radial_edges[r0_prev] - cell_log_r_min[valid_ids])
-        <= np.abs(radial_edges[r0_next] - cell_log_r_min[valid_ids])
-    )
-    r1_use_prev = (r1_search > 0) & (
-        np.abs(radial_edges[r1_prev] - cell_log_r_max[valid_ids])
-        <= np.abs(radial_edges[r1_next] - cell_log_r_max[valid_ids])
-    )
-    r0_f = np.where(r0_use_prev, r0_prev, r0_next).astype(np.int64)
-    r1_f = np.where(r1_use_prev, r1_prev, r1_next).astype(np.int64)
+    r0_f = radial_edge_units[r0_edge_id]
+    r1_f = radial_edge_units[r1_edge_id]
     n_r_fine = int(leaf_shape[0])
     if np.any(r0_f < 0) or np.any(r1_f > n_r_fine):
         bad = int(valid_ids[np.flatnonzero((r0_f < 0) | (r1_f > n_r_fine))[0]])
         raise ValueError(f"Spherical cell {bad} radial address is outside the inferred octree grid.")
-    r0_ok = np.abs(radial_edges[r0_f] - cell_log_r_min[valid_ids]) <= radial_edge_tol[r0_f]
-    r1_ok = np.abs(radial_edges[r1_f] - cell_log_r_max[valid_ids]) <= radial_edge_tol[r1_f]
+    r0_ok = np.abs(radial_edges[r0_edge_id] - cell_log_r_min[valid_ids]) <= radial_edge_tol[r0_edge_id]
+    r1_ok = np.abs(radial_edges[r1_edge_id] - cell_log_r_max[valid_ids]) <= radial_edge_tol[r1_edge_id]
     if np.any(~r0_ok):
         bad = int(valid_ids[np.flatnonzero(~r0_ok)[0]])
         raise ValueError(f"Spherical cell {bad} r-min does not align with the inferred octree grid.")
@@ -520,6 +626,15 @@ def populate_tree_state(
     cell_ijk[valid_ids, 0] = i0
     cell_ijk[valid_ids, 1] = i1
     cell_ijk[valid_ids, 2] = i2
+    validate_one_level_neighbors(
+        leaf_shape=leaf_shape,
+        cell_levels=levels,
+        valid_ids=valid_ids,
+        r0_f=r0_f,
+        i1_f=i1_f,
+        i2_f=i2_f,
+        width_units=width_units,
+    )
 
     return {
         "cell_levels": np.asarray(cell_levels, dtype=np.int64),
