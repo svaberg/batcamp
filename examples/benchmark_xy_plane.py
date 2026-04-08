@@ -463,7 +463,7 @@ def main() -> None:
     if max_seconds_per_image <= 0.0:
         raise ValueError("max_seconds_per_image must be positive.")
 
-    repo_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parent.parent
     out_root = (repo_root / args.output_dir).resolve()
     progress_log_path = out_root / "progress.log"
     progress_log_path.parent.mkdir(parents=True, exist_ok=True)
