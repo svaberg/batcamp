@@ -44,10 +44,23 @@ def _attach_spherical_coord_state(
         np.bincount(r0_f, minlength=n_r_edges)
         + np.bincount(r1_f, minlength=n_r_edges)
     )
-    if np.any(radial_count == 0):
-        missing_edge = int(np.flatnonzero(radial_count == 0)[0])
+    used_edge = radial_count > 0
+    if not used_edge[0] or not used_edge[-1]:
+        missing_edge = int(0 if not used_edge[0] else (n_r_edges - 1))
         raise ValueError(f"Spherical lookup could not reconstruct radial edge {missing_edge}.")
-    tree.radial_edges = radial_sum / radial_count
+    radial_edges = np.full(n_r_edges, np.nan, dtype=np.float64)
+    radial_edges[used_edge] = radial_sum[used_edge] / radial_count[used_edge]
+    used_edge_ids = np.flatnonzero(used_edge)
+    for left_id, right_id in zip(used_edge_ids[:-1], used_edge_ids[1:], strict=True):
+        if right_id == left_id + 1:
+            continue
+        log_left = math.log(float(radial_edges[left_id]))
+        log_right = math.log(float(radial_edges[right_id]))
+        span = float(right_id - left_id)
+        for edge_id in range(left_id + 1, right_id):
+            t = float(edge_id - left_id) / span
+            radial_edges[edge_id] = math.exp((1.0 - t) * log_left + t * log_right)
+    tree.radial_edges = radial_edges
     r_min = float(tree.radial_edges[0])
     r_max = float(tree.radial_edges[-1])
     d_polar_f = math.pi / float(int(tree.leaf_shape[1]))
