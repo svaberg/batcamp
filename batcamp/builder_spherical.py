@@ -468,69 +468,60 @@ def validate_one_level_neighbors(
             )
 
 
-def populate_tree_state(
-    *,
-    leaf_shape: tuple[int, int, int],
-    max_level: int,
-    cell_levels: np.ndarray | None,
+def _observed_spherical_bounds(
     points: np.ndarray,
     corners: np.ndarray,
+    *,
     axis_tol: float,
-) -> dict[str, object]:
-    """Return exact spherical octree state for one built tree."""
-    if cell_levels is None:
-        raise ValueError("Spherical tree state requires cell_levels.")
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Measure per-cell spherical bounds from explicit corner geometry."""
     corners_arr = np.asarray(corners, dtype=np.int64)
-    levels = np.asarray(cell_levels, dtype=np.int64)
-    valid = levels >= 0
-    valid_ids = np.flatnonzero(valid).astype(np.int64)
-    if valid_ids.size == 0:
-        raise ValueError("Spherical tree state requires at least one valid cell level.")
-
     points_r = np.linalg.norm(points, axis=1)
     if np.any(points_r <= 0.0):
         raise ValueError("Spherical tree state requires strictly positive radius for log-radial reconstruction.")
+
     points_log_r = np.log(points_r)
     cell_log_r_min = np.min(points_log_r[corners_arr], axis=1)
     cell_log_r_max = np.max(points_log_r[corners_arr], axis=1)
+
     polar_points = np.arccos(
         np.clip(points[:, 2] / np.maximum(points_r, np.finfo(float).tiny), -1.0, 1.0)
     )
     cell_polar_min = np.min(polar_points[corners_arr], axis=1)
     cell_polar_max = np.max(polar_points[corners_arr], axis=1)
+
     azimuth_points = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-    cyl_radius = np.hypot(points[:, 0], points[:, 1])
-    axis_mask = cyl_radius[corners_arr] <= axis_tol
-    azimuth_corners = azimuth_points[corners_arr]
+    axis_mask = np.hypot(points[:, 0], points[:, 1])[corners_arr] <= axis_tol
     azimuth_start, azimuth_width = minimal_azimuth_intervals(
-        azimuth_corners,
+        azimuth_points[corners_arr],
         ignore_mask=axis_mask,
     )
+    return cell_log_r_min, cell_log_r_max, cell_polar_min, cell_polar_max, azimuth_start, azimuth_width
 
+
+def _recover_radial_addresses(
+    *,
+    points: np.ndarray,
+    corners: np.ndarray,
+    levels: np.ndarray,
+    leaf_shape: tuple[int, int, int],
+    cell_log_r_min: np.ndarray,
+    cell_log_r_max: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map observed spherical radial bounds onto the inferred fine radial grid."""
     radial_edges, radial_edge_tol, radial_edge_units, r0_edge_id, r1_edge_id, valid_ids = recover_log_radial_lattice(
         points,
         corners,
         levels,
         n_axis0_f=int(leaf_shape[0]),
     )
-
-    tree_depth = int(max_level)
-    depths = np.asarray(levels[valid_ids], dtype=np.int64)
-    shifts = np.asarray(tree_depth - depths, dtype=np.int64)
-    if np.any(shifts < 0):
-        bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
-        raise ValueError(f"Spherical cell {bad} depth exceeds tree_depth={tree_depth}.")
-    width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
-
-    d_polar_f = np.pi / float(int(leaf_shape[1]))
-    d_azimuth_f = (2.0 * np.pi) / float(int(leaf_shape[2]))
-    azimuth_tol = max(1e-7 * 2.0 * np.pi, 2e-5 * d_azimuth_f)
     r0_f = radial_edge_units[r0_edge_id]
     r1_f = radial_edge_units[r1_edge_id]
     n_r_fine = int(leaf_shape[0])
     if np.any(r0_f < 0) or np.any(r1_f > n_r_fine):
         bad = int(valid_ids[np.flatnonzero((r0_f < 0) | (r1_f > n_r_fine))[0]])
         raise ValueError(f"Spherical cell {bad} radial address is outside the inferred octree grid.")
+
     r0_ok = np.abs(radial_edges[r0_edge_id] - cell_log_r_min[valid_ids]) <= radial_edge_tol[r0_edge_id]
     r1_ok = np.abs(radial_edges[r1_edge_id] - cell_log_r_max[valid_ids]) <= radial_edge_tol[r1_edge_id]
     if np.any(~r0_ok):
@@ -539,8 +530,23 @@ def populate_tree_state(
     if np.any(~r1_ok):
         bad = int(valid_ids[np.flatnonzero(~r1_ok)[0]])
         raise ValueError(f"Spherical cell {bad} r-max does not align with the inferred octree grid.")
+    return valid_ids, r0_f, r1_f
 
+
+def _snap_angular_addresses(
+    *,
+    leaf_shape: tuple[int, int, int],
+    valid_ids: np.ndarray,
+    cell_polar_min: np.ndarray,
+    cell_polar_max: np.ndarray,
+    azimuth_start: np.ndarray,
+    azimuth_width: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Snap observed polar/azimuth bounds onto the inferred fine angular grid."""
+    d_polar_f = np.pi / float(int(leaf_shape[1]))
+    d_azimuth_f = (2.0 * np.pi) / float(int(leaf_shape[2]))
     width_azimuth = np.asarray(azimuth_width[valid_ids], dtype=float)
+    azimuth_tol = max(1e-7 * 2.0 * np.pi, 2e-5 * d_azimuth_f)
     if np.any(width_azimuth >= (2.0 * np.pi - azimuth_tol)):
         bad = int(valid_ids[np.flatnonzero(width_azimuth >= (2.0 * np.pi - azimuth_tol))[0]])
         raise ValueError(f"Spherical cell {bad} spans the full azimuth and has no unique octree address.")
@@ -556,6 +562,7 @@ def populate_tree_state(
             "Could not build a spherical octree from these points and corners. "
             "The geometry does not match the current spherical builder assumptions."
         ) from exc
+
     i2_f = np.rint(azimuth_start[valid_ids] / d_azimuth_f).astype(np.int64)
     i2_hi = np.rint((azimuth_start[valid_ids] + width_azimuth) / d_azimuth_f).astype(np.int64)
     n_polar_fine = int(leaf_shape[1])
@@ -567,37 +574,77 @@ def populate_tree_state(
     if not np.all(in_bounds):
         bad = int(valid_ids[np.flatnonzero(~in_bounds)[0]])
         raise ValueError(f"Spherical cell {bad} address is outside the inferred octree grid.")
-    if np.any(~np.isclose(cell_polar_min[valid_ids], i1_f * d_polar_f, rtol=0.0, atol=polar_tol)):
-        bad = int(
-            valid_ids[
-                np.flatnonzero(
-                    ~np.isclose(cell_polar_min[valid_ids], i1_f * d_polar_f, rtol=0.0, atol=polar_tol)
-                )[0]
-            ]
-        )
-        raise ValueError(f"Spherical cell {bad} polar-min does not align with the inferred octree grid.")
-    if np.any(~np.isclose(cell_polar_max[valid_ids], i1_hi * d_polar_f, rtol=0.0, atol=polar_tol)):
-        bad = int(
-            valid_ids[
-                np.flatnonzero(
-                    ~np.isclose(cell_polar_max[valid_ids], i1_hi * d_polar_f, rtol=0.0, atol=polar_tol)
-                )[0]
-            ]
-        )
-        raise ValueError(f"Spherical cell {bad} polar-max does not align with the inferred octree grid.")
+
+    polar_min_ok = np.isclose(cell_polar_min[valid_ids], i1_f * d_polar_f, rtol=0.0, atol=polar_tol)
+    polar_max_ok = np.isclose(cell_polar_max[valid_ids], i1_hi * d_polar_f, rtol=0.0, atol=polar_tol)
     azimuth_delta = np.abs((azimuth_start[valid_ids] - (i2_f * d_azimuth_f) + np.pi) % (2.0 * np.pi) - np.pi)
-    if np.any(azimuth_delta > azimuth_tol):
-        bad = int(valid_ids[np.flatnonzero(azimuth_delta > azimuth_tol)[0]])
+    azimuth_start_ok = azimuth_delta <= azimuth_tol
+    azimuth_width_ok = np.isclose(width_azimuth, (i2_hi - i2_f) * d_azimuth_f, rtol=0.0, atol=azimuth_tol)
+
+    if np.any(~polar_min_ok):
+        bad = int(valid_ids[np.flatnonzero(~polar_min_ok)[0]])
+        raise ValueError(f"Spherical cell {bad} polar-min does not align with the inferred octree grid.")
+    if np.any(~polar_max_ok):
+        bad = int(valid_ids[np.flatnonzero(~polar_max_ok)[0]])
+        raise ValueError(f"Spherical cell {bad} polar-max does not align with the inferred octree grid.")
+    if np.any(~azimuth_start_ok):
+        bad = int(valid_ids[np.flatnonzero(~azimuth_start_ok)[0]])
         raise ValueError(f"Spherical cell {bad} azimuth-start does not align with the inferred octree grid.")
-    if np.any(~np.isclose(width_azimuth, (i2_hi - i2_f) * d_azimuth_f, rtol=0.0, atol=azimuth_tol)):
-        bad = int(
-            valid_ids[
-                np.flatnonzero(
-                    ~np.isclose(width_azimuth, (i2_hi - i2_f) * d_azimuth_f, rtol=0.0, atol=azimuth_tol)
-                )[0]
-            ]
-        )
+    if np.any(~azimuth_width_ok):
+        bad = int(valid_ids[np.flatnonzero(~azimuth_width_ok)[0]])
         raise ValueError(f"Spherical cell {bad} azimuth-width does not align with the inferred octree grid.")
+    return i1_f, i1_hi, i2_f, i2_hi
+
+
+def populate_tree_state(
+    *,
+    leaf_shape: tuple[int, int, int],
+    max_level: int,
+    cell_levels: np.ndarray | None,
+    points: np.ndarray,
+    corners: np.ndarray,
+    axis_tol: float,
+) -> dict[str, object]:
+    """Return exact spherical octree state for one built tree."""
+    if cell_levels is None:
+        raise ValueError("Spherical tree state requires cell_levels.")
+    levels = np.asarray(cell_levels, dtype=np.int64)
+    valid = levels >= 0
+    if not np.any(valid):
+        raise ValueError("Spherical tree state requires at least one valid cell level.")
+
+    cell_log_r_min, cell_log_r_max, cell_polar_min, cell_polar_max, azimuth_start, azimuth_width = (
+        _observed_spherical_bounds(
+            points,
+            corners,
+            axis_tol=axis_tol,
+        )
+    )
+
+    tree_depth = int(max_level)
+    valid_ids, r0_f, r1_f = _recover_radial_addresses(
+        points=points,
+        corners=corners,
+        levels=levels,
+        leaf_shape=leaf_shape,
+        cell_log_r_min=cell_log_r_min,
+        cell_log_r_max=cell_log_r_max,
+    )
+    depths = levels[valid_ids]
+    shifts = np.asarray(tree_depth - depths, dtype=np.int64)
+    if np.any(shifts < 0):
+        bad = int(valid_ids[np.flatnonzero(shifts < 0)[0]])
+        raise ValueError(f"Spherical cell {bad} depth exceeds tree_depth={tree_depth}.")
+    width_units = np.left_shift(np.ones_like(shifts, dtype=np.int64), shifts)
+
+    i1_f, i1_hi, i2_f, i2_hi = _snap_angular_addresses(
+        leaf_shape=leaf_shape,
+        valid_ids=valid_ids,
+        cell_polar_min=cell_polar_min,
+        cell_polar_max=cell_polar_max,
+        azimuth_start=azimuth_start,
+        azimuth_width=azimuth_width,
+    )
 
     spans_ok = (
         ((r1_f - r0_f) == width_units)

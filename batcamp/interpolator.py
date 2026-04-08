@@ -53,6 +53,33 @@ _RPA_TRILINEAR_BITS = np.array(
 
 
 @njit(cache=True)
+def _clamp_unit_interval(value: float) -> float:
+    """Clamp one interpolation fraction onto the unit interval."""
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+@njit(cache=True)
+def _axis_fraction(value: float, start: float, width: float) -> float:
+    """Return one clamped affine cell fraction along a non-periodic axis."""
+    return _clamp_unit_interval((value - start) / max(width, _TINY))
+
+
+@njit(cache=True)
+def _periodic_axis_fraction(value: float, start: float, width: float, period: float) -> float:
+    """Return one clamped affine cell fraction along a periodic axis."""
+    if width <= _TINY:
+        return 0.0
+    wrapped = (value - start) % period
+    if width < (period - 1.0e-10) and wrapped > width:
+        wrapped = width
+    return _clamp_unit_interval(wrapped / max(width, _TINY))
+
+
+@njit(cache=True)
 def _accumulate_trilinear(
     out_row: np.ndarray,
     cell_id: int,
@@ -94,38 +121,14 @@ def _interp_cell_rpa(
 ) -> None:
     """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
     cell_id = int(cell_id)
-
-    frac_r = (r - cell_bounds[cell_id, AXIS0, START]) / max(
-        cell_bounds[cell_id, AXIS0, WIDTH], _TINY
+    frac_r = _axis_fraction(r, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
+    frac_p = _axis_fraction(polar, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
+    frac_a = _periodic_axis_fraction(
+        azimuth,
+        cell_bounds[cell_id, AXIS2, START],
+        cell_bounds[cell_id, AXIS2, WIDTH],
+        _TWO_PI,
     )
-    if frac_r < 0.0:
-        frac_r = 0.0
-    elif frac_r > 1.0:
-        frac_r = 1.0
-
-    frac_p = (polar - cell_bounds[cell_id, AXIS1, START]) / max(
-        cell_bounds[cell_id, AXIS1, WIDTH], _TINY
-    )
-    if frac_p < 0.0:
-        frac_p = 0.0
-    elif frac_p > 1.0:
-        frac_p = 1.0
-
-    cell_a_width = cell_bounds[cell_id, AXIS2, WIDTH]
-    a_rel = (azimuth - cell_bounds[cell_id, AXIS2, START]) % _TWO_PI
-    if cell_a_width <= _TINY:
-        frac_a = 0.0
-    else:
-        if cell_a_width < (_TWO_PI - 1.0e-10):
-            if a_rel < 0.0:
-                a_rel = 0.0
-            elif a_rel > cell_a_width:
-                a_rel = cell_a_width
-        frac_a = a_rel / max(cell_a_width, _TINY)
-        if frac_a < 0.0:
-            frac_a = 0.0
-        elif frac_a > 1.0:
-            frac_a = 1.0
 
     _accumulate_trilinear(
         out_row,
@@ -152,27 +155,9 @@ def _interp_cell_xyz(
 ) -> None:
     """Write one Cartesian trilinear interpolation result row for one leaf cell using flat point values."""
     cell_id = int(cell_id)
-    frac_x = (x - cell_bounds[cell_id, AXIS0, START]) / max(
-        cell_bounds[cell_id, AXIS0, WIDTH], _TINY
-    )
-    if frac_x < 0.0:
-        frac_x = 0.0
-    elif frac_x > 1.0:
-        frac_x = 1.0
-    frac_y = (y - cell_bounds[cell_id, AXIS1, START]) / max(
-        cell_bounds[cell_id, AXIS1, WIDTH], _TINY
-    )
-    if frac_y < 0.0:
-        frac_y = 0.0
-    elif frac_y > 1.0:
-        frac_y = 1.0
-    frac_z = (z - cell_bounds[cell_id, AXIS2, START]) / max(
-        cell_bounds[cell_id, AXIS2, WIDTH], _TINY
-    )
-    if frac_z < 0.0:
-        frac_z = 0.0
-    elif frac_z > 1.0:
-        frac_z = 1.0
+    frac_x = _axis_fraction(x, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
+    frac_y = _axis_fraction(y, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
+    frac_z = _axis_fraction(z, cell_bounds[cell_id, AXIS2, START], cell_bounds[cell_id, AXIS2, WIDTH])
 
     _accumulate_trilinear(
         out_row,
@@ -330,6 +315,36 @@ class OctreeInterpolator:
 
         raise ValueError("Call with xi or with x1, x2, x3.")
 
+    def _normalize_fill_value(self, n_components: int) -> np.ndarray:
+        """Return one flat fill-value vector matching the interpolated component count."""
+        if np.isscalar(self.fill_value):
+            return np.full(n_components, float(self.fill_value), dtype=np.float64)
+
+        fill = np.array(self.fill_value, dtype=np.float64).reshape(-1)
+        if fill.size == 1:
+            return np.full(n_components, float(fill[0]), dtype=np.float64)
+        if fill.size != n_components:
+            raise ValueError(
+                f"fill_value has {fill.size} entries but interpolated values require {n_components} components."
+            )
+        return fill
+
+    def _kernel_inputs(
+        self,
+        q_array: np.ndarray,
+        query_coord: Literal["xyz", "rpa"],
+    ) -> tuple[np.ndarray, callable]:
+        """Return kernel-local queries and the matching interpolation kernel."""
+        if self.tree.tree_coord == "xyz":
+            return q_array, _interp_cells_xyz
+        if query_coord == "rpa":
+            return q_array, _interp_cells_rpa
+
+        from .spherical import xyz_arrays_to_rpa
+
+        kernel_queries = np.column_stack(xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
+        return kernel_queries, _interp_cells_rpa
+
     def __call__(
         self,
         *args,
@@ -358,29 +373,10 @@ class OctreeInterpolator:
         n = q_array.shape[0]
         trailing = self._value_shape_tail
         n_components = int(self._point_values_2d.shape[1])
-        if np.isscalar(self.fill_value):
-            fill = np.full(n_components, float(self.fill_value), dtype=np.float64)
-        else:
-            fill = np.array(self.fill_value, dtype=np.float64).reshape(-1)
-            if fill.size == 1:
-                fill = np.full(n_components, float(fill[0]), dtype=np.float64)
-            elif fill.size != n_components:
-                raise ValueError(
-                    f"fill_value has {fill.size} entries but interpolated values require {n_components} components."
-                )
+        fill = self._normalize_fill_value(n_components)
 
         cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
-        if self.tree.tree_coord == "rpa":
-            if qs == "rpa":
-                kernel_queries = q_array
-            else:
-                from .spherical import xyz_arrays_to_rpa
-
-                kernel_queries = np.column_stack(xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
-            kernel = _interp_cells_rpa
-        else:
-            kernel_queries = q_array
-            kernel = _interp_cells_xyz
+        kernel_queries, kernel = self._kernel_inputs(q_array, qs)
         out2d = kernel(
             kernel_queries,
             cell_ids,
