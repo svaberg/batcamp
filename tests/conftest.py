@@ -39,7 +39,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 @lru_cache(maxsize=1)
 def _build_difflevels_rpa_case() -> tuple[Dataset, Octree]:
     """Build and cache one representative spherical dataset/tree pair."""
-    input_file = data_file("3d__var_1_n00000000.plt")
+    input_file = data_file("3d__var_2_n00060005.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
     assert ds.corners is not None
