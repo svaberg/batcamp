@@ -935,5 +935,11 @@ def test_lookup_gap_none_for_disjoint_cartesian_cells() -> None:
 def test_lookup_gap_none_for_disjoint_spherical_shells() -> None:
     """Gappy spherical shells should be rejected by the builder."""
     ds = _build_disjoint_spherical_shell_dataset()
-    with pytest.raises(ValueError, match="(radial edge count does not match leaf_shape|Cells overlap at octree address)"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            "(radial edge count does not match leaf_shape|"
+            "Cells overlap at octree address)"
+        ),
+    ):
         Octree.from_ds(ds, tree_coord="rpa")
