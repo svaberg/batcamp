@@ -1,12 +1,8 @@
 <h1><img src="https://raw.githubusercontent.com/svaberg/batcamp/0.0.0/assets/batcamp.png" alt="batcamp logo"> batcamp</h1>
 
-[![Tests](https://github.com/svaberg/batcamp/actions/workflows/tests.yml/badge.svg)](https://github.com/svaberg/batcamp/actions/workflows/tests.yml)
-[![PyPI version](https://badge.fury.io/py/batcamp.svg)](https://pypi.org/project/batcamp/)
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
-[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
-[![DOI](https://zenodo.org/badge/1177665095.svg)](https://doi.org/10.5281/zenodo.19163499)
+[![Tests](https://github.com/svaberg/batcamp/actions/workflows/tests.yml/badge.svg)](https://github.com/svaberg/batcamp/actions/workflows/tests.yml) [![PyPI version](https://badge.fury.io/py/batcamp.svg)](https://pypi.org/project/batcamp/) [![Codacy Badge](https://app.codacy.com/project/badge/Grade/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade) [![Codacy Badge](https://app.codacy.com/project/badge/Coverage/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage) [![DOI](https://zenodo.org/badge/1177665095.svg)](https://doi.org/10.5281/zenodo.19163499)
 
-`batcamp` reconstructs octrees from BATSRUS-like outputs, with support for both spherical and cartesian data.
+`batcamp` reconstructs traversable octrees from BATSRUS-like outputs, and supports both spherical and cartesian data.
 
 ## What it does
 
@@ -17,40 +13,43 @@
 
 Some numerical codes provide leaf-cell values without storing the octree data. `batcamp` rebuilds that structure, permitting rapid interpolation and resampling.
 
-## Quick start
+## Installation
 Install the package with `pip`:
 
 ```bash
 pip install batcamp
 ```
-The following code plots a two dimensional density slice.
+
+## Quick start
+The octree interpolator interface is made to resemble the [`scipy` `LinearNDInterpolator`](https://scipy.github.io/devdocs/reference/generated/scipy.interpolate.LinearNDInterpolator.html). The following code plots a two-dimensional density slice.
 ```python
-import numpy as np
-import matplotlib.pyplot as plt
-
+# Read an example dataset using the batread library
 from batread import Dataset
-from batcamp import Octree
-from batcamp import OctreeInterpolator
-
-# Read the dataset
 ds = Dataset.from_file("MY_FILE")
 print(ds)
 
-points = ds[["X [R]", "Y [R]", "Z [R]"]]  # Point-coordinate array with shape (n_points, 3).
-corners = ds.corners  # Cell-to-corner connectivity with shape (n_cells, 8).
-
-# Build the octree from points and corners, then create the interpolator on top of it.
-octree = Octree(points, corners)
+# Build the octree from the dataset points and corners.
+from batcamp import Octree
+octree = Octree(
+    points=ds[["X [R]", "Y [R]", "Z [R]"]],
+    corners=ds.corners)
 print(octree)
-density_values = ds["Rho [g/cm^3]"]
-interp = OctreeInterpolator(octree, density_values)
-print(interp)
 
-# Create a grid of points and interpolate the density
-X, Y = np.meshgrid(np.linspace(-20, 20, 100), np.linspace(-20, 20, 100))
+# Build the interpolator object from the octree and data values
+from batcamp import OctreeInterpolator
+octree_interpolator = OctreeInterpolator(octree, values=ds["Rho [g/cm^3]", "ti [K]"])
+print(octree_interpolator)
+
+# Create a regular grid of points, interpolate the data 
+# onto them, and display the result with matplotlib
+import numpy as np
+import matplotlib.pyplot as plt
+X, Y = np.meshgrid(np.linspace(-24, 24, 512), np.linspace(-24, 24, 512))
 Z = np.zeros_like(X)
-density = interp(X, Y, Z)
-plt.pcolormesh(X, Y, density, norm="log")
+rho_and_ti = octree_interpolator(X, Y, Z)
+plt.pcolormesh(X, Y, rho_and_ti[..., 0], norm="log")
+plt.colorbar()
+plt.show()
 ```
 
-See the examples folder [examples/quick_start.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/quick_start.ipynb) for a running example.
+See [examples/quick_start.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/quick_start.ipynb) for a larger example.
