@@ -43,7 +43,7 @@ jobs:
 
       - name: Run default test suite with coverage
         shell: bash -l {0}
-        run: pytest -q -m "not pooch and not perf" --cov=batcamp --cov-report=xml:pytest-cobertura.xml
+        run: pytest -q -m "not pooch and not perf" --cov=. --cov-report=xml:pytest-cobertura.xml
 
       - name: Codacy Coverage Reporter
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

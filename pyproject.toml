@@ -54,3 +54,9 @@ markers = [
   "pooch: tests that fetch sample files via pooch/network",
   "perf: performance-sensitive tests",
 ]
+
+[tool.coverage.run]
+omit = [
+  "tests/*",
+  "examples/*",
+]
