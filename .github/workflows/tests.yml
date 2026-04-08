@@ -45,6 +45,13 @@ jobs:
         shell: bash -l {0}
         run: pytest -q --cov=batcamp --cov-report=xml:pytest-cobertura.xml
 
+      - name: Codacy Coverage Reporter
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: pytest-cobertura.xml
+
   build:
     runs-on: ubuntu-latest
     steps:
