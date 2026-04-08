@@ -59,6 +59,11 @@ def infer_tree_coord_from_geometry(
     uz = np.array([np.unique(row).size for row in zr], dtype=np.int64)
     axis_like = (ux <= 2) & (uy <= 2) & (uz <= 2)
     frac_axis_like = float(np.mean(axis_like)) if axis_like.size > 0 else 0.0
+    logger.debug(
+        "infer tree coord geometry: frac_axis_like=%.6f n_sample=%d",
+        frac_axis_like,
+        int(axis_like.size),
+    )
     return "xyz" if frac_axis_like >= 0.98 else "rpa"
 
 
