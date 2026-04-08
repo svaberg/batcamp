@@ -420,6 +420,11 @@ def _set_resolution_ticks(ax: plt.Axes, resolution: np.ndarray) -> None:
     ax.set_xticklabels([f"{int(n)}x{int(n)}" for n in resolution], rotation=35, ha="right")
 
 
+def _artifact_path(out_root: Path, *, case_label: str, name: str) -> Path:
+    """Return one flat artifact path under the benchmark output root."""
+    return out_root / f"benchmark_xy_plane_{case_label}_{name}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resample the reference 3D files onto one fixed xy plane.")
     parser.add_argument(
@@ -453,7 +458,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default="artifacts/resample_xy_plane",
+        default="artifacts",
         help="Output directory for PNGs and tables.",
     )
     args = parser.parse_args()
@@ -465,8 +470,8 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parent.parent
     out_root = (repo_root / args.output_dir).resolve()
-    progress_log_path = out_root / "progress.log"
-    progress_log_path.parent.mkdir(parents=True, exist_ok=True)
+    out_root.mkdir(parents=True, exist_ok=True)
+    progress_log_path = out_root / "benchmark_xy_plane.log"
     progress_log_path.write_text("", encoding="utf-8")
     _configure_progress_logging(log_path=progress_log_path)
     _configure_builder_logging(log_path=progress_log_path)
@@ -480,10 +485,8 @@ def main() -> None:
 
     progress.note(f"output_dir={out_root}")
     for case in cases:
-        case_dir = out_root / case.label
-        case_dir.mkdir(parents=True, exist_ok=True)
-
         progress.note(f"[{case.label}] file={case.file_name}")
+        progress.note(f"[{case.label}] artifact_prefix=benchmark_xy_plane_{case.label}_*")
         progress.start(f"[{case.label}] resolve data file")
         data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
         progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
@@ -566,7 +569,7 @@ def main() -> None:
             rows.append(row)
 
             _save_xy_plane_figure(
-                case_dir / f"xy_plane_{n}x{n}.png",
+                _artifact_path(out_root, case_label=case.label, name=f"xy_plane_{n}x{n}.png"),
                 dataset_label=f"{case.label}:{case.file_name}",
                 variable=args.variable,
                 n_plane=int(n),
@@ -578,7 +581,7 @@ def main() -> None:
             )
             _write_timing_table(
                 rows,
-                case_dir / "timing_report.md",
+                _artifact_path(out_root, case_label=case.label, name="timing_report.md"),
                 octree_tree_s=float(tree_s),
                 octree_interp_s=float(interp_s),
                 nearest_build_s=float(nearest_build_s),
@@ -588,7 +591,7 @@ def main() -> None:
             )
             _save_runtime_plot(
                 rows,
-                case_dir / "runtime_vs_pixels.png",
+                _artifact_path(out_root, case_label=case.label, name="runtime_vs_pixels.png"),
                 title=f"{case.label}: xy plane runtime",
                 cold_resolution=warm_n,
                 octree_cold_s=float(octree_warm_s),
@@ -596,7 +599,7 @@ def main() -> None:
             )
             _save_comparison_plot(
                 rows,
-                case_dir / "octree_vs_nearest.png",
+                _artifact_path(out_root, case_label=case.label, name="octree_vs_nearest.png"),
                 title=f"{case.label}: octree vs scipy nearest",
             )
             progress.complete(
@@ -606,7 +609,7 @@ def main() -> None:
             if max(octree_plane_s, nearest_plane_s) > max_seconds_per_image:
                 progress.note(f"[{case.label}] stop at {n}x{n}: reached {max_seconds_per_image:.2f}s limit")
                 break
-        progress.note(f"[{case.label}] done -> {case_dir}")
+        progress.note(f"[{case.label}] done -> benchmark_xy_plane_{case.label}_*")
 
 
 if __name__ == "__main__":

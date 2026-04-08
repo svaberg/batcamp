@@ -555,6 +555,11 @@ def _save_parity_scatter(
     plt.close(fig)
 
 
+def _artifact_path(out_root: Path, *, case_label: str, name: str) -> Path:
+    """Return one flat artifact path under the benchmark output root."""
+    return out_root / f"benchmark_random_points_{case_label}_{name}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare octree random-point resampling against SciPy linear and nearest ND interpolation."
@@ -584,7 +589,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default="artifacts/resample_random_points",
+        default="artifacts",
         help="Output directory for timing reports and plots.",
     )
     args = parser.parse_args()
@@ -596,8 +601,8 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parent.parent
     out_root = (repo_root / args.output_dir).resolve()
-    progress_log_path = out_root / "progress.log"
-    progress_log_path.parent.mkdir(parents=True, exist_ok=True)
+    out_root.mkdir(parents=True, exist_ok=True)
+    progress_log_path = out_root / "benchmark_random_points.log"
     progress_log_path.write_text("", encoding="utf-8")
     _configure_progress_logging(log_path=progress_log_path)
     _configure_builder_logging(log_path=progress_log_path)
@@ -613,11 +618,8 @@ def main() -> None:
     progress.note(f"query_counts={query_counts}")
 
     for case_index, case in enumerate(cases):
-        case_dir = out_root / case.label
-        case_dir.mkdir(parents=True, exist_ok=True)
-
         progress.note(f"[{case.label}] file={case.file_name}")
-        progress.note(f"[{case.label}] artifacts={case_dir}")
+        progress.note(f"[{case.label}] artifact_prefix=benchmark_random_points_{case.label}_*")
         progress.start(f"[{case.label}] resolve data file")
         data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
         progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
@@ -824,7 +826,7 @@ def main() -> None:
 
             _write_report(
                 rows,
-                case_dir / "timing_report.md",
+                _artifact_path(out_root, case_label=case.label, name="timing_report.md"),
                 dataset_label=case.label,
                 file_name=case.file_name,
                 variable=str(args.variable),
@@ -844,7 +846,7 @@ def main() -> None:
             )
             _save_runtime_plot(
                 rows,
-                case_dir / "runtime_vs_queries.png",
+                _artifact_path(out_root, case_label=case.label, name="runtime_vs_queries.png"),
                 dataset_label=case.label,
                 linear_label=linear_label,
                 cold_query_count=int(warm_count),
@@ -854,14 +856,14 @@ def main() -> None:
             )
             _save_accuracy_plot(
                 rows,
-                case_dir / "accuracy_vs_queries.png",
+                _artifact_path(out_root, case_label=case.label, name="accuracy_vs_queries.png"),
                 dataset_label=case.label,
                 linear_label=linear_label,
             )
             _save_parity_scatter(
                 largest_octree_vals,
                 largest_nearest_vals,
-                case_dir / "parity_scatter.png",
+                _artifact_path(out_root, case_label=case.label, name="parity_scatter.png"),
                 dataset_label=case.label,
                 query_count=largest_count,
                 linear_vals=largest_linear_vals,
@@ -886,7 +888,7 @@ def main() -> None:
                 progress.note(f"[{case.label}] stop at n_query={n_query}: {detail}")
                 break
 
-        progress.note(f"[{case.label}] done -> {case_dir}")
+        progress.note(f"[{case.label}] done -> benchmark_random_points_{case.label}_*")
 
 
 if __name__ == "__main__":
