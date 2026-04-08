@@ -320,6 +320,27 @@ def infer_log_radial_count(
     return int(radial_edges.size - 1)
 
 
+def snap_polar_bounds(
+    cell_polar_min: np.ndarray,
+    cell_polar_max: np.ndarray,
+    *,
+    d_polar_f: float,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Snap observed polar bounds to the nearest fine-grid lines with progressive tolerance."""
+    i0 = np.rint(cell_polar_min / d_polar_f).astype(np.int64)
+    i1 = np.rint(cell_polar_max / d_polar_f).astype(np.int64)
+    base_tol = max(1e-7 * np.pi, 2e-5 * d_polar_f)
+    max_tol = 0.49 * d_polar_f
+    tol = float(base_tol)
+    while tol <= max_tol:
+        min_ok = np.isclose(cell_polar_min, i0 * d_polar_f, rtol=0.0, atol=tol)
+        max_ok = np.isclose(cell_polar_max, i1 * d_polar_f, rtol=0.0, atol=tol)
+        if np.all(min_ok) and np.all(max_ok):
+            return i0, i1, tol
+        tol *= 2.0
+    raise ValueError("Could not snap polar bounds onto the inferred spherical grid.")
+
+
 def populate_tree_state(
     *,
     leaf_shape: tuple[int, int, int],
@@ -385,7 +406,6 @@ def populate_tree_state(
 
     d_polar_f = np.pi / float(int(leaf_shape[1]))
     d_azimuth_f = (2.0 * np.pi) / float(int(leaf_shape[2]))
-    polar_tol = max(1e-7 * np.pi, 2e-5 * d_polar_f)
     azimuth_tol = max(1e-7 * 2.0 * np.pi, 2e-5 * d_azimuth_f)
     r0_search = np.searchsorted(radial_edges, cell_log_r_min[valid_ids], side="left").astype(np.int64)
     r1_search = np.searchsorted(radial_edges, cell_log_r_max[valid_ids], side="left").astype(np.int64)
@@ -421,8 +441,17 @@ def populate_tree_state(
         bad = int(valid_ids[np.flatnonzero(width_azimuth >= (2.0 * np.pi - azimuth_tol))[0]])
         raise ValueError(f"Spherical cell {bad} spans the full azimuth and has no unique octree address.")
 
-    i1_f = np.rint(cell_polar_min[valid_ids] / d_polar_f).astype(np.int64)
-    i1_hi = np.rint(cell_polar_max[valid_ids] / d_polar_f).astype(np.int64)
+    try:
+        i1_f, i1_hi, polar_tol = snap_polar_bounds(
+            cell_polar_min[valid_ids],
+            cell_polar_max[valid_ids],
+            d_polar_f=d_polar_f,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Could not build a spherical octree from these points and corners. "
+            "The geometry does not match the current spherical builder assumptions."
+        ) from exc
     i2_f = np.rint(azimuth_start[valid_ids] / d_azimuth_f).astype(np.int64)
     i2_hi = np.rint((azimuth_start[valid_ids] + width_azimuth) / d_azimuth_f).astype(np.int64)
     n_polar_fine = int(leaf_shape[1])
