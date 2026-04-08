@@ -4,6 +4,5 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Local copied data for demos/tests (not versioned)
-sample_data/
+# Test output
 artifacts/
