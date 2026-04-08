@@ -13,7 +13,7 @@ from batcamp.octree import _find_cells
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh as _build_spherical_hex_mesh
-from octree_test_support import cell_bounds
+from tests.octree_test_support import cell_bounds
 
 
 def _build_fake_dataset(
