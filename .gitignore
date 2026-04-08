@@ -6,3 +6,9 @@ __pycache__/
 
 # Test output
 artifacts/
+
+# Local notes/docs
+DEBT.md
+TODO.md
+good-practices.md
+private_use_inventory.md
