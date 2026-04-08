@@ -50,16 +50,6 @@ def _attach_spherical_coord_state(
         raise ValueError(f"Spherical lookup could not reconstruct radial edge {missing_edge}.")
     radial_edges = np.full(n_r_edges, np.nan, dtype=np.float64)
     radial_edges[used_edge] = radial_sum[used_edge] / radial_count[used_edge]
-    used_edge_ids = np.flatnonzero(used_edge)
-    for left_id, right_id in zip(used_edge_ids[:-1], used_edge_ids[1:], strict=True):
-        if right_id == left_id + 1:
-            continue
-        log_left = math.log(float(radial_edges[left_id]))
-        log_right = math.log(float(radial_edges[right_id]))
-        span = float(right_id - left_id)
-        for edge_id in range(left_id + 1, right_id):
-            t = float(edge_id - left_id) / span
-            radial_edges[edge_id] = math.exp((1.0 - t) * log_left + t * log_right)
     tree.radial_edges = radial_edges
     r_min = float(tree.radial_edges[0])
     r_max = float(tree.radial_edges[-1])
@@ -77,6 +67,16 @@ def _attach_spherical_coord_state(
     cell_width = np.left_shift(np.ones_like(cell_shift, dtype=np.int64), cell_shift)
     cell_r0_f = np.left_shift(tree.cell_ijk[occupied_ids, AXIS0], cell_shift)
     cell_r1_f = cell_r0_f + cell_width
+    if np.any(np.isnan(tree.radial_edges[cell_r0_f])) or np.any(np.isnan(tree.radial_edges[cell_r1_f])):
+        missing_edge = int(
+            np.concatenate(
+                (
+                    cell_r0_f[np.isnan(tree.radial_edges[cell_r0_f])],
+                    cell_r1_f[np.isnan(tree.radial_edges[cell_r1_f])],
+                )
+            )[0]
+        )
+        raise ValueError(f"Spherical occupied cell requires unobserved radial edge {missing_edge}.")
     cell_polar0_f = np.left_shift(tree.cell_ijk[occupied_ids, AXIS1], cell_shift)
     cell_polar1_f = cell_polar0_f + cell_width
     cell_azimuth0_f = np.left_shift(tree.cell_ijk[occupied_ids, AXIS2], cell_shift)

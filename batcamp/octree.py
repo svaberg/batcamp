@@ -504,12 +504,12 @@ class Octree:
 
     @property
     def radial_edges(self) -> np.ndarray:
-        """Return finest radial edge locations for spherical trees."""
+        """Return spherical radial edge locations, with `NaN` where no occupied cell uses that fine edge."""
         return self._radial_edges
 
     @radial_edges.setter
     def radial_edges(self, radial_edges: np.ndarray) -> None:
-        """Store finest radial edge locations for spherical trees."""
+        """Store spherical radial edge locations, with `NaN` where no occupied cell uses that fine edge."""
         self._radial_edges = radial_edges
 
     def save(self, path: str | Path) -> None:
