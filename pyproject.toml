@@ -9,6 +9,7 @@ description = "Octree reconstruction and interpolation utilities"
 readme = "pypi.md"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "Dag Evensberget" },
 ]
@@ -45,9 +46,6 @@ examples = [
 
 [tool.setuptools.packages.find]
 include = ["batcamp*"]
-
-[tool.setuptools]
-license-files = ["LICENSE"]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "tests"]
