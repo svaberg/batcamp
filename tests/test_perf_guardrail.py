@@ -88,7 +88,7 @@ def test_build_and_query_runtime_guardrail() -> None:
     ids=["cartesian_midplane", "spherical_midplane"],
 )
 def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: str) -> None:
-    """Octree plane-resampling ramp should beat SciPy Delaunay+LinearND end to end."""
+    """Warm-start plane-resampling ramp should beat SciPy Delaunay+LinearND."""
     input_file = data_file(file_name)
     assert input_file.exists(), f"Missing sample file: {input_file}"
 
@@ -96,11 +96,18 @@ def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: 
     xyz = _xyz_points(ds)
     values = np.asarray(ds[_RHO], dtype=float)
     queries = [_xy_plane_queries(xyz, resolution=n) for n in _PLANE_RAMP]
+    warm_q = queries[0]
 
     oct_query_times: list[float] = []
     oct_results: list[np.ndarray] = []
     t0 = perf_counter()
     oct_interp = OctreeInterpolator(Octree.from_ds(ds, tree_coord=tree_coord), values)
+    oct_build_s = float(perf_counter() - t0)
+    np.asarray(
+        oct_interp(warm_q, query_coord="xyz", log_outside_domain=False),
+        dtype=float,
+    )
+    t0 = perf_counter()
     for q in queries:
         t1 = perf_counter()
         out = np.asarray(
@@ -109,7 +116,7 @@ def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: 
         )
         oct_query_times.append(float(perf_counter() - t1))
         oct_results.append(out)
-    oct_total_s = float(perf_counter() - t0)
+    oct_total_s = oct_build_s + float(perf_counter() - t0)
 
     scipy_query_times: list[float] = []
     overlap_total = 0
@@ -118,6 +125,9 @@ def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: 
     t0 = perf_counter()
     tri = Delaunay(xyz)
     scipy_interp = LinearNDInterpolator(tri, values, fill_value=np.nan)
+    scipy_build_s = float(perf_counter() - t0)
+    np.asarray(scipy_interp(warm_q), dtype=float)
+    t0 = perf_counter()
     for q, oct_vals in zip(queries, oct_results):
         t1 = perf_counter()
         scipy_vals = np.asarray(scipy_interp(q), dtype=float)
@@ -127,15 +137,12 @@ def test_resampling_ramp_faster_than_scipy_linearnd(file_name: str, tree_coord: 
         oct_finite_total += int(np.count_nonzero(oct_finite))
         scipy_finite_total += int(np.count_nonzero(scipy_finite))
         overlap_total += int(np.count_nonzero(oct_finite & scipy_finite))
-    scipy_total_s = float(perf_counter() - t0)
+    scipy_total_s = scipy_build_s + float(perf_counter() - t0)
 
     assert oct_finite_total > 0, f"octree produced no finite values for {file_name}"
     assert scipy_finite_total > 0, f"SciPy produced no finite values for {file_name}"
     assert overlap_total > 0, f"No finite overlap between octree and SciPy for {file_name}"
-    # GitHub runners vary enough that a fixed 20% wall-clock margin is brittle.
-    # Keep the guardrail at the simpler requirement that the octree end-to-end
-    # ramp remains faster than SciPy on the representative datasets.
-    assert oct_total_s < scipy_total_s, (
+    assert oct_total_s < 0.8 * scipy_total_s, (
         f"{file_name} end-to-end ramp too slow: "
         f"octree={oct_total_s:.3f}s vs scipy={scipy_total_s:.3f}s; "
         f"oct_query={oct_query_times}; scipy_query={scipy_query_times}; "
