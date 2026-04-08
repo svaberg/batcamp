@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from .builder import DEFAULT_LEVEL_ATOL
+from .builder import DEFAULT_LEVEL_RTOL
+from .builder import DEFAULT_POSITIVE_TINY
 from .builder import LevelShapeStatsMap
+from .builder import SHAPE_MATCH_ATOL
+from .builder import SHAPE_MATCH_RTOL
 from .builder import median_positive
 from .builder import _resolve_cell_levels
 
@@ -31,12 +36,12 @@ def infer_xyz_levels_from_cell_spans(
     dy: np.ndarray,
     dz: np.ndarray,
     *,
-    rtol: float = 2e-2,
+    rtol: float = SHAPE_MATCH_RTOL,
     atol: float = 1e-10,
 ) -> np.ndarray:
     """Infer dyadic xyz refinement levels from per-cell axis-aligned spans."""
     levels = np.full(dx.shape, -1, dtype=np.int64)
-    tiny = max(float(atol), 1e-12)
+    tiny = max(float(atol), DEFAULT_POSITIVE_TINY)
     valid = (dx > tiny) & (dy > tiny) & (dz > tiny) & np.isfinite(dx) & np.isfinite(dy) & np.isfinite(dz)
     if not np.any(valid):
         return levels
@@ -67,8 +72,8 @@ def infer_levels(
     corners: np.ndarray,
     *,
     cell_levels: np.ndarray | None = None,
-    level_rtol: float = 1e-4,
-    level_atol: float = 1e-9,
+    level_rtol: float = DEFAULT_LEVEL_RTOL,
+    level_atol: float = DEFAULT_LEVEL_ATOL,
 ) -> tuple[np.ndarray, int, tuple[int, int, int]]:
     """Infer or validate Cartesian levels and return the finest Cartesian shape."""
     cell_min, cell_max, cell_span = cell_geometry(points, corners)
@@ -78,7 +83,7 @@ def infer_levels(
             cell_span[:, 0],
             cell_span[:, 1],
             cell_span[:, 2],
-            rtol=max(2e-2, float(level_rtol)),
+            rtol=max(SHAPE_MATCH_RTOL, float(level_rtol)),
             atol=max(1e-10, float(level_atol)),
         )
     levels, max_level = _resolve_cell_levels(
@@ -135,11 +140,11 @@ def infer_level_shapes(
         ref_dx = float(xyz_span[0]) / n_x
         ref_dy = float(xyz_span[1]) / n_y
         ref_dz = float(xyz_span[2]) / n_z
-        if not np.isclose(med_dx, ref_dx, rtol=2e-2, atol=1e-9):
+        if not np.isclose(med_dx, ref_dx, rtol=SHAPE_MATCH_RTOL, atol=SHAPE_MATCH_ATOL):
             raise ValueError(f"Level {level} has inconsistent dx={med_dx:.6e} vs inferred {ref_dx:.6e}.")
-        if not np.isclose(med_dy, ref_dy, rtol=2e-2, atol=1e-9):
+        if not np.isclose(med_dy, ref_dy, rtol=SHAPE_MATCH_RTOL, atol=SHAPE_MATCH_ATOL):
             raise ValueError(f"Level {level} has inconsistent dy={med_dy:.6e} vs inferred {ref_dy:.6e}.")
-        if not np.isclose(med_dz, ref_dz, rtol=2e-2, atol=1e-9):
+        if not np.isclose(med_dz, ref_dz, rtol=SHAPE_MATCH_RTOL, atol=SHAPE_MATCH_ATOL):
             raise ValueError(f"Level {level} has inconsistent dz={med_dz:.6e} vs inferred {ref_dz:.6e}.")
         out[level] = (n_y, n_z, med_dy, med_dz, int(np.count_nonzero(mask)))
     return out
