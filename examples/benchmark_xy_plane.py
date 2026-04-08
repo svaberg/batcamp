@@ -139,6 +139,16 @@ def _has_positive_finite(*arrays: np.ndarray) -> bool:
     return False
 
 
+def _image_extent(xg: np.ndarray, yg: np.ndarray) -> tuple[float, float, float, float]:
+    """Return image extent from one regular `xy` plane grid."""
+    return (
+        float(np.min(xg)),
+        float(np.max(xg)),
+        float(np.min(yg)),
+        float(np.max(yg)),
+    )
+
+
 def _save_xy_plane_figure(
     out_path: Path,
     *,
@@ -146,8 +156,7 @@ def _save_xy_plane_figure(
     variable: str,
     n_plane: int,
     z_plane: float,
-    xg: np.ndarray,
-    yg: np.ndarray,
+    extent: tuple[float, float, float, float],
     img: np.ndarray,
     time_s: float,
 ) -> None:
@@ -182,7 +191,7 @@ def _save_xy_plane_figure(
     im = ax.imshow(
         img_disp,
         origin="lower",
-        extent=(float(np.min(xg)), float(np.max(xg)), float(np.min(yg)), float(np.max(yg))),
+        extent=extent,
         cmap=cmap,
         norm=norm,
         aspect="equal",
@@ -278,6 +287,25 @@ def _write_timing_table(
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _tail_power_fit(resolution: np.ndarray, runtime: np.ndarray) -> tuple[np.ndarray, float] | None:
+    """Fit one tail power law `runtime ~ N**alpha` on the last few samples."""
+    tail_count = min(4, int(resolution.size))
+    if tail_count < 2:
+        return None
+
+    tail_resolution = resolution[-tail_count:]
+    tail_runtime = runtime[-tail_count:]
+    log_tail_resolution = np.log(tail_resolution)
+    log_tail_runtime = np.log(tail_runtime)
+    centered_resolution = log_tail_resolution - np.mean(log_tail_resolution)
+    alpha = float(
+        np.dot(centered_resolution, log_tail_runtime - np.mean(log_tail_runtime))
+        / np.dot(centered_resolution, centered_resolution)
+    )
+    log_scale = float(np.mean(log_tail_runtime - alpha * log_tail_resolution))
+    return np.exp(log_scale) * np.power(resolution, alpha), alpha
+
+
 def _save_runtime_plot(
     rows: list[dict[str, float | int]],
     out_path: Path,
@@ -311,37 +339,23 @@ def _save_runtime_plot(
 
     ax_steady.plot(resolution, octree_t, "o-", color="C0", label="octree")
     ax_steady.plot(resolution, nearest_t, "o-", color="C2", label="scipy nearest")
-    tail_count = min(4, int(resolution.size))
-    if tail_count >= 2:
-        tail_resolution = resolution[-tail_count:]
-        log_tail_resolution = np.log(tail_resolution)
-        for label, runtime, color in (
-            ("octree", octree_t, "C0"),
-            ("scipy nearest", nearest_t, "C2"),
-        ):
-            tail_runtime = runtime[-tail_count:]
-            log_tail_runtime = np.log(tail_runtime)
-            alpha = float(
-                np.dot(
-                    log_tail_resolution - np.mean(log_tail_resolution),
-                    log_tail_runtime - np.mean(log_tail_runtime),
-                )
-                / np.dot(
-                    log_tail_resolution - np.mean(log_tail_resolution),
-                    log_tail_resolution - np.mean(log_tail_resolution),
-                )
-            )
-            log_scale = float(np.mean(log_tail_runtime - alpha * log_tail_resolution))
-            fit = np.exp(log_scale) * np.power(resolution, alpha)
-            ax_steady.plot(
-                resolution,
-                fit,
-                "--",
-                color=color,
-                linewidth=1.6,
-                alpha=0.8,
-                label=f"{label} tail fit ~ N^{alpha:.2f}",
-            )
+    for label, runtime, color in (
+        ("octree", octree_t, "C0"),
+        ("scipy nearest", nearest_t, "C2"),
+    ):
+        tail_fit = _tail_power_fit(resolution, runtime)
+        if tail_fit is None:
+            continue
+        fit, alpha = tail_fit
+        ax_steady.plot(
+            resolution,
+            fit,
+            "--",
+            color=color,
+            linewidth=1.6,
+            alpha=0.8,
+            label=f"{label} tail fit ~ N^{alpha:.2f}",
+        )
     ax_steady.set_xscale("log")
     ax_steady.set_yscale("log")
     _set_resolution_ticks(ax_steady, resolution)
@@ -425,6 +439,140 @@ def _artifact_path(out_root: Path, *, case_label: str, name: str) -> Path:
     return out_root / f"benchmark_xy_plane_{case_label}_{name}"
 
 
+def _run_case(
+    *,
+    case: DatasetCase,
+    repo_root: Path,
+    out_root: Path,
+    progress: _ProgressReporter,
+    resolutions: list[int],
+    max_seconds_per_image: float,
+    z_plane: float,
+    variable: str,
+) -> None:
+    """Run one dataset case through the full `xy`-plane benchmark."""
+    progress.note(f"[{case.label}] file={case.file_name}")
+    progress.note(f"[{case.label}] artifact_prefix=benchmark_xy_plane_{case.label}_*")
+    progress.start(f"[{case.label}] resolve data file")
+    data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
+    progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
+    progress.start(f"[{case.label}] read dataset")
+    ds, read_s = _time_call(Dataset.from_file, str(data_path))
+    progress.complete(f"[{case.label}] read dataset", read_s)
+    progress.start(f"[{case.label}] prepare octree")
+    tree, tree_s = _time_call(_build_octree, ds)
+    progress.complete(
+        f"[{case.label}] prepare octree",
+        tree_s,
+        detail=f"coord={tree.tree_coord}",
+    )
+    progress.start(f"[{case.label}] build interpolator")
+    interp, interp_s = _time_call(OctreeInterpolator, tree, np.asarray(ds[variable], dtype=float))
+    progress.complete(f"[{case.label}] build interpolator", interp_s)
+    xyz = np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in XYZ_VARS))
+    values = np.asarray(ds[variable], dtype=float)
+    progress.start(f"[{case.label}] build scipy NearestND")
+    nearest_interp, nearest_build_s = _time_call(NearestNDInterpolator, xyz, values)
+    progress.complete(f"[{case.label}] build scipy NearestND", nearest_build_s)
+
+    dmin = np.min(xyz, axis=0)
+    dmax = np.max(xyz, axis=0)
+    bounds = (
+        float(dmin[0]),
+        float(dmax[0]),
+        float(dmin[1]),
+        float(dmax[1]),
+        float(dmin[2]),
+        float(dmax[2]),
+    )
+
+    warm_n = int(resolutions[0])
+    progress.start(f"[{case.label}] cold start {warm_n}x{warm_n}")
+    _, _, warm_query = _xy_plane_image(n_plane=warm_n, z_plane=z_plane, bounds=bounds)
+    _, octree_warm_s = _time_call(_octree_xy_plane_image, interp, query=warm_query, n_plane=warm_n)
+    _, nearest_warm_s = _time_call(
+        _nearest_xy_plane_image,
+        nearest_interp,
+        query=warm_query,
+        n_plane=warm_n,
+    )
+    progress.complete(f"[{case.label}] cold start {warm_n}x{warm_n}", float(octree_warm_s + nearest_warm_s))
+
+    rows: list[dict[str, float | int]] = []
+    for n in resolutions:
+        progress.start(f"[{case.label}] run {n}x{n}")
+        t_step = time.perf_counter()
+        xg, yg, query = _xy_plane_image(n_plane=int(n), z_plane=z_plane, bounds=bounds)
+        t0 = time.perf_counter()
+        octree_img = _octree_xy_plane_image(interp, query=query, n_plane=int(n))
+        octree_plane_s = float(time.perf_counter() - t0)
+        t0 = time.perf_counter()
+        nearest_img = _nearest_xy_plane_image(nearest_interp, query=query, n_plane=int(n))
+        nearest_plane_s = float(time.perf_counter() - t0)
+        octree_nan, _octree_zero = _array_stats(octree_img)
+        nearest_nan, _nearest_zero = _array_stats(nearest_img)
+        metrics = _pairwise_metrics(octree_img, nearest_img)
+        pixels = int(n * n)
+
+        row = {
+            "resolution": int(n),
+            "pixels": pixels,
+            "octree_plane_s": float(octree_plane_s),
+            "nearest_plane_s": float(nearest_plane_s),
+            "octree_nan": int(octree_nan),
+            "nearest_nan": int(nearest_nan),
+            "finite_overlap": int(metrics["finite_overlap"]),
+            "positive_overlap": int(metrics["positive_overlap"]),
+            "abs_mae": float(metrics["abs_mae"]),
+            "abs_rmse": float(metrics["abs_rmse"]),
+            "log10_mae": float(metrics["log10_mae"]),
+            "log10_rmse": float(metrics["log10_rmse"]),
+        }
+        rows.append(row)
+
+        _save_xy_plane_figure(
+            _artifact_path(out_root, case_label=case.label, name=f"xy_plane_{n}x{n}.png"),
+            dataset_label=f"{case.label}:{case.file_name}",
+            variable=variable,
+            n_plane=int(n),
+            z_plane=z_plane,
+            extent=_image_extent(xg, yg),
+            img=octree_img,
+            time_s=octree_plane_s,
+        )
+        _write_timing_table(
+            rows,
+            _artifact_path(out_root, case_label=case.label, name="timing_report.md"),
+            octree_tree_s=float(tree_s),
+            octree_interp_s=float(interp_s),
+            nearest_build_s=float(nearest_build_s),
+            cold_resolution=warm_n,
+            octree_cold_s=float(octree_warm_s),
+            nearest_cold_s=float(nearest_warm_s),
+        )
+        _save_runtime_plot(
+            rows,
+            _artifact_path(out_root, case_label=case.label, name="runtime_vs_pixels.png"),
+            title=f"{case.label}: xy plane runtime",
+            cold_resolution=warm_n,
+            octree_cold_s=float(octree_warm_s),
+            nearest_cold_s=float(nearest_warm_s),
+        )
+        _save_comparison_plot(
+            rows,
+            _artifact_path(out_root, case_label=case.label, name="octree_vs_nearest.png"),
+            title=f"{case.label}: octree vs scipy nearest",
+        )
+        progress.complete(
+            f"[{case.label}] run {n}x{n}",
+            float(time.perf_counter() - t_step),
+        )
+        if max(octree_plane_s, nearest_plane_s) > max_seconds_per_image:
+            progress.note(f"[{case.label}] stop at {n}x{n}: reached {max_seconds_per_image:.2f}s limit")
+            break
+    progress.note(f"[{case.label}] done -> benchmark_xy_plane_{case.label}_*")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resample the reference 3D files onto one fixed xy plane.")
     parser.add_argument(
@@ -485,131 +633,16 @@ def main() -> None:
 
     progress.note(f"output_dir={out_root}")
     for case in cases:
-        progress.note(f"[{case.label}] file={case.file_name}")
-        progress.note(f"[{case.label}] artifact_prefix=benchmark_xy_plane_{case.label}_*")
-        progress.start(f"[{case.label}] resolve data file")
-        data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
-        progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
-        progress.start(f"[{case.label}] read dataset")
-        ds, read_s = _time_call(Dataset.from_file, str(data_path))
-        progress.complete(f"[{case.label}] read dataset", read_s)
-        progress.start(f"[{case.label}] prepare octree")
-        tree, tree_s = _time_call(_build_octree, ds)
-        progress.complete(
-            f"[{case.label}] prepare octree",
-            tree_s,
-            detail=f"coord={tree.tree_coord}",
+        _run_case(
+            case=case,
+            repo_root=repo_root,
+            out_root=out_root,
+            progress=progress,
+            resolutions=resolutions,
+            max_seconds_per_image=max_seconds_per_image,
+            z_plane=float(args.z_plane),
+            variable=str(args.variable),
         )
-        progress.start(f"[{case.label}] build interpolator")
-        interp, interp_s = _time_call(OctreeInterpolator, tree, np.asarray(ds[args.variable], dtype=float))
-        progress.complete(f"[{case.label}] build interpolator", interp_s)
-        xyz = np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in XYZ_VARS))
-        values = np.asarray(ds[args.variable], dtype=float)
-        progress.start(f"[{case.label}] build scipy NearestND")
-        nearest_interp, nearest_build_s = _time_call(NearestNDInterpolator, xyz, values)
-        progress.complete(f"[{case.label}] build scipy NearestND", nearest_build_s)
-
-        dmin = np.min(xyz, axis=0)
-        dmax = np.max(xyz, axis=0)
-        bounds = (
-            float(dmin[0]),
-            float(dmax[0]),
-            float(dmin[1]),
-            float(dmax[1]),
-            float(dmin[2]),
-            float(dmax[2]),
-        )
-
-        warm_n = int(resolutions[0])
-        progress.start(f"[{case.label}] cold start {warm_n}x{warm_n}")
-        _, _, warm_query = _xy_plane_image(n_plane=warm_n, z_plane=float(args.z_plane), bounds=bounds)
-        _, octree_warm_s = _time_call(_octree_xy_plane_image, interp, query=warm_query, n_plane=warm_n)
-        _, nearest_warm_s = _time_call(
-            _nearest_xy_plane_image,
-            nearest_interp,
-            query=warm_query,
-            n_plane=warm_n,
-        )
-        progress.complete(f"[{case.label}] cold start {warm_n}x{warm_n}", float(octree_warm_s + nearest_warm_s))
-
-        rows: list[dict[str, float | int]] = []
-        for n in resolutions:
-            progress.start(f"[{case.label}] run {n}x{n}")
-            t_step = time.perf_counter()
-            xg, yg, query = _xy_plane_image(
-                n_plane=int(n),
-                z_plane=float(args.z_plane),
-                bounds=bounds,
-            )
-            t0 = time.perf_counter()
-            octree_img = _octree_xy_plane_image(interp, query=query, n_plane=int(n))
-            octree_plane_s = float(time.perf_counter() - t0)
-            t0 = time.perf_counter()
-            nearest_img = _nearest_xy_plane_image(nearest_interp, query=query, n_plane=int(n))
-            nearest_plane_s = float(time.perf_counter() - t0)
-            octree_nan, _octree_zero = _array_stats(octree_img)
-            nearest_nan, _nearest_zero = _array_stats(nearest_img)
-            metrics = _pairwise_metrics(octree_img, nearest_img)
-            pixels = int(n * n)
-
-            row = {
-                "resolution": int(n),
-                "pixels": pixels,
-                "octree_plane_s": float(octree_plane_s),
-                "nearest_plane_s": float(nearest_plane_s),
-                "octree_nan": int(octree_nan),
-                "nearest_nan": int(nearest_nan),
-                "finite_overlap": int(metrics["finite_overlap"]),
-                "positive_overlap": int(metrics["positive_overlap"]),
-                "abs_mae": float(metrics["abs_mae"]),
-                "abs_rmse": float(metrics["abs_rmse"]),
-                "log10_mae": float(metrics["log10_mae"]),
-                "log10_rmse": float(metrics["log10_rmse"]),
-            }
-            rows.append(row)
-
-            _save_xy_plane_figure(
-                _artifact_path(out_root, case_label=case.label, name=f"xy_plane_{n}x{n}.png"),
-                dataset_label=f"{case.label}:{case.file_name}",
-                variable=args.variable,
-                n_plane=int(n),
-                z_plane=float(args.z_plane),
-                xg=xg,
-                yg=yg,
-                img=octree_img,
-                time_s=octree_plane_s,
-            )
-            _write_timing_table(
-                rows,
-                _artifact_path(out_root, case_label=case.label, name="timing_report.md"),
-                octree_tree_s=float(tree_s),
-                octree_interp_s=float(interp_s),
-                nearest_build_s=float(nearest_build_s),
-                cold_resolution=warm_n,
-                octree_cold_s=float(octree_warm_s),
-                nearest_cold_s=float(nearest_warm_s),
-            )
-            _save_runtime_plot(
-                rows,
-                _artifact_path(out_root, case_label=case.label, name="runtime_vs_pixels.png"),
-                title=f"{case.label}: xy plane runtime",
-                cold_resolution=warm_n,
-                octree_cold_s=float(octree_warm_s),
-                nearest_cold_s=float(nearest_warm_s),
-            )
-            _save_comparison_plot(
-                rows,
-                _artifact_path(out_root, case_label=case.label, name="octree_vs_nearest.png"),
-                title=f"{case.label}: octree vs scipy nearest",
-            )
-            progress.complete(
-                f"[{case.label}] run {n}x{n}",
-                float(time.perf_counter() - t_step),
-            )
-            if max(octree_plane_s, nearest_plane_s) > max_seconds_per_image:
-                progress.note(f"[{case.label}] stop at {n}x{n}: reached {max_seconds_per_image:.2f}s limit")
-                break
-        progress.note(f"[{case.label}] done -> benchmark_xy_plane_{case.label}_*")
 
 
 if __name__ == "__main__":
