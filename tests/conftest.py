@@ -26,7 +26,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     # Explicit nodeids or file paths should run as requested; marker gating only
     # applies to broad unqualified runs like plain `pytest`.
-    explicit_selection = bool(config.invocation_params.args)
+    explicit_selection = any(not str(arg).startswith("-") for arg in config.invocation_params.args)
     skip_pooch = pytest.mark.skip(reason="need --run-pooch option to run")
     skip_perf = pytest.mark.skip(reason="need --run-perf option to run")
     for item in items:
