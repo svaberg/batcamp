@@ -491,8 +491,6 @@ def populate_tree_state(
     if np.any(points_r <= 0.0):
         raise ValueError("Spherical tree state requires strictly positive radius for log-radial reconstruction.")
     points_log_r = np.log(points_r)
-    cell_r_min = np.min(points_r[corners_arr], axis=1)
-    cell_r_max = np.max(points_r[corners_arr], axis=1)
     cell_log_r_min = np.min(points_log_r[corners_arr], axis=1)
     cell_log_r_max = np.max(points_log_r[corners_arr], axis=1)
     polar_points = np.arccos(
