@@ -254,7 +254,12 @@ def infer_levels(
     )
     try:
         level_shapes = infer_level_angular_shapes(points, corners, azimuth_span, levels)
-        leaf_shape = infer_leaf_shape(level_shapes)
+        angular_leaf_shape = infer_leaf_shape(level_shapes)
+        leaf_shape = (
+            infer_log_radial_count(points, corners, levels),
+            int(angular_leaf_shape[1]),
+            int(angular_leaf_shape[2]),
+        )
     except ValueError as exc:
         raise ValueError(
             "Could not build a spherical octree from these points and corners. "
@@ -287,6 +292,34 @@ def infer_leaf_shape(
     return n_axis0, n_axis1_f, n_axis2_f
 
 
+def infer_log_radial_count(
+    points: np.ndarray,
+    corners: np.ndarray,
+    cell_levels: np.ndarray,
+) -> int:
+    """Infer finest radial count by clustering observed `log(r)` shell boundaries."""
+    valid = np.asarray(cell_levels, dtype=np.int64) >= 0
+    if not np.any(valid):
+        raise ValueError("No valid (>=0) cell levels available to infer radial count.")
+    point_r = np.linalg.norm(points, axis=1)
+    if np.any(point_r <= 0.0):
+        raise ValueError("Spherical builder requires strictly positive radius for log-radial reconstruction.")
+    point_log_r = np.log(point_r)
+    corners_arr = np.asarray(corners, dtype=np.int64)
+    cell_log_r_min = np.min(point_log_r[corners_arr], axis=1)
+    cell_log_r_max = np.max(point_log_r[corners_arr], axis=1)
+    log_r_min = float(np.min(cell_log_r_min[valid]))
+    log_r_max = float(np.max(cell_log_r_max[valid]))
+    radial_tol = 1e-7 * max(float(log_r_max - log_r_min), 1.0)
+    radial_edges, _radial_edge_tol = cluster_close_values(
+        np.concatenate((cell_log_r_min[valid], cell_log_r_max[valid])),
+        atol=radial_tol,
+    )
+    if radial_edges.size < 2:
+        raise ValueError("Could not infer at least one radial shell from log-r boundaries.")
+    return int(radial_edges.size - 1)
+
+
 def populate_tree_state(
     *,
     leaf_shape: tuple[int, int, int],
@@ -307,8 +340,13 @@ def populate_tree_state(
         raise ValueError("Spherical tree state requires at least one valid cell level.")
 
     points_r = np.linalg.norm(points, axis=1)
+    if np.any(points_r <= 0.0):
+        raise ValueError("Spherical tree state requires strictly positive radius for log-radial reconstruction.")
+    points_log_r = np.log(points_r)
     cell_r_min = np.min(points_r[corners_arr], axis=1)
     cell_r_max = np.max(points_r[corners_arr], axis=1)
+    cell_log_r_min = np.min(points_log_r[corners_arr], axis=1)
+    cell_log_r_max = np.max(points_log_r[corners_arr], axis=1)
     polar_points = np.arccos(
         np.clip(points[:, 2] / np.maximum(points_r, np.finfo(float).tiny), -1.0, 1.0)
     )
@@ -323,11 +361,11 @@ def populate_tree_state(
         ignore_mask=axis_mask,
     )
 
-    r_min = float(np.min(cell_r_min))
-    r_max = float(np.max(cell_r_max))
-    radial_tol = 1e-7 * max(float(r_max - r_min), 1.0)
+    log_r_min = float(np.min(cell_log_r_min[valid]))
+    log_r_max = float(np.max(cell_log_r_max[valid]))
+    radial_tol = 1e-7 * max(float(log_r_max - log_r_min), 1.0)
     radial_edges, radial_edge_tol = cluster_close_values(
-        np.concatenate((cell_r_min[valid], cell_r_max[valid])),
+        np.concatenate((cell_log_r_min[valid], cell_log_r_max[valid])),
         atol=radial_tol,
     )
     expected_edges = int(leaf_shape[0]) + 1
@@ -349,19 +387,19 @@ def populate_tree_state(
     d_azimuth_f = (2.0 * np.pi) / float(int(leaf_shape[2]))
     polar_tol = max(1e-7 * np.pi, 2e-5 * d_polar_f)
     azimuth_tol = max(1e-7 * 2.0 * np.pi, 2e-5 * d_azimuth_f)
-    r0_search = np.searchsorted(radial_edges, cell_r_min[valid_ids], side="left").astype(np.int64)
-    r1_search = np.searchsorted(radial_edges, cell_r_max[valid_ids], side="left").astype(np.int64)
+    r0_search = np.searchsorted(radial_edges, cell_log_r_min[valid_ids], side="left").astype(np.int64)
+    r1_search = np.searchsorted(radial_edges, cell_log_r_max[valid_ids], side="left").astype(np.int64)
     r0_next = np.clip(r0_search, 0, radial_edges.size - 1)
     r1_next = np.clip(r1_search, 0, radial_edges.size - 1)
     r0_prev = np.clip(r0_search - 1, 0, radial_edges.size - 1)
     r1_prev = np.clip(r1_search - 1, 0, radial_edges.size - 1)
     r0_use_prev = (r0_search > 0) & (
-        np.abs(radial_edges[r0_prev] - cell_r_min[valid_ids])
-        <= np.abs(radial_edges[r0_next] - cell_r_min[valid_ids])
+        np.abs(radial_edges[r0_prev] - cell_log_r_min[valid_ids])
+        <= np.abs(radial_edges[r0_next] - cell_log_r_min[valid_ids])
     )
     r1_use_prev = (r1_search > 0) & (
-        np.abs(radial_edges[r1_prev] - cell_r_max[valid_ids])
-        <= np.abs(radial_edges[r1_next] - cell_r_max[valid_ids])
+        np.abs(radial_edges[r1_prev] - cell_log_r_max[valid_ids])
+        <= np.abs(radial_edges[r1_next] - cell_log_r_max[valid_ids])
     )
     r0_f = np.where(r0_use_prev, r0_prev, r0_next).astype(np.int64)
     r1_f = np.where(r1_use_prev, r1_prev, r1_next).astype(np.int64)
@@ -369,8 +407,8 @@ def populate_tree_state(
     if np.any(r0_f < 0) or np.any(r1_f > n_r_fine):
         bad = int(valid_ids[np.flatnonzero((r0_f < 0) | (r1_f > n_r_fine))[0]])
         raise ValueError(f"Spherical cell {bad} radial address is outside the inferred octree grid.")
-    r0_ok = np.abs(radial_edges[r0_f] - cell_r_min[valid_ids]) <= radial_edge_tol[r0_f]
-    r1_ok = np.abs(radial_edges[r1_f] - cell_r_max[valid_ids]) <= radial_edge_tol[r1_f]
+    r0_ok = np.abs(radial_edges[r0_f] - cell_log_r_min[valid_ids]) <= radial_edge_tol[r0_f]
+    r1_ok = np.abs(radial_edges[r1_f] - cell_log_r_max[valid_ids]) <= radial_edge_tol[r1_f]
     if np.any(~r0_ok):
         bad = int(valid_ids[np.flatnonzero(~r0_ok)[0]])
         raise ValueError(f"Spherical cell {bad} r-min does not align with the inferred octree grid.")
