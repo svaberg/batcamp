@@ -103,6 +103,25 @@ def _analytic_visible_shell_length(impact_parameter: np.ndarray, r_min: float, r
     return out
 
 
+def _analytic_sphere_chord_length(impact_parameter: np.ndarray, radius: float) -> np.ndarray:
+    """Return the full chord length through one sphere."""
+    b = np.asarray(impact_parameter, dtype=float)
+    out = np.zeros_like(b)
+    inside = b < radius
+    out[inside] = 2.0 * np.sqrt(radius * radius - b[inside] * b[inside])
+    return out
+
+
+def _perpendicular_unit(direction: np.ndarray) -> np.ndarray:
+    """Return one deterministic unit vector perpendicular to one 3D direction."""
+    d = np.asarray(direction, dtype=float)
+    basis = np.array([0.0, 0.0, 1.0], dtype=float)
+    if np.isclose(abs(float(np.dot(d, basis))), np.linalg.norm(d), atol=1.0e-12, rtol=0.0):
+        basis = np.array([0.0, 1.0, 0.0], dtype=float)
+    perp = np.cross(d, basis)
+    return perp / np.linalg.norm(perp)
+
+
 def test_seed_domain_parallel_camera_returns_midpoints_in_cartesian_box() -> None:
     """Parallel camera rays should seed at the midpoint of the visible box interval."""
     tree = _build_xyz_tree()
@@ -661,6 +680,95 @@ def test_render_midpoint_image_matches_spherical_shell_reference_for_off_degener
     expected = _analytic_visible_shell_length(impact_parameter, 1.0, 2.0)
 
     np.testing.assert_allclose(image, expected, atol=4.0e-2, rtol=0.0)
+
+
+def test_render_midpoint_image_matches_sphere_chord_reference_for_constant_field() -> None:
+    """Constant-density sphere rays should agree with the analytic chord length.
+
+    The current spherical builder requires `r_min > 0`, so this test uses a tiny
+    positive inner radius and only impact parameters larger than that radius.
+    For those rays, the visible shell length is exactly the full-sphere chord.
+    """
+    r_min = 1.0e-3
+    r_max = 2.0
+    points, corners = build_spherical_hex_mesh(
+        nr=8,
+        npolar=24,
+        nazimuth=32,
+        r_min=r_min,
+        r_max=r_max,
+    )
+    tree = Octree(points, corners, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.ones(points.shape[0], dtype=float))
+
+    impact_parameter = np.array([0.3, 0.6, 0.9, 1.2, 1.6], dtype=float)
+    z_value = 0.2
+    y_value = np.sqrt(impact_parameter * impact_parameter - z_value * z_value)
+    origins = np.column_stack((np.full(impact_parameter.size, -5.0), y_value, np.full(impact_parameter.size, z_value)))
+    directions = np.tile(np.array([1.0, 0.0, 0.0], dtype=float), (impact_parameter.size, 1))
+
+    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
+    expected = _analytic_sphere_chord_length(impact_parameter, r_max)
+
+    np.testing.assert_allclose(image, expected, atol=4.0e-2, rtol=0.0)
+
+
+def test_trace_matches_shell_chord_reference_for_special_and_generic_directions() -> None:
+    """Paired opposite-view shell traces should recover the full analytic shell chord."""
+    r_min = 1.0
+    r_max = 2.0
+    points, corners = build_spherical_hex_mesh(
+        nr=8,
+        npolar=24,
+        nazimuth=32,
+        r_min=r_min,
+        r_max=r_max,
+    )
+    tree = Octree(points, corners, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.ones(points.shape[0], dtype=float))
+
+    direction_xyz = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 2.0, 3.0],
+        ],
+        dtype=float,
+    )
+    direction_xyz /= np.linalg.norm(direction_xyz, axis=1, keepdims=True)
+    impact_parameter = np.array([0.3, 0.9, 1.2, 1.6], dtype=float)
+
+    forward_length = np.empty(direction_xyz.shape[0], dtype=float)
+    backward_length = np.empty(direction_xyz.shape[0], dtype=float)
+    for ray_id, (direction, impact) in enumerate(zip(direction_xyz, impact_parameter, strict=True)):
+        offset_xyz = impact * _perpendicular_unit(direction)
+        origin_forward = offset_xyz - 5.0 * direction
+        origin_backward = offset_xyz + 5.0 * direction
+
+        forward_image = render_midpoint_image(
+            interp,
+            origin_forward.reshape(1, 3),
+            direction.reshape(1, 3),
+            tracer.trace(origin_forward.reshape(1, 3), direction.reshape(1, 3)),
+        )
+        backward_image = render_midpoint_image(
+            interp,
+            origin_backward.reshape(1, 3),
+            (-direction).reshape(1, 3),
+            tracer.trace(origin_backward.reshape(1, 3), (-direction).reshape(1, 3)),
+        )
+        forward_length[ray_id] = float(forward_image[0])
+        backward_length[ray_id] = float(backward_image[0])
+
+    expected = _analytic_sphere_chord_length(impact_parameter, r_max) - _analytic_sphere_chord_length(impact_parameter, r_min)
+    through_hole = impact_parameter < r_min
+    shell_only = ~through_hole
+    np.testing.assert_allclose(forward_length[through_hole] + backward_length[through_hole], expected[through_hole], atol=5.0e-2, rtol=0.0)
+    np.testing.assert_allclose(forward_length[shell_only], expected[shell_only], atol=5.0e-2, rtol=0.0)
+    np.testing.assert_allclose(backward_length[shell_only], expected[shell_only], atol=5.0e-2, rtol=0.0)
 
 
 def test_trace_handles_one_spherical_symmetry_ray_with_exact_geometric_regression() -> None:
