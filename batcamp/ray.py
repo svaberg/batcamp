@@ -24,6 +24,32 @@ _FACE_TANGENTIAL_AXES = np.array(
     ],
     dtype=np.int8,
 )
+_XYZ_CORNER_BITS = np.array(
+    [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+    ],
+    dtype=np.int8,
+)
+_RPA_CORNER_BITS = np.array(
+    [
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+        [0, 1, 1],
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
+    ],
+    dtype=np.int8,
+)
 _UNKNOWN_TRANSITION = np.int32(-2)
 _NO_TRANSITION = np.int32(-1)
 _EXIT_TOL = 1.0e-12
@@ -39,6 +65,31 @@ def _pack_leaf_key(depth: int, ijk: np.ndarray, axis_bases: np.ndarray) -> np.ui
     return key
 
 
+def _build_face_corner_order(corner_bits: np.ndarray) -> np.ndarray:
+    """Return one `(6, 4)` face-corner table in `[00, 01, 11, 10]` tangential order."""
+    face_corners = np.full((6, 4), -1, dtype=np.int8)
+    for face_id in range(6):
+        axis = int(_FACE_AXIS[face_id])
+        side = int(_FACE_SIDE[face_id])
+        tangential_axes = _FACE_TANGENTIAL_AXES[face_id]
+        targets = (
+            (0, 0),
+            (0, 1),
+            (1, 1),
+            (1, 0),
+        )
+        for pos, (bit_first, bit_second) in enumerate(targets):
+            target = np.full(3, -1, dtype=np.int8)
+            target[axis] = side
+            target[int(tangential_axes[0])] = bit_first
+            target[int(tangential_axes[1])] = bit_second
+            matches = np.flatnonzero(np.all(corner_bits == target, axis=1))
+            if matches.size != 1:
+                raise ValueError(f"Could not resolve one unique face corner for face_id={face_id}, target={target}.")
+            face_corners[face_id, pos] = np.int8(matches[0])
+    return face_corners
+
+
 class OctreeRayTracer:
     """Trace rays against one octree geometry.
 
@@ -50,6 +101,12 @@ class OctreeRayTracer:
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
         self.tree = tree
+        if str(tree.tree_coord) == "xyz":
+            self._face_corners = _build_face_corner_order(_XYZ_CORNER_BITS)
+        elif str(tree.tree_coord) == "rpa":
+            self._face_corners = _build_face_corner_order(_RPA_CORNER_BITS)
+        else:
+            raise NotImplementedError(f"Unsupported tree_coord '{tree.tree_coord}' for OctreeRayTracer.")
         self._leaf_slot_count = int(tree.corners.shape[0])
         self._leaf_valid = tree.cell_levels >= 0
         self._axis_bases = np.asarray(tree.leaf_shape, dtype=np.uint64) + np.uint64(1)
@@ -178,75 +235,128 @@ class OctreeRayTracer:
         self._next_leaf[leaf, face, subface] = np.int32(next_leaf)
         return int(next_leaf)
 
-    def _xyz_cell_interval(self, leaf_id: int, origin_xyz: np.ndarray, direction_xyz: np.ndarray) -> tuple[float, float]:
-        """Return one exact Cartesian box interval for one leaf and one line."""
-        bounds = self.tree.cell_bounds[int(leaf_id)]
-        t_enter = -np.inf
-        t_exit = np.inf
-        for axis in range(3):
-            start = float(bounds[axis, 0])
-            stop = start + float(bounds[axis, 1])
-            origin_axis = float(origin_xyz[axis])
-            direction_axis = float(direction_xyz[axis])
-            if direction_axis == 0.0:
-                if origin_axis < start or origin_axis > stop:
-                    return np.inf, -np.inf
+    def _cell_faces(self, leaf_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return one leaf's explicit corners and geometric center in physical `xyz`."""
+        cell_xyz = np.asarray(self.tree.cell_points(int(leaf_id)), dtype=np.float64)
+        return cell_xyz, np.mean(cell_xyz, axis=0)
+
+    @staticmethod
+    def _face_normal(face_xyz: np.ndarray, cell_center_xyz: np.ndarray) -> np.ndarray:
+        """Return one outward face normal for one planar face quad."""
+        normal = np.cross(face_xyz[1] - face_xyz[0], face_xyz[2] - face_xyz[1])
+        if np.dot(normal, np.mean(face_xyz, axis=0) - cell_center_xyz) < 0.0:
+            normal = -normal
+        return normal
+
+    @staticmethod
+    def _point_inside_face(face_xyz: np.ndarray, normal_xyz: np.ndarray, point_xyz: np.ndarray, tol: float) -> bool:
+        """Return whether one point lies inside one convex planar face quad."""
+        signs = np.empty(4, dtype=np.float64)
+        for edge_id in range(4):
+            p0 = face_xyz[edge_id]
+            p1 = face_xyz[(edge_id + 1) % 4]
+            signs[edge_id] = float(np.dot(np.cross(p1 - p0, point_xyz - p0), normal_xyz))
+        return bool(np.all(signs >= -tol) or np.all(signs <= tol))
+
+    def _point_inside_cell(self, leaf_id: int, point_xyz: np.ndarray, tol: float) -> bool:
+        """Return whether one point lies inside one convex planar-face cell."""
+        cell_xyz, cell_center = self._cell_faces(leaf_id)
+        for face_id in range(6):
+            face_xyz = cell_xyz[self._face_corners[face_id]]
+            normal_xyz = self._face_normal(face_xyz, cell_center)
+            if float(np.dot(normal_xyz, point_xyz - face_xyz[0])) > tol:
+                return False
+        return True
+
+    def _face_exit_subface(self, leaf_id: int, exit_xyz: np.ndarray, face_id: int, normal_xyz: np.ndarray) -> int:
+        """Return the crossed face quadrant using the face's two native tangential axes."""
+        cell_xyz, _ = self._cell_faces(leaf_id)
+        c00, c01, c11, c10 = cell_xyz[self._face_corners[int(face_id)]]
+
+        first_split0 = 0.5 * (c00 + c10)
+        first_split1 = 0.5 * (c01 + c11)
+        second_split0 = 0.5 * (c00 + c01)
+        second_split1 = 0.5 * (c10 + c11)
+
+        def classify(split0: np.ndarray, split1: np.ndarray, low_ref: np.ndarray, high_ref: np.ndarray) -> int:
+            low_sign = float(np.dot(np.cross(split1 - split0, low_ref - split0), normal_xyz))
+            high_sign = float(np.dot(np.cross(split1 - split0, high_ref - split0), normal_xyz))
+            hit_sign = float(np.dot(np.cross(split1 - split0, exit_xyz - split0), normal_xyz))
+            if abs(hit_sign) <= _SUBFACE_TOL:
+                raise ValueError("Degenerate face exit on a subface boundary is not supported yet.")
+            if low_sign == 0.0 or high_sign == 0.0 or low_sign * high_sign >= 0.0:
+                raise ValueError("Failed to construct a valid face subface split.")
+            return 0 if hit_sign * low_sign > 0.0 else 1
+
+        first_bit = classify(first_split0, first_split1, c00, c10)
+        second_bit = classify(second_split0, second_split1, c00, c01)
+        return 2 * first_bit + second_bit
+
+    def _cell_segment(
+        self,
+        leaf_id: int,
+        origin_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+        *,
+        current_t: float,
+        t_min: float,
+    ) -> tuple[float, float, int, int]:
+        """Return one exact forward cell segment and its exit face/subface."""
+        cell_xyz, cell_center = self._cell_faces(leaf_id)
+        point_tol = _EXIT_TOL * max(1.0, float(np.max(np.linalg.norm(cell_xyz - cell_center, axis=1))))
+        inside_now = self._point_inside_cell(int(leaf_id), origin_xyz + float(current_t) * direction_xyz, point_tol)
+
+        face_hits: list[tuple[float, int, np.ndarray, np.ndarray]] = []
+        for face_id in range(6):
+            face_xyz = cell_xyz[self._face_corners[face_id]]
+            normal_xyz = self._face_normal(face_xyz, cell_center)
+            denom = float(np.dot(normal_xyz, direction_xyz))
+            if abs(denom) <= _EXIT_TOL:
                 continue
-            t0 = (start - origin_axis) / direction_axis
-            t1 = (stop - origin_axis) / direction_axis
-            axis_enter = min(t0, t1)
-            axis_exit = max(t0, t1)
-            t_enter = max(t_enter, axis_enter)
-            t_exit = min(t_exit, axis_exit)
-        return float(t_enter), float(t_exit)
+            t_hit = float(np.dot(normal_xyz, face_xyz[0] - origin_xyz) / denom)
+            hit_xyz = origin_xyz + t_hit * direction_xyz
+            if self._point_inside_face(face_xyz, normal_xyz, hit_xyz, point_tol):
+                face_hits.append((t_hit, int(face_id), hit_xyz, normal_xyz))
 
-    def _xyz_exit_face(self, leaf_id: int, origin_xyz: np.ndarray, direction_xyz: np.ndarray, t_exit: float) -> int:
-        """Return the unique exit face for one non-degenerate Cartesian cell crossing."""
-        bounds = self.tree.cell_bounds[int(leaf_id)]
-        face_hits: list[int] = []
-        tol = _EXIT_TOL * max(1.0, abs(float(t_exit)))
-        for axis in range(3):
-            direction_axis = float(direction_xyz[axis])
-            if direction_axis == 0.0:
+        if not face_hits:
+            raise ValueError("The requested leaf does not intersect the ray.")
+
+        face_hits.sort(key=lambda item: item[0])
+        segment_enter = float(current_t) if inside_now else np.nan
+        exit_t = np.nan
+        exit_face = -1
+        exit_xyz = np.full(3, np.nan, dtype=np.float64)
+        exit_normal = np.full(3, np.nan, dtype=np.float64)
+        enter_tol = _EXIT_TOL * max(1.0, abs(float(current_t)))
+
+        for t_hit, face_id, hit_xyz, normal_xyz in face_hits:
+            if t_hit < (float(t_min) - enter_tol):
                 continue
-            start = float(bounds[axis, 0])
-            stop = start + float(bounds[axis, 1])
-            if direction_axis > 0.0:
-                face_t = (stop - float(origin_xyz[axis])) / direction_axis
-                face_id = 2 * axis + 1
-            else:
-                face_t = (start - float(origin_xyz[axis])) / direction_axis
-                face_id = 2 * axis
-            if abs(face_t - float(t_exit)) <= tol:
-                face_hits.append(int(face_id))
-        if len(face_hits) != 1:
-            raise ValueError("Degenerate Cartesian cell exit across an edge or corner is not supported yet.")
-        return int(face_hits[0])
+            if not np.isfinite(segment_enter):
+                segment_enter = float(t_hit)
+                continue
+            if t_hit <= (float(segment_enter) + enter_tol):
+                continue
+            exit_t = float(t_hit)
+            exit_face = int(face_id)
+            exit_xyz = hit_xyz
+            exit_normal = normal_xyz
+            break
 
-    def _xyz_exit_subface(self, leaf_id: int, exit_xyz: np.ndarray, face_id: int) -> int:
-        """Return the crossed face quadrant for one non-degenerate Cartesian face exit."""
-        bounds = self.tree.cell_bounds[int(leaf_id)]
-        tangential_axes = _FACE_TANGENTIAL_AXES[int(face_id)]
-        first_axis = int(tangential_axes[0])
-        second_axis = int(tangential_axes[1])
+        if not np.isfinite(segment_enter) or not np.isfinite(exit_t):
+            raise ValueError("Failed to resolve a forward cell segment from the current leaf.")
+        if exit_t <= segment_enter:
+            raise ValueError("Degenerate zero-length cell interval is not supported yet.")
 
-        bits = [0, 0]
-        for bit_pos, axis in enumerate((first_axis, second_axis)):
-            start = float(bounds[axis, 0])
-            width = float(bounds[axis, 1])
-            local = (float(exit_xyz[axis]) - start) / width
-            if (
-                abs(local) <= _SUBFACE_TOL
-                or abs(local - 0.5) <= _SUBFACE_TOL
-                or abs(local - 1.0) <= _SUBFACE_TOL
-            ):
-                raise ValueError("Degenerate Cartesian face exit on a subface boundary is not supported yet.")
-            if local < 0.0 or local > 1.0:
-                raise ValueError("Cartesian exit point fell outside the crossed face bounds.")
-            bits[bit_pos] = 0 if local < 0.5 else 1
-        return 2 * bits[0] + bits[1]
+        exit_tol = _EXIT_TOL * max(1.0, abs(float(exit_t)))
+        degenerate_hits = [face_id for t_hit, face_id, _, _ in face_hits if abs(t_hit - exit_t) <= exit_tol]
+        if len(degenerate_hits) != 1:
+            raise ValueError("Degenerate cell exit across an edge or corner is not supported yet.")
 
-    def _trace_one_xyz_ray(
+        subface_id = self._face_exit_subface(leaf_id, exit_xyz, exit_face, exit_normal)
+        return float(segment_enter), float(exit_t), int(exit_face), int(subface_id)
+
+    def _trace_one_ray(
         self,
         start_leaf_id: int,
         origin_xyz: np.ndarray,
@@ -254,16 +364,14 @@ class OctreeRayTracer:
         *,
         t_min: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Walk one Cartesian ray across neighboring leaves and return exact cell intervals.
+        """Walk one ray across neighboring planar-face hex cells and return exact cell intervals.
 
         This is an internal first-pass walker used to validate the topology cache.
         It assumes a non-degenerate ray that crosses one face at a time.
         """
-        if str(self.tree.tree_coord) != "xyz":
-            raise NotImplementedError("_trace_one_xyz_ray currently supports only tree_coord='xyz'.")
         o_flat, d_flat, shape = self._normalize_rays(origin_xyz, direction_xyz)
         if shape != (1,):
-            raise ValueError("_trace_one_xyz_ray requires one origin and one direction vector.")
+            raise ValueError("_trace_one_ray requires one origin and one direction vector.")
 
         current_leaf = int(start_leaf_id)
         if current_leaf < 0 or current_leaf >= self._leaf_slot_count or not bool(self._leaf_valid[current_leaf]):
@@ -278,16 +386,13 @@ class OctreeRayTracer:
         max_steps = int(np.count_nonzero(self._leaf_valid)) + 1
 
         for _ in range(max_steps):
-            t_enter, t_exit = self._xyz_cell_interval(current_leaf, origin, direction)
-            if not np.isfinite(t_exit) or t_exit < max(float(t_min), t_enter):
-                raise ValueError("The requested start leaf does not intersect the forward ray.")
-            segment_enter = max(float(t_min), current_t, float(t_enter))
-            if t_exit <= segment_enter:
-                raise ValueError("Degenerate zero-length Cartesian cell interval is not supported yet.")
-
-            exit_face = self._xyz_exit_face(current_leaf, origin, direction, t_exit)
-            exit_xyz = origin + t_exit * direction
-            subface_id = self._xyz_exit_subface(current_leaf, exit_xyz, exit_face)
+            segment_enter, t_exit, exit_face, subface_id = self._cell_segment(
+                current_leaf,
+                origin,
+                direction,
+                current_t=float(current_t),
+                t_min=float(t_min),
+            )
 
             leaf_ids.append(int(current_leaf))
             t_enter_list.append(float(segment_enter))

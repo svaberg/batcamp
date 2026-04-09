@@ -243,7 +243,7 @@ def test_resolve_transition_fine_face_caches_one_coarse_neighbor() -> None:
 def test_trace_one_xyz_ray_walks_same_level_cells_exactly() -> None:
     """One simple Cartesian ray should cross two same-level leaves with exact intervals."""
     tracer = OctreeRayTracer(_build_xyz_tree())
-    leaf_ids, t_enter, t_exit = tracer._trace_one_xyz_ray(
+    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(
         0,
         np.array([-2.0, -0.3, -0.2], dtype=float),
         np.array([1.0, 0.0, 0.0], dtype=float),
@@ -257,7 +257,7 @@ def test_trace_one_xyz_ray_walks_same_level_cells_exactly() -> None:
 def test_trace_one_xyz_ray_walks_coarse_to_fine_cells_exactly() -> None:
     """One Cartesian ray should walk from one coarse leaf into two finer leaves."""
     tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
-    leaf_ids, t_enter, t_exit = tracer._trace_one_xyz_ray(
+    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(
         0,
         np.array([-0.1, 0.1875, 0.1875], dtype=float),
         np.array([1.0, 0.0, 0.0], dtype=float),
@@ -271,7 +271,7 @@ def test_trace_one_xyz_ray_walks_coarse_to_fine_cells_exactly() -> None:
 def test_trace_one_xyz_ray_walks_fine_to_coarse_cells_exactly() -> None:
     """One Cartesian ray should walk from finer leaves back into one coarse leaf."""
     tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
-    leaf_ids, t_enter, t_exit = tracer._trace_one_xyz_ray(
+    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(
         11,
         np.array([1.1, 0.1875, 0.1875], dtype=float),
         np.array([-1.0, 0.0, 0.0], dtype=float),
@@ -280,3 +280,29 @@ def test_trace_one_xyz_ray_walks_fine_to_coarse_cells_exactly() -> None:
     np.testing.assert_array_equal(leaf_ids, np.array([11, 7, 0], dtype=np.int64))
     np.testing.assert_allclose(t_enter, np.array([0.1, 0.35, 0.6], dtype=float))
     np.testing.assert_allclose(t_exit, np.array([0.35, 0.6, 1.1], dtype=float))
+
+
+def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
+    """One forward spherical ray should trace monotonically to the traced planar inner boundary."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    origin = np.array([-60.0, 0.5, 0.25], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    seed_xyz = tracer.seed_domain(origin, direction)
+    start_leaf = int(tree.lookup_points(seed_xyz, coord="xyz")[0])
+
+    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(start_leaf, origin, direction)
+    t_seed = float(seed_xyz[0, 0] - origin[0])
+
+    assert leaf_ids.size > 0
+    assert np.all(np.diff(t_enter) >= 0.0)
+    assert np.all(np.diff(t_exit) >= 0.0)
+    assert np.all(t_exit > t_enter)
+    assert t_enter[0] <= t_seed <= t_exit[0]
+
+    last_leaf = int(leaf_ids[-1])
+    before_exit = origin + (t_exit[-1] - 1.0e-9) * direction
+    after_exit = origin + (t_exit[-1] + 1.0e-9) * direction
+    assert tracer._point_inside_cell(last_leaf, before_exit, 1.0e-12)
+    assert not tracer._point_inside_cell(last_leaf, after_exit, 1.0e-12)
