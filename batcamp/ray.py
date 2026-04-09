@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 
 import numpy as np
 
 from .octree import Octree
 
-__all__ = ["OctreeRayTracer"]
+__all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image"]
 
 _FACE_AXIS = np.array([0, 0, 1, 1, 2, 2], dtype=np.int8)
 _FACE_SIDE = np.array([0, 1, 0, 1, 0, 1], dtype=np.int8)
@@ -88,6 +89,52 @@ def _build_face_corner_order(corner_bits: np.ndarray) -> np.ndarray:
                 raise ValueError(f"Could not resolve one unique face corner for face_id={face_id}, target={target}.")
             face_corners[face_id, pos] = np.int8(matches[0])
     return face_corners
+
+
+@dataclass(frozen=True)
+class RaySegments:
+    """Packed per-ray cell segments with CSR-like ray indexing."""
+
+    ray_offsets: np.ndarray
+    cell_ids: np.ndarray
+    t_enter: np.ndarray
+    t_exit: np.ndarray
+    ray_shape: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        ray_offsets = np.asarray(self.ray_offsets, dtype=np.int64)
+        cell_ids = np.asarray(self.cell_ids, dtype=np.int64)
+        t_enter = np.asarray(self.t_enter, dtype=np.float64)
+        t_exit = np.asarray(self.t_exit, dtype=np.float64)
+        if ray_offsets.ndim != 1:
+            raise ValueError("ray_offsets must be one 1D array.")
+        if cell_ids.ndim != 1 or t_enter.ndim != 1 or t_exit.ndim != 1:
+            raise ValueError("cell_ids, t_enter, and t_exit must be 1D arrays.")
+        if cell_ids.shape != t_enter.shape or cell_ids.shape != t_exit.shape:
+            raise ValueError("cell_ids, t_enter, and t_exit must have the same shape.")
+        if ray_offsets.size == 0 or ray_offsets[0] != 0:
+            raise ValueError("ray_offsets must start at 0.")
+        if np.any(np.diff(ray_offsets) < 0):
+            raise ValueError("ray_offsets must be nondecreasing.")
+        if int(ray_offsets[-1]) != int(cell_ids.size):
+            raise ValueError("ray_offsets[-1] must equal the segment count.")
+        if np.any(t_exit <= t_enter):
+            raise ValueError("Each segment must satisfy t_exit > t_enter.")
+        object.__setattr__(self, "ray_offsets", ray_offsets)
+        object.__setattr__(self, "cell_ids", cell_ids)
+        object.__setattr__(self, "t_enter", t_enter)
+        object.__setattr__(self, "t_exit", t_exit)
+        object.__setattr__(self, "ray_shape", tuple(int(v) for v in self.ray_shape))
+
+    @property
+    def n_rays(self) -> int:
+        """Return the number of rays packed into this segment bundle."""
+        return int(self.ray_offsets.size - 1)
+
+    @property
+    def segment_length(self) -> np.ndarray:
+        """Return one 1D array of per-segment lengths."""
+        return self.t_exit - self.t_enter
 
 
 class OctreeRayTracer:
@@ -292,6 +339,52 @@ class OctreeRayTracer:
         second_bit = classify(second_split0, second_split1, c00, c01)
         return 2 * first_bit + second_bit
 
+    def _trace_start_leaf(self, leaf_id: int, seed_xyz: np.ndarray, direction_xyz: np.ndarray) -> int:
+        """Return the first leaf entered from one seed point along one direction."""
+        cell_xyz, cell_center = self._cell_faces(leaf_id)
+        point_tol = _EXIT_TOL * max(1.0, float(np.max(np.linalg.norm(cell_xyz - cell_center, axis=1))))
+        candidate_leaves = [int(leaf_id)]
+        for face_id in range(6):
+            face_xyz = cell_xyz[self._face_corners[face_id]]
+            normal_xyz = self._face_normal(face_xyz, cell_center)
+            face_distance = float(np.dot(normal_xyz, seed_xyz - face_xyz[0]))
+            if abs(face_distance) > point_tol:
+                continue
+            if float(np.dot(normal_xyz, direction_xyz)) <= _EXIT_TOL:
+                continue
+            for subface_id in range(4):
+                next_leaf = int(self._resolve_transition(leaf_id, face_id, subface_id))
+                if next_leaf >= 0 and next_leaf not in candidate_leaves:
+                    candidate_leaves.append(next_leaf)
+
+        valid_starts: list[int] = []
+        start_tol = _EXIT_TOL
+        for candidate_leaf in candidate_leaves:
+            try:
+                segment_enter, _, _, _ = self._cell_segment(
+                    candidate_leaf,
+                    seed_xyz,
+                    direction_xyz,
+                    current_t=0.0,
+                    t_min=0.0,
+                )
+            except ValueError as exc:
+                message = str(exc)
+                if message in {
+                    "The requested leaf does not intersect the ray.",
+                    "Failed to resolve a forward cell segment from the current leaf.",
+                }:
+                    continue
+                raise
+            if segment_enter <= start_tol:
+                valid_starts.append(int(candidate_leaf))
+
+        if not valid_starts:
+            return -1
+        if len(valid_starts) != 1:
+            raise ValueError("Degenerate seed on a cell edge or corner is not supported yet.")
+        return int(valid_starts[0])
+
     def _cell_segment(
         self,
         leaf_id: int,
@@ -363,12 +456,21 @@ class OctreeRayTracer:
         direction_xyz: np.ndarray,
         *,
         t_min: float = 0.0,
+        t_max: float = np.inf,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Walk one ray across neighboring planar-face hex cells and return exact cell intervals.
 
         This is an internal first-pass walker used to validate the topology cache.
         It assumes a non-degenerate ray that crosses one face at a time.
         """
+        clip_lo = float(t_min)
+        clip_hi = float(t_max)
+        if not math.isfinite(clip_lo):
+            raise ValueError("t_min must be finite.")
+        if math.isnan(clip_hi):
+            raise ValueError("t_max must not be NaN.")
+        if clip_hi < clip_lo:
+            raise ValueError("t_max must be greater than or equal to t_min.")
         o_flat, d_flat, shape = self._normalize_rays(origin_xyz, direction_xyz)
         if shape != (1,):
             raise ValueError("_trace_one_ray requires one origin and one direction vector.")
@@ -382,22 +484,29 @@ class OctreeRayTracer:
         leaf_ids: list[int] = []
         t_enter_list: list[float] = []
         t_exit_list: list[float] = []
-        current_t = float(t_min)
+        current_t = clip_lo
         max_steps = int(np.count_nonzero(self._leaf_valid)) + 1
 
         for _ in range(max_steps):
+            if current_t >= clip_hi:
+                break
             segment_enter, t_exit, exit_face, subface_id = self._cell_segment(
                 current_leaf,
                 origin,
                 direction,
                 current_t=float(current_t),
-                t_min=float(t_min),
+                t_min=float(clip_lo),
             )
+            if segment_enter >= clip_hi:
+                break
+            segment_exit = min(float(t_exit), clip_hi)
 
             leaf_ids.append(int(current_leaf))
             t_enter_list.append(float(segment_enter))
-            t_exit_list.append(float(t_exit))
+            t_exit_list.append(float(segment_exit))
 
+            if t_exit >= clip_hi:
+                break
             next_leaf = self._resolve_transition(current_leaf, exit_face, subface_id)
             if next_leaf < 0:
                 break
@@ -408,6 +517,160 @@ class OctreeRayTracer:
             np.asarray(leaf_ids, dtype=np.int64),
             np.asarray(t_enter_list, dtype=np.float64),
             np.asarray(t_exit_list, dtype=np.float64),
+        )
+
+    @staticmethod
+    def _normalize_seed(seed_xyz: np.ndarray, ray_shape: tuple[int, ...]) -> np.ndarray:
+        """Return one flat seed array matching one normalized ray shape."""
+        seed = np.array(seed_xyz, dtype=np.float64, order="C")
+        if seed.shape == (3,) and ray_shape == (1,):
+            seed = seed.reshape(1, 3)
+        if seed.shape != ray_shape + (3,):
+            raise ValueError("seed_xyz must have the same shape as the ray origins.")
+        if np.any(~(np.isnan(seed) | np.isfinite(seed))):
+            raise ValueError("seed_xyz must contain only finite values or NaNs.")
+        return seed.reshape(-1, 3)
+
+    @staticmethod
+    def _merge_seed_branches(
+        backward_leaf_ids: np.ndarray,
+        backward_t_enter: np.ndarray,
+        backward_t_exit: np.ndarray,
+        forward_leaf_ids: np.ndarray,
+        forward_t_enter: np.ndarray,
+        forward_t_exit: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Merge one backward and one forward seed trace into ascending original-ray order."""
+        if backward_leaf_ids.size == 0:
+            return forward_leaf_ids, forward_t_enter, forward_t_exit
+        if forward_leaf_ids.size == 0:
+            return backward_leaf_ids, backward_t_enter, backward_t_exit
+
+        if backward_leaf_ids[-1] != forward_leaf_ids[0]:
+            return (
+                np.concatenate((backward_leaf_ids, forward_leaf_ids)),
+                np.concatenate((backward_t_enter, forward_t_enter)),
+                np.concatenate((backward_t_exit, forward_t_exit)),
+            )
+
+        join_tol = _EXIT_TOL * max(1.0, abs(float(backward_t_exit[-1])), abs(float(forward_t_enter[0])))
+        if abs(float(backward_t_exit[-1]) - float(forward_t_enter[0])) > join_tol:
+            return (
+                np.concatenate((backward_leaf_ids, forward_leaf_ids)),
+                np.concatenate((backward_t_enter, forward_t_enter)),
+                np.concatenate((backward_t_exit, forward_t_exit)),
+            )
+
+        merged_leaf = np.concatenate((backward_leaf_ids[:-1], forward_leaf_ids))
+        merged_enter = np.concatenate((backward_t_enter[:-1], np.array([backward_t_enter[-1]]), forward_t_enter[1:]))
+        merged_exit = np.concatenate((backward_t_exit[:-1], np.array([forward_t_exit[0]]), forward_t_exit[1:]))
+        return merged_leaf, merged_enter, merged_exit
+
+    def trace(
+        self,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        *,
+        seed_xyz: np.ndarray | None = None,
+        t_min: float = 0.0,
+        t_max: float = np.inf,
+    ) -> RaySegments:
+        """Trace one batch of seeded rays and return packed per-cell intervals."""
+        t_lo = float(t_min)
+        t_hi = float(t_max)
+        if not math.isfinite(t_lo):
+            raise ValueError("t_min must be finite.")
+        if math.isnan(t_hi):
+            raise ValueError("t_max must not be NaN.")
+        if t_hi < t_lo:
+            raise ValueError("t_max must be greater than or equal to t_min.")
+
+        o_flat, d_flat, ray_shape = self._normalize_rays(origins, directions)
+        seed_flat = (
+            self.seed_domain(origins, directions, t_min=t_lo, t_max=t_hi).reshape(-1, 3)
+            if seed_xyz is None
+            else self._normalize_seed(seed_xyz, ray_shape)
+        )
+        clip_lo = max(0.0, t_lo)
+        valid_seed = np.all(np.isfinite(seed_flat), axis=1)
+        start_leaf = np.full(o_flat.shape[0], -1, dtype=np.int64)
+        if np.any(valid_seed):
+            start_leaf[valid_seed] = self.tree.lookup_points(seed_flat[valid_seed], coord="xyz").reshape(-1)
+
+        ray_offsets = np.zeros(o_flat.shape[0] + 1, dtype=np.int64)
+        cell_ids: list[int] = []
+        t_enter: list[float] = []
+        t_exit: list[float] = []
+
+        for ray_id in range(o_flat.shape[0]):
+            ray_offsets[ray_id] = len(cell_ids)
+            if not valid_seed[ray_id]:
+                continue
+            leaf_id = int(start_leaf[ray_id])
+            if leaf_id < 0:
+                continue
+
+            origin = o_flat[ray_id]
+            direction = d_flat[ray_id]
+            seed = seed_flat[ray_id]
+            t_seed = float(np.dot(seed - origin, direction) / np.dot(direction, direction))
+            forward_leaf_id = self._trace_start_leaf(leaf_id, seed, direction)
+            backward_leaf_id = self._trace_start_leaf(leaf_id, seed, -direction)
+
+            backward_limit = max(0.0, t_seed - clip_lo)
+            if backward_limit > 0.0 and backward_leaf_id >= 0:
+                back_leaf_ids_local, back_enter_local, back_exit_local = self._trace_one_ray(
+                    backward_leaf_id,
+                    seed,
+                    -direction,
+                    t_min=0.0,
+                    t_max=backward_limit,
+                )
+                back_leaf_ids = back_leaf_ids_local[::-1]
+                back_t_enter = t_seed - back_exit_local[::-1]
+                back_t_exit = t_seed - back_enter_local[::-1]
+            else:
+                back_leaf_ids = np.empty(0, dtype=np.int64)
+                back_t_enter = np.empty(0, dtype=np.float64)
+                back_t_exit = np.empty(0, dtype=np.float64)
+
+            forward_limit = max(0.0, t_hi - t_seed)
+            if forward_limit > 0.0 and forward_leaf_id >= 0:
+                forward_leaf_ids_local, forward_enter_local, forward_exit_local = self._trace_one_ray(
+                    forward_leaf_id,
+                    seed,
+                    direction,
+                    t_min=0.0,
+                    t_max=forward_limit,
+                )
+                forward_leaf_ids = forward_leaf_ids_local
+                forward_t_enter = t_seed + forward_enter_local
+                forward_t_exit = t_seed + forward_exit_local
+            else:
+                forward_leaf_ids = np.empty(0, dtype=np.int64)
+                forward_t_enter = np.empty(0, dtype=np.float64)
+                forward_t_exit = np.empty(0, dtype=np.float64)
+
+            merged_leaf_ids, merged_t_enter, merged_t_exit = self._merge_seed_branches(
+                back_leaf_ids,
+                back_t_enter,
+                back_t_exit,
+                forward_leaf_ids,
+                forward_t_enter,
+                forward_t_exit,
+            )
+
+            cell_ids.extend(int(v) for v in merged_leaf_ids)
+            t_enter.extend(float(v) for v in merged_t_enter)
+            t_exit.extend(float(v) for v in merged_t_exit)
+
+        ray_offsets[-1] = len(cell_ids)
+        return RaySegments(
+            ray_offsets=ray_offsets,
+            cell_ids=np.asarray(cell_ids, dtype=np.int64),
+            t_enter=np.asarray(t_enter, dtype=np.float64),
+            t_exit=np.asarray(t_exit, dtype=np.float64),
+            ray_shape=ray_shape,
         )
 
     def seed_domain(
@@ -541,3 +804,42 @@ class OctreeRayTracer:
     def __str__(self) -> str:
         """Return a compact human-readable tracer summary."""
         return f"OctreeRayTracer(tree_coord={self.tree.tree_coord})"
+
+
+def render_midpoint_image(
+    interpolator,
+    origins: np.ndarray,
+    directions: np.ndarray,
+    segments: RaySegments,
+) -> np.ndarray:
+    """Render one midpoint-sampled line integral over packed traced segments."""
+    from .interpolator import OctreeInterpolator
+
+    if not isinstance(interpolator, OctreeInterpolator):
+        raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
+
+    o_flat, d_flat, ray_shape = OctreeRayTracer._normalize_rays(origins, directions)
+    if tuple(ray_shape) != tuple(segments.ray_shape):
+        raise ValueError("segments.ray_shape must match the ray origin/direction shape.")
+
+    n_rays = int(o_flat.shape[0])
+    n_components = int(interpolator._point_values_2d.shape[1])
+    accum = np.zeros((n_rays, n_components), dtype=np.float64)
+    if segments.cell_ids.size == 0:
+        out = accum.reshape(tuple(ray_shape) + interpolator._value_shape_tail)
+        if interpolator._value_shape_tail:
+            return out
+        return out.reshape(tuple(ray_shape))
+
+    counts = np.diff(segments.ray_offsets)
+    ray_ids = np.repeat(np.arange(n_rays, dtype=np.int64), counts)
+    mid_t = 0.5 * (segments.t_enter + segments.t_exit)
+    mid_xyz = o_flat[ray_ids] + mid_t[:, None] * d_flat[ray_ids]
+    samples = np.asarray(interpolator(mid_xyz, query_coord="xyz", log_outside_domain=False), dtype=np.float64)
+    samples_2d = samples.reshape(samples.shape[0], -1)
+    np.add.at(accum, ray_ids, samples_2d * segments.segment_length[:, None])
+
+    out = accum.reshape(tuple(ray_shape) + interpolator._value_shape_tail)
+    if interpolator._value_shape_tail:
+        return out
+    return out.reshape(tuple(ray_shape))

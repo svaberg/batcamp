@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
+from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import camera_rays
+from batcamp import render_midpoint_image
 from fake_dataset import build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh
 from sample_data_helper import data_file
@@ -306,3 +308,49 @@ def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
     after_exit = origin + (t_exit[-1] + 1.0e-9) * direction
     assert tracer._point_inside_cell(last_leaf, before_exit, 1.0e-12)
     assert not tracer._point_inside_cell(last_leaf, after_exit, 1.0e-12)
+
+
+def test_trace_returns_two_way_packed_segments_for_one_seeded_cartesian_ray() -> None:
+    """Public trace should merge the backward and forward seed walks into one packed ray result."""
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origin = np.array([-2.0, -0.3, -0.2], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    seed_xyz = np.array([[-0.5, -0.3, -0.2]], dtype=float)
+
+    segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
+
+    np.testing.assert_array_equal(segments.ray_offsets, np.array([0, 2], dtype=np.int64))
+    np.testing.assert_array_equal(segments.cell_ids, np.array([0, 4], dtype=np.int64))
+    np.testing.assert_allclose(segments.t_enter, np.array([1.0, 2.0], dtype=float))
+    np.testing.assert_allclose(segments.t_exit, np.array([2.0, 3.0], dtype=float))
+
+
+def test_trace_handles_seed_on_one_internal_cartesian_face() -> None:
+    """Default Cartesian domain seeding may land on one internal face and should still trace exactly."""
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origin = np.array([-2.0, -0.3, -0.2], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    segments = tracer.trace(origin, direction)
+
+    np.testing.assert_array_equal(segments.ray_offsets, np.array([0, 2], dtype=np.int64))
+    np.testing.assert_array_equal(segments.cell_ids, np.array([0, 4], dtype=np.int64))
+    np.testing.assert_allclose(segments.t_enter, np.array([1.0, 2.0], dtype=float))
+    np.testing.assert_allclose(segments.t_exit, np.array([2.0, 3.0], dtype=float))
+
+
+def test_render_midpoint_image_integrates_constant_density_along_seeded_ray() -> None:
+    """Midpoint rendering should reduce to segment-length summation for one constant field."""
+    tree = _build_xyz_tree()
+    tracer = OctreeRayTracer(tree)
+    values = np.ones(int(np.max(tree.corners)) + 1, dtype=float)
+    interp = OctreeInterpolator(tree, values)
+    origins = np.array([[[-2.0, -0.3, -0.2]]], dtype=float)
+    directions = np.array([[[1.0, 0.0, 0.0]]], dtype=float)
+    seed_xyz = np.array([[[-0.5, -0.3, -0.2]]], dtype=float)
+
+    segments = tracer.trace(origins, directions, seed_xyz=seed_xyz)
+    image = render_midpoint_image(interp, origins, directions, segments)
+
+    assert image.shape == (1, 1)
+    np.testing.assert_allclose(image, np.array([[2.0]], dtype=float))
