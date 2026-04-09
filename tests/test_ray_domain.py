@@ -354,3 +354,37 @@ def test_render_midpoint_image_integrates_constant_density_along_seeded_ray() ->
 
     assert image.shape == (1, 1)
     np.testing.assert_allclose(image, np.array([[2.0]], dtype=float))
+
+
+def test_trace_handles_one_spherical_symmetry_ray_without_failure() -> None:
+    """One exact symmetry ray on the spherical sample should trace without boundary-point failure."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    origin = np.array([-60.0, 0.0, -12.0], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    seed_xyz = tracer.seed_domain(origin, direction)
+
+    segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
+
+    assert segments.cell_ids.size > 0
+    assert np.all(np.diff(segments.t_enter) >= 0.0)
+    assert np.all(np.diff(segments.t_exit) >= 0.0)
+    assert np.all(segments.t_exit > segments.t_enter)
+
+
+def test_trace_handles_one_spherical_axis_ray_without_dropping_it() -> None:
+    """One spherical axis ray should still produce traced segments after axis-sector tie-break."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    origin = np.array([-60.0, 0.0, 8.0], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    seed_xyz = tracer.seed_domain(origin, direction)
+
+    segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
+
+    assert segments.cell_ids.size > 0
+    assert np.all(np.diff(segments.t_enter) >= 0.0)
+    assert np.all(np.diff(segments.t_exit) >= 0.0)
+    assert np.all(segments.t_exit > segments.t_enter)

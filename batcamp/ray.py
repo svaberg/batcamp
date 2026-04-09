@@ -339,51 +339,137 @@ class OctreeRayTracer:
         second_bit = classify(second_split0, second_split1, c00, c01)
         return 2 * first_bit + second_bit
 
-    def _trace_start_leaf(self, leaf_id: int, seed_xyz: np.ndarray, direction_xyz: np.ndarray) -> int:
-        """Return the first leaf entered from one seed point along one direction."""
+    def _touching_neighbor_leaves(self, leaf_id: int, point_xyz: np.ndarray) -> list[int]:
+        """Return unique neighboring leaves whose cells touch one boundary point of one leaf."""
         cell_xyz, cell_center = self._cell_faces(leaf_id)
         point_tol = _EXIT_TOL * max(1.0, float(np.max(np.linalg.norm(cell_xyz - cell_center, axis=1))))
-        candidate_leaves = [int(leaf_id)]
+        neighbors: list[int] = []
         for face_id in range(6):
             face_xyz = cell_xyz[self._face_corners[face_id]]
             normal_xyz = self._face_normal(face_xyz, cell_center)
-            face_distance = float(np.dot(normal_xyz, seed_xyz - face_xyz[0]))
+            face_distance = float(np.dot(normal_xyz, point_xyz - face_xyz[0]))
             if abs(face_distance) > point_tol:
-                continue
-            if float(np.dot(normal_xyz, direction_xyz)) <= _EXIT_TOL:
                 continue
             for subface_id in range(4):
                 next_leaf = int(self._resolve_transition(leaf_id, face_id, subface_id))
-                if next_leaf >= 0 and next_leaf not in candidate_leaves:
-                    candidate_leaves.append(next_leaf)
+                if next_leaf >= 0 and next_leaf not in neighbors:
+                    neighbors.append(next_leaf)
+        return neighbors
 
-        valid_starts: list[int] = []
+    def _boundary_continuation_leaf(
+        self,
+        initial_leaf_ids: list[int],
+        point_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+        *,
+        exclude_leaf_ids: tuple[int, ...] = (),
+    ) -> int:
+        """Return one deterministic continuation leaf from one boundary point, or `-1`."""
+        queue = [int(v) for v in initial_leaf_ids]
+        visited: set[int] = set()
+        valid: list[tuple[float, int, float]] = []
         start_tol = _EXIT_TOL
-        for candidate_leaf in candidate_leaves:
+
+        while queue:
+            leaf_id = int(queue.pop(0))
+            if leaf_id < 0 or leaf_id in visited:
+                continue
+            visited.add(leaf_id)
             try:
-                segment_enter, _, _, _ = self._cell_segment(
-                    candidate_leaf,
-                    seed_xyz,
+                segment_enter, segment_exit, _, _ = self._cell_segment(
+                    leaf_id,
+                    point_xyz,
                     direction_xyz,
                     current_t=0.0,
                     t_min=0.0,
                 )
             except ValueError as exc:
                 message = str(exc)
-                if message in {
+                if message not in {
                     "The requested leaf does not intersect the ray.",
                     "Failed to resolve a forward cell segment from the current leaf.",
+                    "Degenerate cell exit across an edge or corner is not supported yet.",
+                    "Degenerate face exit on a subface boundary is not supported yet.",
                 }:
+                    raise
+            else:
+                if segment_enter <= start_tol and leaf_id not in exclude_leaf_ids:
+                    valid.append((float(segment_exit - segment_enter), int(leaf_id), float(segment_exit)))
                     continue
-                raise
-            if segment_enter <= start_tol:
-                valid_starts.append(int(candidate_leaf))
+            for next_leaf in self._touching_neighbor_leaves(leaf_id, point_xyz):
+                if next_leaf not in visited:
+                    queue.append(int(next_leaf))
 
-        if not valid_starts:
-            return -1
-        if len(valid_starts) != 1:
-            raise ValueError("Degenerate seed on a cell edge or corner is not supported yet.")
-        return int(valid_starts[0])
+        if not valid:
+            if str(self.tree.tree_coord) == "rpa":
+                for candidate_leaf in self._rpa_axis_candidate_leaves(point_xyz):
+                    if candidate_leaf in visited or candidate_leaf in exclude_leaf_ids:
+                        continue
+                    try:
+                        segment_enter, segment_exit, _, _ = self._cell_segment(
+                            candidate_leaf,
+                            point_xyz,
+                            direction_xyz,
+                            current_t=0.0,
+                            t_min=0.0,
+                        )
+                    except ValueError as exc:
+                        message = str(exc)
+                        if message not in {
+                            "The requested leaf does not intersect the ray.",
+                            "Failed to resolve a forward cell segment from the current leaf.",
+                            "Degenerate cell exit across an edge or corner is not supported yet.",
+                            "Degenerate face exit on a subface boundary is not supported yet.",
+                        }:
+                            raise
+                    else:
+                        valid.append((float(segment_exit - segment_enter), int(candidate_leaf), float(segment_exit)))
+            if not valid:
+                return -1
+        valid.sort(key=lambda item: (-item[0], -item[2], item[1]))
+        return int(valid[0][1])
+
+    def _rpa_axis_candidate_leaves(self, point_xyz: np.ndarray) -> list[int]:
+        """Return one finite set of native-sector candidate leaves for one spherical axis point."""
+        from .spherical import xyz_to_rpa_components
+
+        x = float(point_xyz[0])
+        y = float(point_xyz[1])
+        z = float(point_xyz[2])
+        radial_xy = math.hypot(x, y)
+        radial_scale = max(float(np.linalg.norm(point_xyz)), 1.0)
+        if radial_xy > (_EXIT_TOL * radial_scale):
+            return []
+
+        r_value, _, _ = xyz_to_rpa_components(x, y, z)
+        n_azimuth = int(self.tree.leaf_shape[2])
+        n_polar = int(self.tree.leaf_shape[1])
+        polar_center = 0.5 * (math.pi / float(n_polar))
+        if z < 0.0:
+            polar_center = math.pi - polar_center
+        azimuth_centers = (np.arange(n_azimuth, dtype=np.float64) + 0.5) * ((2.0 * math.pi) / float(n_azimuth))
+        query_rpa = np.column_stack(
+            (
+                np.full(n_azimuth, r_value, dtype=np.float64),
+                np.full(n_azimuth, polar_center, dtype=np.float64),
+                np.mod(azimuth_centers, 2.0 * math.pi),
+            )
+        )
+        candidate_leaf = self.tree.lookup_points(query_rpa, coord="rpa").reshape(-1)
+        unique_leaf: list[int] = []
+        for leaf_id in candidate_leaf:
+            resolved = int(leaf_id)
+            if resolved >= 0 and resolved not in unique_leaf:
+                unique_leaf.append(resolved)
+        return unique_leaf
+
+    def _trace_start_leaf(self, leaf_id: int, seed_xyz: np.ndarray, direction_xyz: np.ndarray) -> int:
+        """Return the first leaf entered from one seed point along one direction."""
+        return self._boundary_continuation_leaf(
+            [int(leaf_id)],
+            seed_xyz,
+            direction_xyz,
+        )
 
     def _cell_segment(
         self,
@@ -507,7 +593,13 @@ class OctreeRayTracer:
 
             if t_exit >= clip_hi:
                 break
-            next_leaf = self._resolve_transition(current_leaf, exit_face, subface_id)
+            exit_xyz = origin + float(t_exit) * direction
+            next_leaf = self._boundary_continuation_leaf(
+                self._touching_neighbor_leaves(current_leaf, exit_xyz),
+                exit_xyz,
+                direction,
+                exclude_leaf_ids=(int(current_leaf),),
+            )
             if next_leaf < 0:
                 break
             current_leaf = int(next_leaf)
