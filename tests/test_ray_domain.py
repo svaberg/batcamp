@@ -90,6 +90,19 @@ def _build_xyz_coarse_fine_tree() -> Octree:
     return Octree(points, corners, tree_coord="xyz")
 
 
+def _analytic_visible_shell_length(impact_parameter: np.ndarray, r_min: float, r_max: float) -> np.ndarray:
+    """Return the visible path length through one opaque-inner spherical shell."""
+    b = np.asarray(impact_parameter, dtype=float)
+    out = np.zeros_like(b)
+    front_only = b < r_min
+    shell_only = (b >= r_min) & (b < r_max)
+    out[front_only] = np.sqrt(r_max * r_max - b[front_only] * b[front_only]) - np.sqrt(
+        r_min * r_min - b[front_only] * b[front_only]
+    )
+    out[shell_only] = 2.0 * np.sqrt(r_max * r_max - b[shell_only] * b[shell_only])
+    return out
+
+
 def test_seed_domain_parallel_camera_returns_midpoints_in_cartesian_box() -> None:
     """Parallel camera rays should seed at the midpoint of the visible box interval."""
     tree = _build_xyz_tree()
@@ -354,6 +367,81 @@ def test_render_midpoint_image_integrates_constant_density_along_seeded_ray() ->
 
     assert image.shape == (1, 1)
     np.testing.assert_allclose(image, np.array([[2.0]], dtype=float))
+
+
+def test_render_midpoint_image_matches_cartesian_constant_reference_grid() -> None:
+    """Constant-density Cartesian images should reduce exactly to box path lengths."""
+    points, corners = build_cartesian_hex_mesh(
+        x_edges=np.array([-1.0, 0.0, 1.0], dtype=float),
+        y_edges=np.array([-1.0, 1.0], dtype=float),
+        z_edges=np.array([-1.0, 1.0], dtype=float),
+    )
+    tree = Octree(points, corners, tree_coord="xyz")
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.ones(points.shape[0], dtype=float))
+
+    ys = np.array([-0.5, 0.0, 0.5], dtype=float)
+    zs = np.array([-0.25, 0.25], dtype=float)
+    origins = np.zeros((zs.size, ys.size, 3), dtype=float)
+    origins[..., 0] = -2.0
+    origins[..., 1] = ys[None, :]
+    origins[..., 2] = zs[:, None]
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+
+    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
+
+    np.testing.assert_allclose(image, np.full((zs.size, ys.size), 2.0, dtype=float))
+
+
+def test_render_midpoint_image_matches_cartesian_linear_reference_grid() -> None:
+    """One linear Cartesian field should integrate exactly under midpoint sampling."""
+    points, corners = build_cartesian_hex_mesh(
+        x_edges=np.array([-1.0, 0.0, 1.0], dtype=float),
+        y_edges=np.array([-1.0, 1.0], dtype=float),
+        z_edges=np.array([-1.0, 1.0], dtype=float),
+    )
+    tree = Octree(points, corners, tree_coord="xyz")
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, points[:, 0] + 2.0 * points[:, 1])
+
+    ys = np.array([-0.5, 0.0, 0.5], dtype=float)
+    zs = np.array([-0.25, 0.25], dtype=float)
+    origins = np.zeros((zs.size, ys.size, 3), dtype=float)
+    origins[..., 0] = -2.0
+    origins[..., 1] = ys[None, :]
+    origins[..., 2] = zs[:, None]
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+
+    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
+
+    np.testing.assert_allclose(image, 4.0 * origins[..., 1], atol=1.0e-12, rtol=0.0)
+
+
+def test_render_midpoint_image_matches_spherical_shell_reference_for_off_degenerate_rays() -> None:
+    """Constant-density shell rays should agree with the smooth shell to mesh accuracy."""
+    points, corners = build_spherical_hex_mesh(
+        nr=8,
+        npolar=24,
+        nazimuth=32,
+        r_min=1.0,
+        r_max=2.0,
+    )
+    tree = Octree(points, corners, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.ones(points.shape[0], dtype=float))
+
+    impact_parameter = np.array([0.3, 0.6, 0.9, 1.2, 1.6], dtype=float)
+    z_value = 0.2
+    y_value = np.sqrt(impact_parameter * impact_parameter - z_value * z_value)
+    origins = np.column_stack((np.full(impact_parameter.size, -5.0), y_value, np.full(impact_parameter.size, z_value)))
+    directions = np.tile(np.array([1.0, 0.0, 0.0], dtype=float), (impact_parameter.size, 1))
+
+    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
+    expected = _analytic_visible_shell_length(impact_parameter, 1.0, 2.0)
+
+    np.testing.assert_allclose(image, expected, atol=4.0e-2, rtol=0.0)
 
 
 def test_trace_handles_one_spherical_symmetry_ray_without_failure() -> None:
