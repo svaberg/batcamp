@@ -395,6 +395,16 @@ class OctreeRayTracer:
                     neighbors.append(next_leaf)
         return neighbors
 
+    def _topological_neighbor_leaves(self, leaf_id: int) -> list[int]:
+        """Return unique leaves adjacent to one leaf across any face transition."""
+        neighbors: list[int] = []
+        for face_id in range(6):
+            for subface_id in range(4):
+                next_leaf = int(self._resolve_transition(int(leaf_id), face_id, subface_id))
+                if next_leaf >= 0 and next_leaf not in neighbors:
+                    neighbors.append(next_leaf)
+        return neighbors
+
     def _boundary_continuation_leaf(
         self,
         initial_leaf_ids: list[int],
@@ -477,6 +487,11 @@ class OctreeRayTracer:
                     )
         if not valid:
             return -1
+        max_length = max(item[1] for item in valid)
+        min_length = 1.0e-6 * max_length
+        noncollapsed = [item for item in valid if item[1] > min_length]
+        if noncollapsed:
+            valid = noncollapsed
         valid.sort(key=lambda item: (item[0], -item[1], -item[3], item[2]))
         return int(valid[0][2])
 
@@ -533,14 +548,7 @@ class OctreeRayTracer:
         direction_xyz: np.ndarray,
     ) -> list[tuple[float, float, int]]:
         """Return candidate ray intervals near one approximate seed point."""
-        candidate_leaf_ids: list[int] = [int(seed_leaf_id)]
-        for leaf_id in self._touching_neighbor_leaves(int(seed_leaf_id), seed_xyz):
-            if leaf_id not in candidate_leaf_ids:
-                candidate_leaf_ids.append(int(leaf_id))
-        if str(self.tree.tree_coord) == "rpa":
-            for leaf_id in self._rpa_axis_candidate_leaves(seed_xyz, direction_xyz):
-                if leaf_id not in candidate_leaf_ids:
-                    candidate_leaf_ids.append(int(leaf_id))
+        candidate_leaf_ids = self._seed_candidate_leaves(seed_leaf_id, seed_xyz, direction_xyz)
 
         intervals: list[tuple[float, float, int]] = []
         for leaf_id in candidate_leaf_ids:
@@ -582,6 +590,42 @@ class OctreeRayTracer:
             else:
                 intervals.append((-float(back_exit), -float(back_enter), int(leaf_id)))
         return intervals
+
+    def _seed_candidate_leaves(
+        self,
+        seed_leaf_id: int,
+        seed_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+    ) -> list[int]:
+        """Return one finite set of leaves that may own one seed boundary point."""
+        candidate_leaf_ids: list[int] = []
+        seed_leaf = int(seed_leaf_id)
+        if seed_leaf >= 0:
+            candidate_leaf_ids.append(seed_leaf)
+            for leaf_id in self._topological_neighbor_leaves(seed_leaf):
+                if leaf_id not in candidate_leaf_ids:
+                    candidate_leaf_ids.append(int(leaf_id))
+            for leaf_id in self._touching_neighbor_leaves(seed_leaf, seed_xyz):
+                if leaf_id not in candidate_leaf_ids:
+                    candidate_leaf_ids.append(int(leaf_id))
+        if str(self.tree.tree_coord) == "rpa":
+            for leaf_id in self._rpa_axis_candidate_leaves(seed_xyz, direction_xyz):
+                if leaf_id not in candidate_leaf_ids:
+                    candidate_leaf_ids.append(int(leaf_id))
+        return candidate_leaf_ids
+
+    def _launch_leaf(
+        self,
+        seed_leaf_id: int,
+        seed_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+    ) -> int:
+        """Return the unique leaf to launch into from one seed along one direction."""
+        return self._boundary_continuation_leaf(
+            self._seed_candidate_leaves(seed_leaf_id, seed_xyz, direction_xyz),
+            seed_xyz,
+            direction_xyz,
+        )
 
     def _canonicalize_seed(
         self,
@@ -962,17 +1006,8 @@ class OctreeRayTracer:
             if seed_xyz is None
             else self._normalize_seed(seed_xyz, ray_shape)
         )
-        trace_origin = np.array(o_flat, copy=True)
-        trace_seed = np.array(seed_flat, copy=True)
-        if str(self.tree.tree_coord) == "rpa":
-            seam_mask = (
-                np.isfinite(trace_seed[:, 1])
-                & (np.abs(trace_origin[:, 1]) <= _BOUNDARY_SHIFT_FACTOR)
-                & (np.abs(d_flat[:, 1]) <= _BOUNDARY_SHIFT_FACTOR)
-                & (np.abs(trace_seed[:, 1]) <= _BOUNDARY_SHIFT_FACTOR)
-            )
-            trace_origin[seam_mask, 1] = _BOUNDARY_SHIFT_FACTOR
-            trace_seed[seam_mask, 1] = _BOUNDARY_SHIFT_FACTOR
+        trace_origin = o_flat
+        trace_seed = seed_flat
         clip_lo = max(0.0, t_lo)
         valid_seed = np.all(np.isfinite(seed_flat), axis=1)
         start_leaf = np.full(o_flat.shape[0], -1, dtype=np.int64)
@@ -985,7 +1020,7 @@ class OctreeRayTracer:
             launch_direction: np.ndarray,
             limit: float,
         ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            if limit <= 0.0:
+            if limit <= 0.0 or int(start_leaf_id) < 0:
                 return (
                     np.empty(0, dtype=np.int64),
                     np.empty(0, dtype=np.float64),
@@ -1017,94 +1052,48 @@ class OctreeRayTracer:
             ray_offsets[ray_id] = len(cell_ids)
             if not valid_seed[ray_id]:
                 continue
-            leaf_id = int(start_leaf[ray_id])
-            if leaf_id < 0:
+            seed_leaf_id = int(start_leaf[ray_id])
+            if seed_leaf_id < 0:
                 continue
 
             origin = trace_origin[ray_id]
             direction = d_flat[ray_id]
             seed = trace_seed[ray_id]
-            common_start = self._select_common_seed(leaf_id, seed, direction)
-            backward_choice = self._select_seed_branch(leaf_id, seed, direction, branch="backward")
-            forward_choice = self._select_seed_branch(leaf_id, seed, direction, branch="forward")
+            t_seed = float(np.dot(seed - origin, direction) / np.dot(direction, direction))
+            backward_leaf = self._launch_leaf(seed_leaf_id, seed, -direction)
+            forward_leaf = self._launch_leaf(seed_leaf_id, seed, direction)
 
-            if common_start is None and backward_choice is None and forward_choice is None:
-                continue
-
-            if common_start is not None or backward_choice is None or forward_choice is None:
-                if common_start is not None:
-                    seed, leaf_id = common_start
-                else:
-                    seed, leaf_id = self._canonicalize_seed(leaf_id, seed, direction)
-                t_seed = float(np.dot(seed - origin, direction) / np.dot(direction, direction))
-
-                backward_limit = max(0.0, t_seed - clip_lo)
-                back_leaf_ids_local, back_enter_local, back_exit_local = launch_branch(
-                    leaf_id,
-                    seed,
-                    -direction,
-                    backward_limit,
-                )
-                if back_leaf_ids_local.size > 0:
-                    back_leaf_ids = back_leaf_ids_local[::-1]
-                    back_t_enter = t_seed - back_exit_local[::-1]
-                    back_t_exit = t_seed - back_enter_local[::-1]
-                else:
-                    back_leaf_ids = np.empty(0, dtype=np.int64)
-                    back_t_enter = np.empty(0, dtype=np.float64)
-                    back_t_exit = np.empty(0, dtype=np.float64)
-
-                forward_limit = max(0.0, t_hi - t_seed)
-                forward_leaf_ids_local, forward_enter_local, forward_exit_local = launch_branch(
-                    leaf_id,
-                    seed,
-                    direction,
-                    forward_limit,
-                )
-                if forward_leaf_ids_local.size > 0:
-                    forward_leaf_ids = forward_leaf_ids_local
-                    forward_t_enter = t_seed + forward_enter_local
-                    forward_t_exit = t_seed + forward_exit_local
-                else:
-                    forward_leaf_ids = np.empty(0, dtype=np.int64)
-                    forward_t_enter = np.empty(0, dtype=np.float64)
-                    forward_t_exit = np.empty(0, dtype=np.float64)
+            backward_limit = max(0.0, t_seed - clip_lo)
+            back_leaf_ids_local, back_enter_local, back_exit_local = launch_branch(
+                backward_leaf,
+                seed,
+                -direction,
+                backward_limit,
+            )
+            if back_leaf_ids_local.size > 0:
+                back_leaf_ids = back_leaf_ids_local[::-1]
+                back_t_enter = t_seed - back_exit_local[::-1]
+                back_t_exit = t_seed - back_enter_local[::-1]
             else:
-                t_seed = float(np.dot(seed - origin, direction) / np.dot(direction, direction))
+                back_leaf_ids = np.empty(0, dtype=np.int64)
+                back_t_enter = np.empty(0, dtype=np.float64)
+                back_t_exit = np.empty(0, dtype=np.float64)
 
-                _, backward_leaf = backward_choice
-                backward_limit = max(0.0, t_seed - clip_lo)
-                back_leaf_ids_local, back_enter_local, back_exit_local = launch_branch(
-                    backward_leaf,
-                    seed,
-                    -direction,
-                    backward_limit,
-                )
-                if back_leaf_ids_local.size > 0:
-                    back_leaf_ids = back_leaf_ids_local[::-1]
-                    back_t_enter = t_seed - back_exit_local[::-1]
-                    back_t_exit = t_seed - back_enter_local[::-1]
-                else:
-                    back_leaf_ids = np.empty(0, dtype=np.int64)
-                    back_t_enter = np.empty(0, dtype=np.float64)
-                    back_t_exit = np.empty(0, dtype=np.float64)
-
-                _, forward_leaf = forward_choice
-                forward_limit = max(0.0, t_hi - t_seed)
-                forward_leaf_ids_local, forward_enter_local, forward_exit_local = launch_branch(
-                    forward_leaf,
-                    seed,
-                    direction,
-                    forward_limit,
-                )
-                if forward_leaf_ids_local.size > 0:
-                    forward_leaf_ids = forward_leaf_ids_local
-                    forward_t_enter = t_seed + forward_enter_local
-                    forward_t_exit = t_seed + forward_exit_local
-                else:
-                    forward_leaf_ids = np.empty(0, dtype=np.int64)
-                    forward_t_enter = np.empty(0, dtype=np.float64)
-                    forward_t_exit = np.empty(0, dtype=np.float64)
+            forward_limit = max(0.0, t_hi - t_seed)
+            forward_leaf_ids_local, forward_enter_local, forward_exit_local = launch_branch(
+                forward_leaf,
+                seed,
+                direction,
+                forward_limit,
+            )
+            if forward_leaf_ids_local.size > 0:
+                forward_leaf_ids = forward_leaf_ids_local
+                forward_t_enter = t_seed + forward_enter_local
+                forward_t_exit = t_seed + forward_exit_local
+            else:
+                forward_leaf_ids = np.empty(0, dtype=np.int64)
+                forward_t_enter = np.empty(0, dtype=np.float64)
+                forward_t_exit = np.empty(0, dtype=np.float64)
 
             merged_leaf_ids, merged_t_enter, merged_t_exit = self._merge_seed_branches(
                 back_leaf_ids,
@@ -1248,14 +1237,6 @@ class OctreeRayTracer:
                 and closest_radial_xy > axis_tol
             ):
                 seed_t = float(t_closest)
-            r_seed = 0.5 * (r_min + r_max)
-            if not np.isfinite(seed_t):
-                hit_seed, t_seed0, t_seed1 = self._sphere_interval(o_flat[i], d_flat[i], r_seed)
-                if hit_seed:
-                    candidates = np.array([t_seed0, t_seed1], dtype=np.float64)
-                    mask = (candidates >= (visible_start - tol)) & (candidates <= (visible_end + tol))
-                    if np.any(mask):
-                        seed_t = float(np.min(candidates[mask]))
             if not np.isfinite(seed_t):
                 seed_t = 0.5 * (visible_start + visible_end)
             seed_xyz[i] = o_flat[i] + seed_t * d_flat[i]
