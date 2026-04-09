@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ray seeding and first-step traversal helpers for octrees."""
+"""Ray seeding and seed-neighborhood traversal helpers for octrees."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ class OctreeRayTracer:
 
     The current implementation supports:
     - `seed_domain(...)` for one visible in-domain seed point per ray
-    - `trace_seed_step(...)` for the first traced cell segment(s) around that seed
+    - `trace_seed_segments(...)` for the first traced cell segment(s) around that seed
     """
 
     def __init__(self, tree: Octree) -> None:
@@ -342,13 +342,13 @@ class OctreeRayTracer:
         direction_norm_sq = float(np.dot(direction_xyz, direction_xyz))
         direction_unit = direction_xyz / direction_norm
         for exponent in range(-12, -7):
-            step = (10.0 ** exponent) * self._probe_scale
-            probe_xyz = seed_xyz + float(sign) * step * direction_unit
+            probe_distance = (10.0 ** exponent) * self._probe_scale
+            probe_xyz = seed_xyz + float(sign) * probe_distance * direction_unit
             cell_id = int(self.tree.lookup_points(probe_xyz, coord="xyz").reshape(-1)[0])
             if cell_id < 0:
                 continue
             probe_t = float(np.dot(probe_xyz - origin_xyz, direction_xyz)) / direction_norm_sq
-            contain_tol = 0.25 * step / direction_norm
+            contain_tol = 0.25 * probe_distance / direction_norm
             t_enter, t_exit = self._cell_interval_on_ray(
                 cell_id,
                 origin_xyz,
@@ -360,7 +360,7 @@ class OctreeRayTracer:
                 return cell_id, t_enter, t_exit
         return -1, np.nan, np.nan
 
-    def trace_seed_step(
+    def trace_seed_segments(
         self,
         origins: np.ndarray,
         directions: np.ndarray,
@@ -371,7 +371,7 @@ class OctreeRayTracer:
     ) -> RaySegments:
         """Return the first traced segment(s) on each side of the visible domain seed.
 
-        This is the first real tracing step:
+        This is the first real traced seed neighborhood:
         - find one visible in-domain seed point per ray
         - probe slightly along `+direction` and `-direction`
         - resolve the first leaf cell on each side of the seed
