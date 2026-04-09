@@ -548,17 +548,18 @@ def test_real_sample_face_seed_tie_break_stays_geometric() -> None:
     backward_seed, backward_leaf = tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="backward")
     forward_seed, forward_leaf = tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="forward")
 
-    np.testing.assert_allclose(seed_xyz, np.array([-20.70937264, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
-    assert seed_leaf == 10095
-    assert len(intervals) == 2
-    assert {leaf_id for _, _, leaf_id in intervals} == {7479, 10095}
-    assert all(enter < 0.0 < exit_ for enter, exit_, _ in intervals)
-    assert common_seed is not None
-    assert common_seed[1] in {7479, 10095}
-    assert backward_leaf in {7479, 10095}
-    assert forward_leaf in {7479, 10095}
-    np.testing.assert_allclose(backward_seed, forward_seed, atol=1.0e-8, rtol=0.0)
-    np.testing.assert_allclose(common_seed[0], np.array([-23.01252393, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(seed_xyz, np.array([0.0, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
+    assert seed_leaf == 10290
+    assert len(intervals) == 3
+    assert {leaf_id for _, _, leaf_id in intervals} == {7674, 10290, 11616}
+    assert all(exit_ <= 0.0 for enter, exit_, leaf_id in intervals if leaf_id in {7674, 10290})
+    assert all(enter >= 0.0 for enter, exit_, leaf_id in intervals if leaf_id == 11616)
+    assert common_seed is None
+    assert backward_leaf == 7674
+    assert forward_leaf == 11616
+    np.testing.assert_allclose(backward_seed[1:], np.array([-13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(forward_seed[1:], np.array([-13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(backward_seed[0], -forward_seed[0], atol=5.0e-7, rtol=0.0)
 
 
 def test_trace_returns_two_way_packed_segments_for_one_seeded_cartesian_ray() -> None:
@@ -829,6 +830,35 @@ def test_trace_matches_mirrored_real_sample_y_zero_rays() -> None:
             atol=2.0e-5,
             rtol=0.0,
         )
+
+
+def test_trace_handles_batched_real_sample_shell_only_symmetric_rays() -> None:
+    """One small batched sample patch should trace shell-only symmetry rays without bootstrap failure."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+
+    origins = np.array(
+        [
+            [[-48.0, 22.4, -28.8], [-48.0, 22.4, -22.4]],
+            [[-48.0, 28.8, -28.8], [-48.0, 28.8, -22.4]],
+        ],
+        dtype=float,
+    )
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+
+    seed_xyz = tracer.seed_domain(origins, directions)
+    np.testing.assert_allclose(seed_xyz[0, 1], np.array([0.0, 22.4, -22.4], dtype=float), atol=1.0e-12, rtol=0.0)
+
+    segments = tracer.trace(origins, directions, seed_xyz=seed_xyz)
+    counts = np.diff(segments.ray_offsets).reshape(2, 2)
+
+    assert counts[0, 1] > 0
+    assert counts[0, 0] > 0
+    assert np.all(np.isfinite(segments.t_enter))
+    assert np.all(np.isfinite(segments.t_exit))
+    assert np.all(segments.t_exit > segments.t_enter)
 
 
 def test_render_midpoint_image_preserves_real_sample_central_symmetry_for_constant_field() -> None:

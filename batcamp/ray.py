@@ -979,6 +979,35 @@ class OctreeRayTracer:
         if np.any(valid_seed):
             start_leaf[valid_seed] = self.tree.lookup_points(trace_seed[valid_seed], coord="xyz").reshape(-1)
 
+        def launch_branch(
+            start_leaf_id: int,
+            start_xyz: np.ndarray,
+            launch_direction: np.ndarray,
+            limit: float,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            if limit <= 0.0:
+                return (
+                    np.empty(0, dtype=np.int64),
+                    np.empty(0, dtype=np.float64),
+                    np.empty(0, dtype=np.float64),
+                )
+            try:
+                return self._trace_one_ray(
+                    start_leaf_id,
+                    start_xyz,
+                    launch_direction,
+                    t_min=0.0,
+                    t_max=limit,
+                )
+            except ValueError as exc:
+                if str(exc) != "Failed to resolve a forward cell segment from the current leaf.":
+                    raise
+                return (
+                    np.empty(0, dtype=np.int64),
+                    np.empty(0, dtype=np.float64),
+                    np.empty(0, dtype=np.float64),
+                )
+
         ray_offsets = np.zeros(o_flat.shape[0] + 1, dtype=np.int64)
         cell_ids: list[int] = []
         t_enter: list[float] = []
@@ -999,6 +1028,9 @@ class OctreeRayTracer:
             backward_choice = self._select_seed_branch(leaf_id, seed, direction, branch="backward")
             forward_choice = self._select_seed_branch(leaf_id, seed, direction, branch="forward")
 
+            if common_start is None and backward_choice is None and forward_choice is None:
+                continue
+
             if common_start is not None or backward_choice is None or forward_choice is None:
                 if common_start is not None:
                     seed, leaf_id = common_start
@@ -1007,14 +1039,13 @@ class OctreeRayTracer:
                 t_seed = float(np.dot(seed - origin, direction) / np.dot(direction, direction))
 
                 backward_limit = max(0.0, t_seed - clip_lo)
-                if backward_limit > 0.0:
-                    back_leaf_ids_local, back_enter_local, back_exit_local = self._trace_one_ray(
-                        leaf_id,
-                        seed,
-                        -direction,
-                        t_min=0.0,
-                        t_max=backward_limit,
-                    )
+                back_leaf_ids_local, back_enter_local, back_exit_local = launch_branch(
+                    leaf_id,
+                    seed,
+                    -direction,
+                    backward_limit,
+                )
+                if back_leaf_ids_local.size > 0:
                     back_leaf_ids = back_leaf_ids_local[::-1]
                     back_t_enter = t_seed - back_exit_local[::-1]
                     back_t_exit = t_seed - back_enter_local[::-1]
@@ -1024,14 +1055,13 @@ class OctreeRayTracer:
                     back_t_exit = np.empty(0, dtype=np.float64)
 
                 forward_limit = max(0.0, t_hi - t_seed)
-                if forward_limit > 0.0:
-                    forward_leaf_ids_local, forward_enter_local, forward_exit_local = self._trace_one_ray(
-                        leaf_id,
-                        seed,
-                        direction,
-                        t_min=0.0,
-                        t_max=forward_limit,
-                    )
+                forward_leaf_ids_local, forward_enter_local, forward_exit_local = launch_branch(
+                    leaf_id,
+                    seed,
+                    direction,
+                    forward_limit,
+                )
+                if forward_leaf_ids_local.size > 0:
                     forward_leaf_ids = forward_leaf_ids_local
                     forward_t_enter = t_seed + forward_enter_local
                     forward_t_exit = t_seed + forward_exit_local
@@ -1044,14 +1074,13 @@ class OctreeRayTracer:
 
                 _, backward_leaf = backward_choice
                 backward_limit = max(0.0, t_seed - clip_lo)
-                if backward_limit > 0.0:
-                    back_leaf_ids_local, back_enter_local, back_exit_local = self._trace_one_ray(
-                        backward_leaf,
-                        seed,
-                        -direction,
-                        t_min=0.0,
-                        t_max=backward_limit,
-                    )
+                back_leaf_ids_local, back_enter_local, back_exit_local = launch_branch(
+                    backward_leaf,
+                    seed,
+                    -direction,
+                    backward_limit,
+                )
+                if back_leaf_ids_local.size > 0:
                     back_leaf_ids = back_leaf_ids_local[::-1]
                     back_t_enter = t_seed - back_exit_local[::-1]
                     back_t_exit = t_seed - back_enter_local[::-1]
@@ -1062,14 +1091,13 @@ class OctreeRayTracer:
 
                 _, forward_leaf = forward_choice
                 forward_limit = max(0.0, t_hi - t_seed)
-                if forward_limit > 0.0:
-                    forward_leaf_ids_local, forward_enter_local, forward_exit_local = self._trace_one_ray(
-                        forward_leaf,
-                        seed,
-                        direction,
-                        t_min=0.0,
-                        t_max=forward_limit,
-                    )
+                forward_leaf_ids_local, forward_enter_local, forward_exit_local = launch_branch(
+                    forward_leaf,
+                    seed,
+                    direction,
+                    forward_limit,
+                )
+                if forward_leaf_ids_local.size > 0:
                     forward_leaf_ids = forward_leaf_ids_local
                     forward_t_enter = t_seed + forward_enter_local
                     forward_t_exit = t_seed + forward_exit_local
@@ -1206,13 +1234,28 @@ class OctreeRayTracer:
                 continue
             tol = 1e-12 * max(r_max, 1.0)
             seed_t = np.nan
+            direction_norm_sq = float(np.dot(d_flat[i], d_flat[i]))
+            t_closest = -float(np.dot(o_flat[i], d_flat[i])) / direction_norm_sq
+            closest_xyz = o_flat[i] + t_closest * d_flat[i]
+            closest_radius = float(np.linalg.norm(closest_xyz))
+            closest_radial_xy = math.hypot(float(closest_xyz[0]), float(closest_xyz[1]))
+            axis_tol = _BOUNDARY_SHIFT_FACTOR * max(closest_radius, 1.0)
+            if (
+                t_closest >= (visible_start - tol)
+                and t_closest <= (visible_end + tol)
+                and closest_radius >= (r_min - tol)
+                and closest_radius <= (r_max + tol)
+                and closest_radial_xy > axis_tol
+            ):
+                seed_t = float(t_closest)
             r_seed = 0.5 * (r_min + r_max)
-            hit_seed, t_seed0, t_seed1 = self._sphere_interval(o_flat[i], d_flat[i], r_seed)
-            if hit_seed:
-                candidates = np.array([t_seed0, t_seed1], dtype=np.float64)
-                mask = (candidates >= (visible_start - tol)) & (candidates <= (visible_end + tol))
-                if np.any(mask):
-                    seed_t = float(np.min(candidates[mask]))
+            if not np.isfinite(seed_t):
+                hit_seed, t_seed0, t_seed1 = self._sphere_interval(o_flat[i], d_flat[i], r_seed)
+                if hit_seed:
+                    candidates = np.array([t_seed0, t_seed1], dtype=np.float64)
+                    mask = (candidates >= (visible_start - tol)) & (candidates <= (visible_end + tol))
+                    if np.any(mask):
+                        seed_t = float(np.min(candidates[mask]))
             if not np.isfinite(seed_t):
                 seed_t = 0.5 * (visible_start + visible_end)
             seed_xyz[i] = o_flat[i] + seed_t * d_flat[i]
