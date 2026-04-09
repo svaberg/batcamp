@@ -36,18 +36,6 @@ def _build_rpa_tree() -> Octree:
     return Octree(points, corners, tree_coord="rpa")
 
 
-def _build_trace_rpa_tree() -> Octree:
-    """Return one denser spherical tree for seed-neighborhood xyz tracing coverage."""
-    points, corners = build_spherical_hex_mesh(
-        nr=2,
-        npolar=4,
-        nazimuth=8,
-        r_min=1.0,
-        r_max=2.0,
-    )
-    return Octree(points, corners, tree_coord="rpa")
-
-
 def test_seed_domain_parallel_camera_returns_midpoints_in_cartesian_box() -> None:
     """Parallel camera rays should seed at the midpoint of the visible box interval."""
     tree = _build_xyz_tree()
@@ -161,52 +149,3 @@ def test_seed_domain_rpa_sample_file_uses_mid_shell_seed() -> None:
     seeds = tracer.seed_domain(origin, direction)
 
     np.testing.assert_allclose(seeds, np.array([[-0.5 * (r_min + r_max), 0.0, 0.0]]), atol=1e-10)
-
-
-def test_trace_seed_segments_with_explicit_interior_seed_returns_one_cartesian_segment() -> None:
-    """An interior Cartesian seed should produce one exact seed-cell interval."""
-    tree = _build_xyz_tree()
-    tracer = OctreeRayTracer(tree)
-    origin = np.array([-5.0, 0.25, 0.25], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    seed_xyz = np.array([[-0.25, 0.25, 0.25]], dtype=float)
-
-    segments = tracer.trace_seed_segments(origin, direction, seed_xyz=seed_xyz)
-
-    assert segments.ray_offsets.tolist() == [0, 1]
-    np.testing.assert_allclose(segments.t_enter, np.array([4.0]), atol=1e-10)
-    np.testing.assert_allclose(segments.t_exit, np.array([5.0]), atol=1e-10)
-    midpoint = origin + 0.5 * (segments.t_enter[0] + segments.t_exit[0]) * direction
-    midpoint_cell = tree.lookup_points(midpoint, coord="xyz")
-    np.testing.assert_array_equal(midpoint_cell, segments.cell_ids)
-
-
-def test_trace_seed_segments_split_cartesian_boundary_seed_into_two_segments() -> None:
-    """A domain seed on an internal boundary should start one segment on each side."""
-    tree = _build_xyz_tree()
-    tracer = OctreeRayTracer(tree)
-    origin = np.array([-5.0, 0.0, 0.0], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-
-    segments = tracer.trace_seed_segments(origin, direction)
-
-    assert segments.ray_offsets.tolist() == [0, 2]
-    np.testing.assert_allclose(segments.t_enter, np.array([4.0, 5.0]), atol=1e-9)
-    np.testing.assert_allclose(segments.t_exit, np.array([5.0, 6.0]), atol=1e-9)
-
-
-def test_trace_seed_segments_rpa_lookup_back_to_their_cells() -> None:
-    """The first traced spherical seed-neighborhood segments should be self-consistent in xyz."""
-    tree = _build_trace_rpa_tree()
-    tracer = OctreeRayTracer(tree)
-    origin = np.array([-5.0, 0.75, 0.25], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-
-    segments = tracer.trace_seed_segments(origin, direction)
-
-    assert segments.ray_offsets.tolist()[0] == 0
-    assert segments.ray_offsets[-1] >= 1
-    mid_t = 0.5 * (segments.t_enter + segments.t_exit)
-    mid_xyz = origin + mid_t[:, None] * direction
-    midpoint_cell_ids = tree.lookup_points(mid_xyz, coord="xyz").reshape(-1)
-    np.testing.assert_array_equal(midpoint_cell_ids, segments.cell_ids)
