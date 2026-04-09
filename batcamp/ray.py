@@ -57,6 +57,23 @@ _EXIT_TOL = 1.0e-12
 _SUBFACE_TOL = 1.0e-12
 
 
+def _dot3(a: np.ndarray, b: np.ndarray) -> float:
+    """Return one 3D dot product as a Python float."""
+    return float(a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
+
+
+def _cross3(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Return one 3D cross product."""
+    return np.array(
+        (
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ),
+        dtype=np.float64,
+    )
+
+
 def _pack_leaf_key(depth: int, ijk: np.ndarray, axis_bases: np.ndarray) -> np.uint64:
     """Pack one `(depth, axis0, axis1, axis2)` leaf address into one sortable key."""
     key = np.uint64(depth)
@@ -290,8 +307,8 @@ class OctreeRayTracer:
     @staticmethod
     def _face_normal(face_xyz: np.ndarray, cell_center_xyz: np.ndarray) -> np.ndarray:
         """Return one outward face normal for one planar face quad."""
-        normal = np.cross(face_xyz[1] - face_xyz[0], face_xyz[2] - face_xyz[1])
-        if np.dot(normal, np.mean(face_xyz, axis=0) - cell_center_xyz) < 0.0:
+        normal = _cross3(face_xyz[1] - face_xyz[0], face_xyz[2] - face_xyz[1])
+        if _dot3(normal, np.mean(face_xyz, axis=0) - cell_center_xyz) < 0.0:
             normal = -normal
         return normal
 
@@ -302,7 +319,7 @@ class OctreeRayTracer:
         for edge_id in range(4):
             p0 = face_xyz[edge_id]
             p1 = face_xyz[(edge_id + 1) % 4]
-            signs[edge_id] = float(np.dot(np.cross(p1 - p0, point_xyz - p0), normal_xyz))
+            signs[edge_id] = _dot3(_cross3(p1 - p0, point_xyz - p0), normal_xyz)
         return bool(np.all(signs >= -tol) or np.all(signs <= tol))
 
     def _point_inside_cell(self, leaf_id: int, point_xyz: np.ndarray, tol: float) -> bool:
@@ -311,7 +328,7 @@ class OctreeRayTracer:
         for face_id in range(6):
             face_xyz = cell_xyz[self._face_corners[face_id]]
             normal_xyz = self._face_normal(face_xyz, cell_center)
-            if float(np.dot(normal_xyz, point_xyz - face_xyz[0])) > tol:
+            if _dot3(normal_xyz, point_xyz - face_xyz[0]) > tol:
                 return False
         return True
 
@@ -326,9 +343,10 @@ class OctreeRayTracer:
         second_split1 = 0.5 * (c10 + c11)
 
         def classify(split0: np.ndarray, split1: np.ndarray, low_ref: np.ndarray, high_ref: np.ndarray) -> int:
-            low_sign = float(np.dot(np.cross(split1 - split0, low_ref - split0), normal_xyz))
-            high_sign = float(np.dot(np.cross(split1 - split0, high_ref - split0), normal_xyz))
-            hit_sign = float(np.dot(np.cross(split1 - split0, exit_xyz - split0), normal_xyz))
+            split_direction = split1 - split0
+            low_sign = _dot3(_cross3(split_direction, low_ref - split0), normal_xyz)
+            high_sign = _dot3(_cross3(split_direction, high_ref - split0), normal_xyz)
+            hit_sign = _dot3(_cross3(split_direction, exit_xyz - split0), normal_xyz)
             if abs(hit_sign) <= _SUBFACE_TOL:
                 raise ValueError("Degenerate face exit on a subface boundary is not supported yet.")
             if low_sign == 0.0 or high_sign == 0.0 or low_sign * high_sign >= 0.0:
@@ -347,7 +365,7 @@ class OctreeRayTracer:
         for face_id in range(6):
             face_xyz = cell_xyz[self._face_corners[face_id]]
             normal_xyz = self._face_normal(face_xyz, cell_center)
-            face_distance = float(np.dot(normal_xyz, point_xyz - face_xyz[0]))
+            face_distance = _dot3(normal_xyz, point_xyz - face_xyz[0])
             if abs(face_distance) > point_tol:
                 continue
             for subface_id in range(4):
@@ -527,9 +545,7 @@ class OctreeRayTracer:
         direction_xyz: np.ndarray,
     ) -> tuple[np.ndarray, int]:
         """Return one seed point guaranteed to lie inside one traced cell interval."""
-        intervals = self._usable_seed_intervals(
-            self._seed_interval_candidates(int(seed_leaf_id), seed_xyz, direction_xyz)
-        )
+        intervals = self._seed_intervals(int(seed_leaf_id), seed_xyz, direction_xyz)
         if not intervals:
             raise ValueError("Failed to place the seed point inside any traced cell interval.")
 
@@ -574,6 +590,17 @@ class OctreeRayTracer:
             return usable
         return intervals
 
+    def _seed_intervals(
+        self,
+        seed_leaf_id: int,
+        seed_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+    ) -> list[tuple[float, float, int]]:
+        """Return usable local seed intervals for one approximate seed point."""
+        return self._usable_seed_intervals(
+            self._seed_interval_candidates(int(seed_leaf_id), seed_xyz, direction_xyz)
+        )
+
     def _select_common_seed(
         self,
         seed_leaf_id: int,
@@ -581,9 +608,7 @@ class OctreeRayTracer:
         direction_xyz: np.ndarray,
     ) -> tuple[np.ndarray, int] | None:
         """Return one shared interior seed when one leaf spans both ray directions."""
-        intervals = self._usable_seed_intervals(
-            self._seed_interval_candidates(int(seed_leaf_id), seed_xyz, direction_xyz)
-        )
+        intervals = self._seed_intervals(int(seed_leaf_id), seed_xyz, direction_xyz)
         shared = [item for item in intervals if item[0] < 0.0 and item[1] > 0.0]
         if not shared:
             return None
@@ -608,9 +633,7 @@ class OctreeRayTracer:
         branch: str,
     ) -> tuple[np.ndarray, int] | None:
         """Return one interior seed point and leaf for one branch off the approximate seed."""
-        intervals = self._usable_seed_intervals(
-            self._seed_interval_candidates(int(seed_leaf_id), seed_xyz, direction_xyz)
-        )
+        intervals = self._seed_intervals(int(seed_leaf_id), seed_xyz, direction_xyz)
         if branch == "forward":
             branch_intervals = [item for item in intervals if item[1] > 0.0]
             if not branch_intervals:
@@ -661,10 +684,10 @@ class OctreeRayTracer:
         for face_id in range(6):
             face_xyz = cell_xyz[self._face_corners[face_id]]
             normal_xyz = self._face_normal(face_xyz, cell_center)
-            denom = float(np.dot(normal_xyz, direction_xyz))
+            denom = _dot3(normal_xyz, direction_xyz)
             if abs(denom) <= _EXIT_TOL:
                 continue
-            t_hit = float(np.dot(normal_xyz, face_xyz[0] - origin_xyz) / denom)
+            t_hit = _dot3(normal_xyz, face_xyz[0] - origin_xyz) / denom
             hit_xyz = origin_xyz + t_hit * direction_xyz
             if self._point_inside_face(face_xyz, normal_xyz, hit_xyz, point_tol):
                 face_hits.append((t_hit, int(face_id), hit_xyz, normal_xyz))
@@ -701,17 +724,19 @@ class OctreeRayTracer:
 
         exit_tol = _EXIT_TOL * max(1.0, abs(float(exit_t)))
         degenerate_hits = [face_id for t_hit, face_id, _, _ in face_hits if abs(t_hit - exit_t) <= exit_tol]
+        degenerate_face_exit = len(degenerate_hits) > 1
         if len(degenerate_hits) > 1:
             exit_face = int(min(degenerate_hits))
 
-        # The current walker continues from the geometric exit point by searching
-        # touching leaves, so an exact face/subface tie-break is not required here.
-        try:
-            subface_id = self._face_exit_subface(leaf_id, exit_xyz, exit_face, exit_normal)
-        except ValueError as exc:
-            if str(exc) != "Degenerate face exit on a subface boundary is not supported yet.":
-                raise
+        if degenerate_face_exit:
             subface_id = -1
+        else:
+            try:
+                subface_id = self._face_exit_subface(leaf_id, exit_xyz, exit_face, exit_normal)
+            except ValueError as exc:
+                if str(exc) != "Degenerate face exit on a subface boundary is not supported yet.":
+                    raise
+                subface_id = -1
         return float(segment_enter), float(exit_t), int(exit_face), int(subface_id)
 
     def _trace_one_ray(
@@ -755,7 +780,7 @@ class OctreeRayTracer:
         for _ in range(max_steps):
             if current_t >= clip_hi:
                 break
-            segment_enter, t_exit, _, _ = self._cell_segment(
+            segment_enter, t_exit, exit_face, subface_id = self._cell_segment(
                 current_leaf,
                 origin,
                 direction,
@@ -773,12 +798,23 @@ class OctreeRayTracer:
             if t_exit >= clip_hi:
                 break
             exit_xyz = origin + float(t_exit) * direction
-            next_leaf = self._boundary_continuation_leaf(
-                self._touching_neighbor_leaves(current_leaf, exit_xyz),
-                exit_xyz,
-                direction,
-                exclude_leaf_ids=(int(current_leaf),),
-            )
+            next_leaf = -1
+            if subface_id >= 0:
+                next_leaf = int(self._resolve_transition(current_leaf, exit_face, subface_id))
+                if next_leaf >= 0:
+                    next_leaf = self._boundary_continuation_leaf(
+                        [next_leaf],
+                        exit_xyz,
+                        direction,
+                        exclude_leaf_ids=(int(current_leaf),),
+                    )
+            if next_leaf < 0:
+                next_leaf = self._boundary_continuation_leaf(
+                    self._touching_neighbor_leaves(current_leaf, exit_xyz),
+                    exit_xyz,
+                    direction,
+                    exclude_leaf_ids=(int(current_leaf),),
+                )
             if next_leaf < 0:
                 break
             current_leaf = int(next_leaf)

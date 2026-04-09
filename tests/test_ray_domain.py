@@ -429,7 +429,14 @@ def test_canonicalize_seed_uses_the_only_visible_local_branch_in_spherical_shell
     assert tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="backward") is None
     np.testing.assert_allclose(seed_xyz, np.array([-1.46969385, 0.2236068, 0.2], dtype=float), atol=1.0e-8, rtol=0.0)
     assert seed_leaf == 2639
-    assert intervals == [(0.005387463546405868, 0.13256348045557478, 2639)]
+    assert len(intervals) == 1
+    np.testing.assert_allclose(
+        np.array(intervals[0][:2], dtype=float),
+        np.array([0.005387463546405868, 0.13256348045557478], dtype=float),
+        atol=1.0e-15,
+        rtol=0.0,
+    )
+    assert intervals[0][2] == 2639
     assert forward_branch is not None
     np.testing.assert_allclose(forward_branch[0], np.array([-1.40071837, 0.2236068, 0.2], dtype=float), atol=1.0e-8, rtol=0.0)
     assert forward_branch[1] == 2639
