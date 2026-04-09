@@ -498,6 +498,16 @@ class Octree:
         return self._cell_depth
 
     @property
+    def cell_child(self) -> np.ndarray:
+        """Return rebuilt runtime 8-child references, with `-1` for missing children."""
+        return self._cell_child
+
+    @property
+    def cell_parent(self) -> np.ndarray:
+        """Return rebuilt runtime parent references, with `-1` for roots."""
+        return self._cell_parent
+
+    @property
     def cell_ijk(self) -> np.ndarray:
         """Return rebuilt runtime cell addresses."""
         return self._cell_ijk
