@@ -396,6 +396,7 @@ class Octree:
         points = np.asarray(points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3:
             raise ValueError("points must have shape (n_points, 3).")
+        self._points = points
         corner_rows = np.asarray(corners, dtype=np.int64)
         if corner_rows.ndim != 2 or corner_rows.shape != (leaf_levels.shape[0], 8):
             raise ValueError("corners must have shape (n_cells, 8) matching cell_levels.")
@@ -481,6 +482,13 @@ class Octree:
     def corners(self) -> np.ndarray:
         """Return leaf-row corner point ids in Tecplot/BATSRUS brick order."""
         return self._corners
+
+    def cell_points(self, cell_id: int) -> np.ndarray:
+        """Return one leaf cell's explicit corner point coordinates with shape `(8, 3)`."""
+        leaf_id = int(cell_id)
+        if leaf_id < 0 or leaf_id >= self._leaf_slot_count or self._cell_depth[leaf_id] < 0:
+            raise ValueError("cell_points only supports valid leaf cell ids.")
+        return self._points[self._corners[leaf_id]]
 
     @property
     def cell_bounds(self) -> np.ndarray:
