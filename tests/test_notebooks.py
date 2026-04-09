@@ -10,6 +10,10 @@ _CELL_TIMEOUT_SECONDS = 1200
 
 _NOTEBOOK_CASES = [
     pytest.param(
+        "ray_api_sketch.ipynb",
+        id="ray_api_sketch_exec",
+    ),
+    pytest.param(
         "quick_start.ipynb",
         id="quick_start_notebook_exec",
         marks=pytest.mark.pooch,
