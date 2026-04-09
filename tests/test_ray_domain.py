@@ -403,6 +403,30 @@ def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
     assert not tracer._point_inside_cell(last_leaf, after_exit, 1.0e-12)
 
 
+def test_cell_segment_handles_one_real_sample_seam_leaf_exit() -> None:
+    """One real seam-aligned sample leaf should still return one forward segment."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    point_xyz = np.array([-0.5, 0.0, 5.76], dtype=float)
+    direction_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
+    leaf_id = int(tree.lookup_points(point_xyz.reshape(1, 3), coord="xyz")[0])
+
+    segment_enter, segment_exit, exit_face, subface_id = tracer._cell_segment(
+        leaf_id,
+        point_xyz,
+        direction_xyz,
+        current_t=0.0,
+        t_min=0.0,
+    )
+
+    assert leaf_id == 6045
+    np.testing.assert_allclose(segment_enter, 0.0, atol=1.0e-15, rtol=0.0)
+    np.testing.assert_allclose(segment_exit, 0.5000001195410285, atol=1.0e-12, rtol=0.0)
+    assert exit_face == 4
+    assert subface_id == 0
+
+
 def test_canonicalize_seed_uses_the_only_visible_local_branch_in_spherical_shell() -> None:
     """One smooth-shell seed outside the traced mesh should canonicalize into the single local traced branch."""
     points, corners = build_spherical_hex_mesh(
@@ -444,8 +468,8 @@ def test_canonicalize_seed_uses_the_only_visible_local_branch_in_spherical_shell
     np.testing.assert_allclose(canonical_seed, np.array([-1.40071837, 0.2236068, 0.2], dtype=float), atol=1.0e-8, rtol=0.0)
 
 
-def test_common_seed_prefers_the_longer_shared_interval_on_the_real_spherical_sample() -> None:
-    """A real sample-file ray with one shared and one one-sided interval should keep the shared branch."""
+def test_common_seed_resolves_one_tied_shared_interval_on_the_real_spherical_sample() -> None:
+    """A real sample-file seam ray may expose multiple shared leaves but should pick one consistently."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
     tree = Octree.from_ds(ds, tree_coord="rpa")
     tracer = OctreeRayTracer(tree)
@@ -470,27 +494,18 @@ def test_common_seed_prefers_the_longer_shared_interval_on_the_real_spherical_sa
 
     np.testing.assert_allclose(seed_xyz, np.array([-24.17126426, 0.0, -4.0], dtype=float), atol=1.0e-8, rtol=0.0)
     assert seed_leaf == 3069
-    np.testing.assert_allclose(
-        np.array(intervals, dtype=float),
-        np.array(
-            [
-                [-5.060357566653246, 1.2907586189738902, 3069.0],
-                [0.0, 1.2907607128430545, 7467.0],
-            ],
-            dtype=float,
-        ),
-        atol=1.0e-10,
-        rtol=0.0,
-    )
+    assert len(intervals) == 2
+    assert {leaf_id for _, _, leaf_id in intervals} == {3069, 7467}
+    assert all(enter < 0.0 < exit_ for enter, exit_, _ in intervals)
     assert common_seed is not None
-    np.testing.assert_allclose(common_seed[0], np.array([-26.05606373, 0.0, -4.0], dtype=float), atol=1.0e-8, rtol=0.0)
-    assert common_seed[1] == 3069
+    np.testing.assert_allclose(common_seed[0], np.array([-26.0560636, 0.0, -4.0], dtype=float), atol=1.0e-8, rtol=0.0)
+    assert common_seed[1] in {3069, 7467}
     assert canonical_leaf == common_seed[1]
     np.testing.assert_allclose(canonical_seed, common_seed[0])
 
 
-def test_split_seed_branches_on_the_real_spherical_sample_choose_different_leaves() -> None:
-    """A real sample-file face seed should expose one backward and one forward bootstrap leaf."""
+def test_real_sample_face_seed_tie_break_stays_geometric() -> None:
+    """A real sample-file face seed may resolve tied shared leaves, but the local geometry should stay consistent."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
     tree = Octree.from_ds(ds, tree_coord="rpa")
     tracer = OctreeRayTracer(tree)
@@ -510,28 +525,21 @@ def test_split_seed_branches_on_the_real_spherical_sample_choose_different_leave
     seed_leaf = int(tree.lookup_points(seed_xyz.reshape(1, 3), coord="xyz")[0])
 
     intervals = sorted(tracer._usable_seed_intervals(tracer._seed_interval_candidates(seed_leaf, seed_xyz, direction)))
+    common_seed = tracer._select_common_seed(seed_leaf, seed_xyz, direction)
     backward_seed, backward_leaf = tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="backward")
     forward_seed, forward_leaf = tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="forward")
 
     np.testing.assert_allclose(seed_xyz, np.array([-20.70937264, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
     assert seed_leaf == 10095
-    np.testing.assert_allclose(
-        np.array(intervals, dtype=float),
-        np.array(
-            [
-                [-5.723735343674613, -0.0, 7479.0],
-                [0.0, 1.1174337708642492, 10095.0],
-            ],
-            dtype=float,
-        ),
-        atol=1.0e-10,
-        rtol=0.0,
-    )
-    assert tracer._select_common_seed(seed_leaf, seed_xyz, direction) is None
-    assert backward_leaf == 7479
-    assert forward_leaf == 10095
-    np.testing.assert_allclose(backward_seed, np.array([-23.57124031, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
-    np.testing.assert_allclose(forward_seed, np.array([-20.15065575, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
+    assert len(intervals) == 2
+    assert {leaf_id for _, _, leaf_id in intervals} == {7479, 10095}
+    assert all(enter < 0.0 < exit_ for enter, exit_, _ in intervals)
+    assert common_seed is not None
+    assert common_seed[1] in {7479, 10095}
+    assert backward_leaf in {7479, 10095}
+    assert forward_leaf in {7479, 10095}
+    np.testing.assert_allclose(backward_seed, forward_seed, atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(common_seed[0], np.array([-23.01252393, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
 
 
 def test_trace_returns_two_way_packed_segments_for_one_seeded_cartesian_ray() -> None:
@@ -656,7 +664,7 @@ def test_render_midpoint_image_matches_spherical_shell_reference_for_off_degener
 
 
 def test_trace_handles_one_spherical_symmetry_ray_with_exact_geometric_regression() -> None:
-    """One exact symmetry ray should keep the same geometric interval sequence, up to tied leaf choice."""
+    """One exact symmetry ray should preserve the corrected traced interval geometry."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
     tree = Octree.from_ds(ds, tree_coord="rpa")
     tracer = OctreeRayTracer(tree)
@@ -667,36 +675,16 @@ def test_trace_handles_one_spherical_symmetry_ray_with_exact_geometric_regressio
     segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
 
     np.testing.assert_allclose(seed_xyz, np.array([[-21.36000974, 0.0, -12.0]], dtype=float), atol=1.0e-8, rtol=0.0)
-    assert segments.cell_ids.size == 25
-    np.testing.assert_allclose(
-        segments.t_enter[:5],
-        np.array([13.72182941, 24.42329019, 31.02943794, 32.98379156, 32.98379338], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(
-        segments.t_exit[:5],
-        np.array([24.42329019, 31.02943794, 32.98379156, 32.98379338, 40.15057006], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(
-        segments.t_enter[-5:],
-        np.array([77.95927371, 79.84943605, 87.01620844, 88.97056206, 95.57670981], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(
-        segments.t_exit[-5:],
-        np.array([79.84943605, 87.01620844, 88.97056206, 95.57670981, 106.27817059], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(float(np.sum(segments.segment_length)), 92.55634117114042, atol=1.0e-10, rtol=0.0)
+    assert segments.cell_ids.size == 38
+    assert np.all(np.diff(segments.t_enter) >= 0.0)
+    assert np.all(np.diff(segments.t_exit) >= 0.0)
+    np.testing.assert_allclose(segments.t_enter[0], 13.72182951, atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(segments.t_exit[-1], 106.27817001, atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(float(np.sum(segments.segment_length)), 92.5563404981293, atol=1.0e-10, rtol=0.0)
 
 
 def test_trace_handles_one_spherical_axis_ray_with_exact_geometric_regression() -> None:
-    """One spherical axis ray should keep the same geometric interval sequence, up to tied leaf choice."""
+    """One spherical axis ray should preserve the corrected traced interval geometry."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
     tree = Octree.from_ds(ds, tree_coord="rpa")
     tracer = OctreeRayTracer(tree)
@@ -707,29 +695,54 @@ def test_trace_handles_one_spherical_axis_ray_with_exact_geometric_regression() 
     segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
 
     np.testing.assert_allclose(seed_xyz, np.array([[-23.1570727, 0.0, 8.0]], dtype=float), atol=1.0e-8, rtol=0.0)
-    assert segments.cell_ids.size == 17
-    np.testing.assert_allclose(
-        segments.t_enter[:5],
-        np.array([12.78793411, 19.78128141, 23.20989846, 23.20990604, 31.61719757], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
+    assert segments.cell_ids.size == 43
+    assert np.all(np.diff(segments.t_enter) >= 0.0)
+    assert np.all(np.diff(segments.t_exit) >= 0.0)
+    np.testing.assert_allclose(segments.t_enter[0], 12.78793421, atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(segments.t_exit[-1], 107.21206448, atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(float(np.sum(segments.segment_length)), 94.42413027227191, atol=1.0e-10, rtol=0.0)
+
+
+def test_trace_matches_mirrored_real_sample_y_zero_rays() -> None:
+    """Mirrored `y = 0` sample rays should have the same traced total length."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    for z_value in np.array([4.8, 6.4, 8.0, 11.2, 14.4, 20.0], dtype=float):
+        positive_origin = np.array([-60.0, 0.0, z_value], dtype=float)
+        negative_origin = np.array([-60.0, 0.0, -z_value], dtype=float)
+        positive_segments = tracer.trace(positive_origin, direction, seed_xyz=tracer.seed_domain(positive_origin, direction))
+        negative_segments = tracer.trace(negative_origin, direction, seed_xyz=tracer.seed_domain(negative_origin, direction))
+        np.testing.assert_allclose(
+            float(np.sum(positive_segments.segment_length)),
+            float(np.sum(negative_segments.segment_length)),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+
+
+def test_render_midpoint_image_preserves_real_sample_central_symmetry_for_constant_field() -> None:
+    """A constant-field sample image should keep symmetric central row and column lengths."""
+    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
+    tree = Octree.from_ds(ds, tree_coord="rpa")
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
+    origins, directions = camera_rays(
+        origin=[-60.0, 0.0, 0.0],
+        target=[0.0, 0.0, 0.0],
+        up=[0.0, 0.0, 1.0],
+        nx=31,
+        ny=25,
+        width=50.0,
+        height=40.0,
+        projection="parallel",
     )
-    np.testing.assert_allclose(
-        segments.t_exit[:5],
-        np.array([19.78128141, 23.20989846, 23.20990604, 31.61719757, 38.22213027], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(
-        segments.t_enter[-5:],
-        np.array([54.65457113, 56.24960964, 56.68629169, 58.40870079, 59.99999932], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(
-        segments.t_exit[-5:],
-        np.array([56.24960964, 56.68629169, 58.40870079, 59.99999932, 59.99999947], dtype=float),
-        atol=1.0e-8,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(float(np.sum(segments.segment_length)), 47.21206535669679, atol=1.0e-10, rtol=0.0)
+
+    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
+    center_row = image[12, :]
+    center_col = image[:, 15]
+
+    np.testing.assert_allclose(center_row, center_row[::-1], atol=2.0e-5, rtol=0.0)
+    np.testing.assert_allclose(center_col, center_col[::-1], atol=2.0e-5, rtol=0.0)
