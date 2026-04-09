@@ -36,6 +36,58 @@ def _build_rpa_tree() -> Octree:
     return Octree(points, corners, tree_coord="rpa")
 
 
+def _build_xyz_coarse_fine_tree() -> Octree:
+    """Return one Cartesian tree with one depth-1 leaf facing four depth-2 leaves."""
+    x_edges = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+    y_edges = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+    z_edges = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+
+    node_index = -np.ones((x_edges.size, y_edges.size, z_edges.size), dtype=np.int64)
+    xyz_list: list[tuple[float, float, float]] = []
+    node_id = 0
+    for ix, x in enumerate(x_edges):
+        for iy, y in enumerate(y_edges):
+            for iz, z in enumerate(z_edges):
+                xyz_list.append((float(x), float(y), float(z)))
+                node_index[ix, iy, iz] = node_id
+                node_id += 1
+
+    def cell(ix0: int, ix1: int, iy0: int, iy1: int, iz0: int, iz1: int) -> list[int]:
+        return [
+            int(node_index[ix0, iy0, iz0]),
+            int(node_index[ix1, iy0, iz0]),
+            int(node_index[ix1, iy1, iz0]),
+            int(node_index[ix0, iy1, iz0]),
+            int(node_index[ix0, iy0, iz1]),
+            int(node_index[ix1, iy0, iz1]),
+            int(node_index[ix1, iy1, iz1]),
+            int(node_index[ix0, iy1, iz1]),
+        ]
+
+    corners = np.array(
+        [
+            cell(0, 2, 0, 2, 0, 2),
+            cell(0, 2, 0, 2, 2, 4),
+            cell(0, 2, 2, 4, 0, 2),
+            cell(0, 2, 2, 4, 2, 4),
+            cell(2, 4, 0, 2, 2, 4),
+            cell(2, 4, 2, 4, 0, 2),
+            cell(2, 4, 2, 4, 2, 4),
+            cell(2, 3, 0, 1, 0, 1),
+            cell(2, 3, 0, 1, 1, 2),
+            cell(2, 3, 1, 2, 0, 1),
+            cell(2, 3, 1, 2, 1, 2),
+            cell(3, 4, 0, 1, 0, 1),
+            cell(3, 4, 0, 1, 1, 2),
+            cell(3, 4, 1, 2, 0, 1),
+            cell(3, 4, 1, 2, 1, 2),
+        ],
+        dtype=np.int64,
+    )
+    points = np.array(xyz_list, dtype=float)
+    return Octree(points, corners, tree_coord="xyz")
+
+
 def test_seed_domain_parallel_camera_returns_midpoints_in_cartesian_box() -> None:
     """Parallel camera rays should seed at the midpoint of the visible box interval."""
     tree = _build_xyz_tree()
@@ -149,3 +201,82 @@ def test_seed_domain_rpa_sample_file_uses_mid_shell_seed() -> None:
     seeds = tracer.seed_domain(origin, direction)
 
     np.testing.assert_allclose(seeds, np.array([[-0.5 * (r_min + r_max), 0.0, 0.0]]), atol=1e-10)
+
+
+def test_resolve_transition_same_level_and_boundary_faces() -> None:
+    """Same-level neighbors and domain exits should resolve exactly."""
+    tracer = OctreeRayTracer(_build_xyz_tree())
+
+    for subface in range(4):
+        assert tracer._resolve_transition(0, 1, subface) == 4
+        assert tracer._resolve_transition(4, 0, subface) == 0
+        assert tracer._resolve_transition(0, 0, subface) == -1
+        assert tracer._resolve_transition(4, 1, subface) == -1
+
+
+def test_resolve_transition_coarse_face_uses_subface_quadrants() -> None:
+    """One coarse face should resolve to the correct fine neighbor for each quadrant."""
+    tree = _build_xyz_coarse_fine_tree()
+    tracer = OctreeRayTracer(tree)
+
+    np.testing.assert_array_equal(
+        tree.cell_levels,
+        np.array([1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2], dtype=np.int64),
+    )
+    assert tracer._resolve_transition(0, 1, 0) == 7
+    assert tracer._resolve_transition(0, 1, 1) == 8
+    assert tracer._resolve_transition(0, 1, 2) == 9
+    assert tracer._resolve_transition(0, 1, 3) == 10
+
+
+def test_resolve_transition_fine_face_caches_one_coarse_neighbor() -> None:
+    """Fine-to-coarse transitions should reuse one cached coarse neighbor across subfaces."""
+    tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
+
+    assert tracer._next_leaf[7, 0, 0] == -2
+    for subface in range(4):
+        assert tracer._resolve_transition(7, 0, subface) == 0
+        assert tracer._resolve_transition(10, 0, subface) == 0
+    assert tracer._next_leaf[7, 0, 0] == 0
+
+
+def test_trace_one_xyz_ray_walks_same_level_cells_exactly() -> None:
+    """One simple Cartesian ray should cross two same-level leaves with exact intervals."""
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    leaf_ids, t_enter, t_exit = tracer._trace_one_xyz_ray(
+        0,
+        np.array([-2.0, -0.3, -0.2], dtype=float),
+        np.array([1.0, 0.0, 0.0], dtype=float),
+    )
+
+    np.testing.assert_array_equal(leaf_ids, np.array([0, 4], dtype=np.int64))
+    np.testing.assert_allclose(t_enter, np.array([1.0, 2.0], dtype=float))
+    np.testing.assert_allclose(t_exit, np.array([2.0, 3.0], dtype=float))
+
+
+def test_trace_one_xyz_ray_walks_coarse_to_fine_cells_exactly() -> None:
+    """One Cartesian ray should walk from one coarse leaf into two finer leaves."""
+    tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
+    leaf_ids, t_enter, t_exit = tracer._trace_one_xyz_ray(
+        0,
+        np.array([-0.1, 0.1875, 0.1875], dtype=float),
+        np.array([1.0, 0.0, 0.0], dtype=float),
+    )
+
+    np.testing.assert_array_equal(leaf_ids, np.array([0, 7, 11], dtype=np.int64))
+    np.testing.assert_allclose(t_enter, np.array([0.1, 0.6, 0.85], dtype=float))
+    np.testing.assert_allclose(t_exit, np.array([0.6, 0.85, 1.1], dtype=float))
+
+
+def test_trace_one_xyz_ray_walks_fine_to_coarse_cells_exactly() -> None:
+    """One Cartesian ray should walk from finer leaves back into one coarse leaf."""
+    tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
+    leaf_ids, t_enter, t_exit = tracer._trace_one_xyz_ray(
+        11,
+        np.array([1.1, 0.1875, 0.1875], dtype=float),
+        np.array([-1.0, 0.0, 0.0], dtype=float),
+    )
+
+    np.testing.assert_array_equal(leaf_ids, np.array([11, 7, 0], dtype=np.int64))
+    np.testing.assert_allclose(t_enter, np.array([0.1, 0.35, 0.6], dtype=float))
+    np.testing.assert_allclose(t_exit, np.array([0.35, 0.6, 1.1], dtype=float))

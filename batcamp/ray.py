@@ -11,6 +11,33 @@ from .octree import Octree
 
 __all__ = ["OctreeRayTracer"]
 
+_FACE_AXIS = np.array([0, 0, 1, 1, 2, 2], dtype=np.int8)
+_FACE_SIDE = np.array([0, 1, 0, 1, 0, 1], dtype=np.int8)
+_FACE_TANGENTIAL_AXES = np.array(
+    [
+        [1, 2],
+        [1, 2],
+        [0, 2],
+        [0, 2],
+        [0, 1],
+        [0, 1],
+    ],
+    dtype=np.int8,
+)
+_UNKNOWN_TRANSITION = np.int32(-2)
+_NO_TRANSITION = np.int32(-1)
+_EXIT_TOL = 1.0e-12
+_SUBFACE_TOL = 1.0e-12
+
+
+def _pack_leaf_key(depth: int, ijk: np.ndarray, axis_bases: np.ndarray) -> np.uint64:
+    """Pack one `(depth, axis0, axis1, axis2)` leaf address into one sortable key."""
+    key = np.uint64(depth)
+    key = key * np.uint64(axis_bases[0]) + np.uint64(ijk[0])
+    key = key * np.uint64(axis_bases[1]) + np.uint64(ijk[1])
+    key = key * np.uint64(axis_bases[2]) + np.uint64(ijk[2])
+    return key
+
 
 class OctreeRayTracer:
     """Trace rays against one octree geometry.
@@ -23,6 +50,21 @@ class OctreeRayTracer:
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
         self.tree = tree
+        self._leaf_slot_count = int(tree.corners.shape[0])
+        self._leaf_valid = tree.cell_levels >= 0
+        self._axis_bases = np.asarray(tree.leaf_shape, dtype=np.uint64) + np.uint64(1)
+        self._max_level = int(tree.max_level)
+        valid_leaf_ids = np.flatnonzero(self._leaf_valid).astype(np.int64)
+        valid_depth = tree.cell_depth[valid_leaf_ids]
+        valid_ijk = tree.cell_ijk[valid_leaf_ids]
+        valid_keys = np.array(
+            [_pack_leaf_key(int(valid_depth[i]), valid_ijk[i], self._axis_bases) for i in range(valid_leaf_ids.size)],
+            dtype=np.uint64,
+        )
+        order = np.argsort(valid_keys)
+        self._leaf_keys_sorted = valid_keys[order]
+        self._leaf_ids_sorted = valid_leaf_ids[order].astype(np.int32, copy=False)
+        self._next_leaf = np.full((self._leaf_slot_count, 6, 4), _UNKNOWN_TRANSITION, dtype=np.int32)
 
     @staticmethod
     def _normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
@@ -65,6 +107,203 @@ class OctreeRayTracer:
         if t0 <= t1:
             return True, t0, t1
         return True, t1, t0
+
+    def _lookup_leaf(self, depth: int, ijk: np.ndarray) -> int:
+        """Return one exact leaf-slot id for one `(depth, ijk)` address, or `-1`."""
+        if depth < 0 or depth > self._max_level:
+            return -1
+        if np.any(ijk < 0):
+            return -1
+        key = _pack_leaf_key(int(depth), ijk, self._axis_bases)
+        pos = int(np.searchsorted(self._leaf_keys_sorted, key))
+        if pos >= int(self._leaf_keys_sorted.size) or self._leaf_keys_sorted[pos] != key:
+            return -1
+        return int(self._leaf_ids_sorted[pos])
+
+    def _resolve_transition(self, leaf_id: int, face_id: int, subface_id: int) -> int:
+        """Return the neighboring leaf across one face/subface, or `-1` at the domain boundary.
+
+        Face order is `(xmin, xmax, ymin, ymax, zmin, zmax)`.
+
+        Subfaces always split the crossed face into a `2 x 2` grid. Their bits
+        are ordered along the two tangential axes of that face:
+
+        - `x*` faces: `(y_bit, z_bit)`
+        - `y*` faces: `(x_bit, z_bit)`
+        - `z*` faces: `(x_bit, y_bit)`
+
+        with `subface_id = 2 * first_bit + second_bit`.
+        """
+        leaf = int(leaf_id)
+        face = int(face_id)
+        subface = int(subface_id)
+        if leaf < 0 or leaf >= self._leaf_slot_count or not bool(self._leaf_valid[leaf]):
+            raise ValueError("leaf_id must reference one valid leaf slot.")
+        if face < 0 or face >= 6:
+            raise ValueError("face_id must be in the range [0, 5].")
+        if subface < 0 or subface >= 4:
+            raise ValueError("subface_id must be in the range [0, 3].")
+
+        cached = int(self._next_leaf[leaf, face, subface])
+        if cached != int(_UNKNOWN_TRANSITION):
+            return cached
+
+        axis = int(_FACE_AXIS[face])
+        side = int(_FACE_SIDE[face])
+        tangential_axes = _FACE_TANGENTIAL_AXES[face]
+        delta = -1 if side == 0 else 1
+        depth = int(self.tree.cell_depth[leaf])
+        ijk = self.tree.cell_ijk[leaf]
+
+        next_leaf = _NO_TRANSITION
+
+        same_ijk = np.array(ijk, copy=True)
+        same_ijk[axis] += delta
+        next_leaf = np.int32(self._lookup_leaf(depth, same_ijk))
+
+        if next_leaf < 0 and depth > 0:
+            coarse_ijk = np.right_shift(ijk, 1).astype(np.int64, copy=False)
+            coarse_ijk = np.array(coarse_ijk, copy=True)
+            coarse_ijk[axis] = (int(ijk[axis]) + delta) >> 1
+            next_leaf = np.int32(self._lookup_leaf(depth - 1, coarse_ijk))
+
+        if next_leaf < 0 and depth < self._max_level:
+            fine_ijk = np.left_shift(ijk, 1).astype(np.int64, copy=False)
+            fine_ijk = np.array(fine_ijk, copy=True)
+            fine_ijk[int(tangential_axes[0])] += (subface >> 1) & 1
+            fine_ijk[int(tangential_axes[1])] += subface & 1
+            fine_ijk[axis] = 2 * int(ijk[axis]) + (-1 if side == 0 else 2)
+            next_leaf = np.int32(self._lookup_leaf(depth + 1, fine_ijk))
+
+        self._next_leaf[leaf, face, subface] = np.int32(next_leaf)
+        return int(next_leaf)
+
+    def _xyz_cell_interval(self, leaf_id: int, origin_xyz: np.ndarray, direction_xyz: np.ndarray) -> tuple[float, float]:
+        """Return one exact Cartesian box interval for one leaf and one line."""
+        bounds = self.tree.cell_bounds[int(leaf_id)]
+        t_enter = -np.inf
+        t_exit = np.inf
+        for axis in range(3):
+            start = float(bounds[axis, 0])
+            stop = start + float(bounds[axis, 1])
+            origin_axis = float(origin_xyz[axis])
+            direction_axis = float(direction_xyz[axis])
+            if direction_axis == 0.0:
+                if origin_axis < start or origin_axis > stop:
+                    return np.inf, -np.inf
+                continue
+            t0 = (start - origin_axis) / direction_axis
+            t1 = (stop - origin_axis) / direction_axis
+            axis_enter = min(t0, t1)
+            axis_exit = max(t0, t1)
+            t_enter = max(t_enter, axis_enter)
+            t_exit = min(t_exit, axis_exit)
+        return float(t_enter), float(t_exit)
+
+    def _xyz_exit_face(self, leaf_id: int, origin_xyz: np.ndarray, direction_xyz: np.ndarray, t_exit: float) -> int:
+        """Return the unique exit face for one non-degenerate Cartesian cell crossing."""
+        bounds = self.tree.cell_bounds[int(leaf_id)]
+        face_hits: list[int] = []
+        tol = _EXIT_TOL * max(1.0, abs(float(t_exit)))
+        for axis in range(3):
+            direction_axis = float(direction_xyz[axis])
+            if direction_axis == 0.0:
+                continue
+            start = float(bounds[axis, 0])
+            stop = start + float(bounds[axis, 1])
+            if direction_axis > 0.0:
+                face_t = (stop - float(origin_xyz[axis])) / direction_axis
+                face_id = 2 * axis + 1
+            else:
+                face_t = (start - float(origin_xyz[axis])) / direction_axis
+                face_id = 2 * axis
+            if abs(face_t - float(t_exit)) <= tol:
+                face_hits.append(int(face_id))
+        if len(face_hits) != 1:
+            raise ValueError("Degenerate Cartesian cell exit across an edge or corner is not supported yet.")
+        return int(face_hits[0])
+
+    def _xyz_exit_subface(self, leaf_id: int, exit_xyz: np.ndarray, face_id: int) -> int:
+        """Return the crossed face quadrant for one non-degenerate Cartesian face exit."""
+        bounds = self.tree.cell_bounds[int(leaf_id)]
+        tangential_axes = _FACE_TANGENTIAL_AXES[int(face_id)]
+        first_axis = int(tangential_axes[0])
+        second_axis = int(tangential_axes[1])
+
+        bits = [0, 0]
+        for bit_pos, axis in enumerate((first_axis, second_axis)):
+            start = float(bounds[axis, 0])
+            width = float(bounds[axis, 1])
+            local = (float(exit_xyz[axis]) - start) / width
+            if (
+                abs(local) <= _SUBFACE_TOL
+                or abs(local - 0.5) <= _SUBFACE_TOL
+                or abs(local - 1.0) <= _SUBFACE_TOL
+            ):
+                raise ValueError("Degenerate Cartesian face exit on a subface boundary is not supported yet.")
+            if local < 0.0 or local > 1.0:
+                raise ValueError("Cartesian exit point fell outside the crossed face bounds.")
+            bits[bit_pos] = 0 if local < 0.5 else 1
+        return 2 * bits[0] + bits[1]
+
+    def _trace_one_xyz_ray(
+        self,
+        start_leaf_id: int,
+        origin_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+        *,
+        t_min: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Walk one Cartesian ray across neighboring leaves and return exact cell intervals.
+
+        This is an internal first-pass walker used to validate the topology cache.
+        It assumes a non-degenerate ray that crosses one face at a time.
+        """
+        if str(self.tree.tree_coord) != "xyz":
+            raise NotImplementedError("_trace_one_xyz_ray currently supports only tree_coord='xyz'.")
+        o_flat, d_flat, shape = self._normalize_rays(origin_xyz, direction_xyz)
+        if shape != (1,):
+            raise ValueError("_trace_one_xyz_ray requires one origin and one direction vector.")
+
+        current_leaf = int(start_leaf_id)
+        if current_leaf < 0 or current_leaf >= self._leaf_slot_count or not bool(self._leaf_valid[current_leaf]):
+            raise ValueError("start_leaf_id must reference one valid leaf slot.")
+
+        origin = o_flat[0]
+        direction = d_flat[0]
+        leaf_ids: list[int] = []
+        t_enter_list: list[float] = []
+        t_exit_list: list[float] = []
+        current_t = float(t_min)
+        max_steps = int(np.count_nonzero(self._leaf_valid)) + 1
+
+        for _ in range(max_steps):
+            t_enter, t_exit = self._xyz_cell_interval(current_leaf, origin, direction)
+            if not np.isfinite(t_exit) or t_exit < max(float(t_min), t_enter):
+                raise ValueError("The requested start leaf does not intersect the forward ray.")
+            segment_enter = max(float(t_min), current_t, float(t_enter))
+            if t_exit <= segment_enter:
+                raise ValueError("Degenerate zero-length Cartesian cell interval is not supported yet.")
+
+            exit_face = self._xyz_exit_face(current_leaf, origin, direction, t_exit)
+            exit_xyz = origin + t_exit * direction
+            subface_id = self._xyz_exit_subface(current_leaf, exit_xyz, exit_face)
+
+            leaf_ids.append(int(current_leaf))
+            t_enter_list.append(float(segment_enter))
+            t_exit_list.append(float(t_exit))
+
+            next_leaf = self._resolve_transition(current_leaf, exit_face, subface_id)
+            if next_leaf < 0:
+                break
+            current_leaf = int(next_leaf)
+            current_t = float(t_exit)
+
+        return (
+            np.asarray(leaf_ids, dtype=np.int64),
+            np.asarray(t_enter_list, dtype=np.float64),
+            np.asarray(t_exit_list, dtype=np.float64),
+        )
 
     def seed_domain(
         self,
