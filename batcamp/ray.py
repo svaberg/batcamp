@@ -399,52 +399,25 @@ def _probe_neighbor_leaf_from_normal_kernel(
 
 
 @njit(cache=True)
-def _subface_patch_center_kernel(face_xyz: np.ndarray, subface_id: int) -> np.ndarray:
-    """Return one face-subpatch center in bilinear face coordinates."""
-    first = (int(subface_id) >> 1) & 1
-    second = int(subface_id) & 1
-    u = 0.25 if first == 0 else 0.75
-    v = 0.25 if second == 0 else 0.75
-    c00 = face_xyz[0]
-    c01 = face_xyz[1]
-    c11 = face_xyz[2]
-    c10 = face_xyz[3]
-    return (
-        ((1.0 - u) * (1.0 - v)) * c00
-        + ((1.0 - u) * v) * c01
-        + (u * v) * c11
-        + (u * (1.0 - v)) * c10
-    )
-
-
-@njit(cache=True)
-def _leaf_face_xyz(leaf_points: np.ndarray, face_corners: np.ndarray, face_id: int) -> np.ndarray:
-    """Return one face's four corners for one leaf."""
-    face_xyz = np.empty((4, 3), dtype=np.float64)
-    for corner_id in range(4):
-        face_xyz[corner_id] = leaf_points[face_corners[face_id, corner_id]]
-    return face_xyz
-
-
-@njit(cache=True)
-def _face_normal_kernel(face_xyz: np.ndarray, cell_center_xyz: np.ndarray) -> np.ndarray:
-    """Return one outward face normal for one planar face quad."""
-    normal = _cross3(face_xyz[1] - face_xyz[0], face_xyz[2] - face_xyz[1])
-    face_center = np.empty(3, dtype=np.float64)
-    face_center[:] = 0.0
-    for corner_id in range(4):
-        face_center += face_xyz[corner_id]
-    face_center *= 0.25
-    if _dot3(normal, face_center - cell_center_xyz) < 0.0:
-        normal = -normal
-    return normal
-
-
-@njit(cache=True)
-def _point_inside_face_kernel(face_xyz: np.ndarray, normal_xyz: np.ndarray, point_xyz: np.ndarray, tol: float) -> bool:
+def _point_inside_face_kernel(
+    face_xyz: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    point_xyz: np.ndarray,
+    tol: float,
+) -> bool:
     """Return whether one point lies inside one convex planar face quad."""
     all_nonnegative = True
     all_nonpositive = True
+    for edge_id in range(4):
+        sign = _dot3(face_edge_normal[edge_id], point_xyz) - face_edge_d[edge_id]
+        if sign < -tol:
+            all_nonnegative = False
+        if sign > tol:
+            all_nonpositive = False
+    if all_nonnegative or all_nonpositive:
+        return True
+
     edge_scale = 0.0
     for edge_id in range(4):
         p0 = face_xyz[edge_id]
@@ -453,14 +426,6 @@ def _point_inside_face_kernel(face_xyz: np.ndarray, normal_xyz: np.ndarray, poin
         edge_len = math.sqrt(_dot3(edge, edge))
         if edge_len > edge_scale:
             edge_scale = edge_len
-        sign = _dot3(_cross3(edge, point_xyz - p0), normal_xyz)
-        if sign < -tol:
-            all_nonnegative = False
-        if sign > tol:
-            all_nonpositive = False
-    if all_nonnegative or all_nonpositive:
-        return True
-
     edge_tol = max(tol, (2.0 * _BOUNDARY_SHIFT_FACTOR) * max(1.0, edge_scale))
     for edge_id in range(4):
         p0 = face_xyz[edge_id]
@@ -483,27 +448,28 @@ def _point_inside_face_kernel(face_xyz: np.ndarray, normal_xyz: np.ndarray, poin
 
 @njit(cache=True)
 def _point_inside_cell_kernel(
-    leaf_points: np.ndarray,
-    leaf_center: np.ndarray,
-    face_corners: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
     point_xyz: np.ndarray,
     tol: float,
 ) -> bool:
     """Return whether one point lies inside one convex planar-face cell."""
     for face_id in range(6):
-        face_xyz = _leaf_face_xyz(leaf_points, face_corners, face_id)
-        normal_xyz = _face_normal_kernel(face_xyz, leaf_center)
-        if _dot3(normal_xyz, point_xyz - face_xyz[0]) > tol:
+        if (_dot3(face_normal[face_id], point_xyz) - face_plane_d[face_id]) > tol:
             return False
     return True
 
 
 @njit(cache=True)
 def _solve_cell_segment_kernel(
-    leaf_points: np.ndarray,
-    leaf_center: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scale: float,
-    face_corners: np.ndarray,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     current_t: float,
@@ -512,9 +478,8 @@ def _solve_cell_segment_kernel(
     """Return one forward cell segment plus exit face/subface, or `(False, ...)` if unresolved."""
     point_tol = _EXIT_TOL * max(1.0, leaf_scale)
     inside_now = _point_inside_cell_kernel(
-        leaf_points,
-        leaf_center,
-        face_corners,
+        face_normal,
+        face_plane_d,
         origin_xyz + current_t * direction_xyz,
         point_tol,
     )
@@ -525,14 +490,13 @@ def _solve_cell_segment_kernel(
     hit_normal = np.empty((6, 3), dtype=np.float64)
     hit_count = 0
     for face_id in range(6):
-        face_xyz = _leaf_face_xyz(leaf_points, face_corners, face_id)
-        normal_xyz = _face_normal_kernel(face_xyz, leaf_center)
+        normal_xyz = face_normal[face_id]
         denom = _dot3(normal_xyz, direction_xyz)
         if abs(denom) <= _EXIT_TOL:
             continue
-        t_hit = _dot3(normal_xyz, face_xyz[0] - origin_xyz) / denom
+        t_hit = (face_plane_d[face_id] - _dot3(normal_xyz, origin_xyz)) / denom
         face_hit_xyz = origin_xyz + t_hit * direction_xyz
-        if _point_inside_face_kernel(face_xyz, normal_xyz, face_hit_xyz, point_tol):
+        if _point_inside_face_kernel(face_xyz[face_id], face_edge_normal[face_id], face_edge_d[face_id], face_hit_xyz, point_tol):
             hit_t[hit_count] = t_hit
             hit_face[hit_count] = face_id
             hit_xyz[hit_count] = face_hit_xyz
@@ -596,16 +560,20 @@ def _solve_cell_segment_kernel(
     exit_face = int(min_face)
     subface_id = -1
     if degenerate_count <= 1:
-        subface_id = _face_exit_subface_kernel(leaf_points, face_corners, exit_xyz, exit_face, exit_normal)
+        subface_id = _face_exit_subface_kernel(face_split_normal[exit_face], face_split_d[exit_face], exit_xyz)
     return True, segment_enter, exit_t, exit_face, subface_id
 
 
 @njit(cache=True)
 def _cell_segment_trace_kernel(
-    leaf_points: np.ndarray,
-    leaf_center: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scale: float,
-    face_corners: np.ndarray,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     current_t: float,
@@ -613,10 +581,14 @@ def _cell_segment_trace_kernel(
 ) -> tuple[bool, float, float, int, int]:
     """Return one exact forward cell segment with one boundary-shift retry."""
     ok, segment_enter, exit_t, exit_face, subface_id = _solve_cell_segment_kernel(
-        leaf_points,
-        leaf_center,
+        face_xyz,
+        face_normal,
+        face_plane_d,
+        face_edge_normal,
+        face_edge_d,
+        face_split_normal,
+        face_split_d,
         leaf_scale,
-        face_corners,
         origin_xyz,
         direction_xyz,
         current_t,
@@ -630,10 +602,14 @@ def _cell_segment_trace_kernel(
         return False, np.nan, np.nan, -1, -1
     boundary_shift = (_BOUNDARY_SHIFT_FACTOR * max(1.0, leaf_scale)) / direction_norm
     ok, segment_enter, exit_t, exit_face, subface_id = _solve_cell_segment_kernel(
-        leaf_points,
-        leaf_center,
+        face_xyz,
+        face_normal,
+        face_plane_d,
+        face_edge_normal,
+        face_edge_d,
+        face_split_normal,
+        face_split_d,
         leaf_scale,
-        face_corners,
         origin_xyz + boundary_shift * direction_xyz,
         direction_xyz,
         current_t,
@@ -645,53 +621,16 @@ def _cell_segment_trace_kernel(
 
 
 @njit(cache=True)
-def _split_halfspace_bit(
-    split0: np.ndarray,
-    split1: np.ndarray,
-    low_ref: np.ndarray,
-    high_ref: np.ndarray,
-    hit_xyz: np.ndarray,
-    normal_xyz: np.ndarray,
-) -> int:
-    """Return one side bit for one face split, or `-1` for degenerate hits."""
-    split_direction = split1 - split0
-    low_sign = _dot3(_cross3(split_direction, low_ref - split0), normal_xyz)
-    high_sign = _dot3(_cross3(split_direction, high_ref - split0), normal_xyz)
-    hit_sign = _dot3(_cross3(split_direction, hit_xyz - split0), normal_xyz)
-    if abs(hit_sign) <= _SUBFACE_TOL:
-        return -1
-    if low_sign == 0.0 or high_sign == 0.0 or low_sign * high_sign >= 0.0:
-        return -1
-    if hit_sign * low_sign > 0.0:
-        return 0
-    return 1
-
-
-@njit(cache=True)
-def _face_exit_subface_kernel(
-    leaf_points: np.ndarray,
-    face_corners: np.ndarray,
-    exit_xyz: np.ndarray,
-    face_id: int,
-    normal_xyz: np.ndarray,
-) -> int:
+def _face_exit_subface_kernel(face_split_normal: np.ndarray, face_split_d: np.ndarray, exit_xyz: np.ndarray) -> int:
     """Return the crossed face quadrant, or `-1` for degenerate subface exits."""
-    c00 = leaf_points[face_corners[face_id, 0]]
-    c01 = leaf_points[face_corners[face_id, 1]]
-    c11 = leaf_points[face_corners[face_id, 2]]
-    c10 = leaf_points[face_corners[face_id, 3]]
-
-    first_split0 = 0.5 * (c00 + c10)
-    first_split1 = 0.5 * (c01 + c11)
-    second_split0 = 0.5 * (c00 + c01)
-    second_split1 = 0.5 * (c10 + c11)
-
-    first_bit = _split_halfspace_bit(first_split0, first_split1, c00, c10, exit_xyz, normal_xyz)
-    if first_bit < 0:
+    first_sign = _dot3(face_split_normal[0], exit_xyz) - face_split_d[0]
+    if abs(first_sign) <= _SUBFACE_TOL:
         return -1
-    second_bit = _split_halfspace_bit(second_split0, second_split1, c00, c01, exit_xyz, normal_xyz)
-    if second_bit < 0:
+    second_sign = _dot3(face_split_normal[1], exit_xyz) - face_split_d[1]
+    if abs(second_sign) <= _SUBFACE_TOL:
         return -1
+    first_bit = 0 if first_sign > 0.0 else 1
+    second_bit = 0 if second_sign > 0.0 else 1
     return 2 * first_bit + second_bit
 
 
@@ -699,9 +638,10 @@ def _face_exit_subface_kernel(
 def _touching_neighbor_leaves_kernel(
     leaf_id: int,
     point_xyz: np.ndarray,
-    face_corners: np.ndarray,
-    leaf_points: np.ndarray,
-    leaf_centers: np.ndarray,
+    leaf_valid: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
     leaf_scales: np.ndarray,
     next_cell: np.ndarray,
     tree_coord_code: int,
@@ -718,16 +658,15 @@ def _touching_neighbor_leaves_kernel(
     count = 0
     point_tol = _EXIT_TOL * max(1.0, leaf_scales[leaf_id])
     for face_id in range(6):
-        face_xyz = _leaf_face_xyz(leaf_points[leaf_id], face_corners, face_id)
-        normal_xyz = _face_normal_kernel(face_xyz, leaf_centers[leaf_id])
-        face_distance = _dot3(normal_xyz, point_xyz - face_xyz[0])
+        normal_xyz = face_normal[leaf_id, face_id]
+        face_distance = _dot3(normal_xyz, point_xyz) - face_plane_d[leaf_id, face_id]
         if abs(face_distance) > point_tol:
             continue
         for subface_id in range(4):
             candidate_cell = int(next_cell[leaf_id, face_id, subface_id])
             if candidate_cell < 0:
                 continue
-            if candidate_cell < leaf_points.shape[0] and np.all(np.isfinite(leaf_points[candidate_cell, 0])):
+            if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
                 candidate = candidate_cell
             else:
                 candidate = _probe_neighbor_leaf_from_normal_kernel(
@@ -860,9 +799,13 @@ def _best_continuation_leaf_kernel(
     point_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     exclude_leaf_id: int,
-    face_corners: np.ndarray,
-    leaf_points: np.ndarray,
-    leaf_centers: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
 ) -> int:
     """Return the best directly valid continuation leaf from one small candidate set."""
@@ -881,10 +824,14 @@ def _best_continuation_leaf_kernel(
         if leaf_id < 0 or leaf_id == exclude_leaf_id:
             continue
         ok, segment_enter, segment_exit, _, _ = _cell_segment_trace_kernel(
-            leaf_points[leaf_id],
-            leaf_centers[leaf_id],
+            face_xyz[leaf_id],
+            face_normal[leaf_id],
+            face_plane_d[leaf_id],
+            face_edge_normal[leaf_id],
+            face_edge_d[leaf_id],
+            face_split_normal[leaf_id],
+            face_split_d[leaf_id],
             leaf_scales[leaf_id],
-            face_corners,
             point_xyz,
             direction_xyz,
             0.0,
@@ -946,10 +893,14 @@ def _boundary_continuation_leaf_kernel(
     point_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     exclude_leaf_id: int,
-    face_corners: np.ndarray,
     leaf_valid: np.ndarray,
-    leaf_points: np.ndarray,
-    leaf_centers: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
     next_cell: np.ndarray,
     n_polar: int,
@@ -988,10 +939,14 @@ def _boundary_continuation_leaf_kernel(
             continue
         visited[leaf_id] = True
         ok, segment_enter, segment_exit, _, _ = _cell_segment_trace_kernel(
-            leaf_points[leaf_id],
-            leaf_centers[leaf_id],
+            face_xyz[leaf_id],
+            face_normal[leaf_id],
+            face_plane_d[leaf_id],
+            face_edge_normal[leaf_id],
+            face_edge_d[leaf_id],
+            face_split_normal[leaf_id],
+            face_split_d[leaf_id],
             leaf_scales[leaf_id],
-            face_corners,
             point_xyz,
             direction_xyz,
             0.0,
@@ -1011,9 +966,10 @@ def _boundary_continuation_leaf_kernel(
         touching, touching_count = _touching_neighbor_leaves_kernel(
             leaf_id,
             point_xyz,
-            face_corners,
-            leaf_points,
-            leaf_centers,
+            leaf_valid,
+            face_xyz,
+            face_normal,
+            face_plane_d,
             leaf_scales,
             next_cell,
             tree_coord_code,
@@ -1051,10 +1007,14 @@ def _boundary_continuation_leaf_kernel(
             if leaf_id < 0 or visited[leaf_id] or leaf_id == exclude_leaf_id:
                 continue
             ok, segment_enter, segment_exit, _, _ = _cell_segment_trace_kernel(
-                leaf_points[leaf_id],
-                leaf_centers[leaf_id],
+                face_xyz[leaf_id],
+                face_normal[leaf_id],
+                face_plane_d[leaf_id],
+                face_edge_normal[leaf_id],
+                face_edge_d[leaf_id],
+                face_split_normal[leaf_id],
+                face_split_d[leaf_id],
                 leaf_scales[leaf_id],
-                face_corners,
                 point_xyz,
                 direction_xyz,
                 0.0,
@@ -1113,10 +1073,15 @@ def _launch_leaf_kernel(
     seed_leaf_id: int,
     seed_xyz: np.ndarray,
     direction_xyz: np.ndarray,
-    face_corners: np.ndarray,
     leaf_valid: np.ndarray,
-    leaf_points: np.ndarray,
-    leaf_centers: np.ndarray,
+    face_normal: np.ndarray,
+    face_patch_center: np.ndarray,
+    face_xyz: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
     next_cell: np.ndarray,
     n_polar: int,
@@ -1137,8 +1102,7 @@ def _launch_leaf_kernel(
     if seed_leaf_id >= 0:
         count = _append_unique_leaf_id(initial_leaf_ids, count, int(seed_leaf_id))
         for face_id in range(6):
-            face_xyz = _leaf_face_xyz(leaf_points[seed_leaf_id], face_corners, face_id)
-            normal_xyz = _face_normal_kernel(face_xyz, leaf_centers[seed_leaf_id])
+            normal_xyz = face_normal[seed_leaf_id, face_id]
             for subface_id in range(4):
                 candidate_cell = int(next_cell[seed_leaf_id, face_id, subface_id])
                 if candidate_cell < 0:
@@ -1146,7 +1110,7 @@ def _launch_leaf_kernel(
                 if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
                     candidate_leaf = candidate_cell
                 else:
-                    patch_center = _subface_patch_center_kernel(face_xyz, subface_id)
+                    patch_center = face_patch_center[seed_leaf_id, face_id, subface_id]
                     candidate_leaf = _probe_neighbor_leaf_from_normal_kernel(
                         patch_center,
                         normal_xyz,
@@ -1165,9 +1129,10 @@ def _launch_leaf_kernel(
         touching_leaf_ids, touching_count = _touching_neighbor_leaves_kernel(
             int(seed_leaf_id),
             seed_xyz,
-            face_corners,
-            leaf_points,
-            leaf_centers,
+            leaf_valid,
+            face_xyz,
+            face_normal,
+            face_plane_d,
             leaf_scales,
             next_cell,
             tree_coord_code,
@@ -1209,10 +1174,14 @@ def _launch_leaf_kernel(
         seed_xyz,
         direction_xyz,
         -1,
-        face_corners,
         leaf_valid,
-        leaf_points,
-        leaf_centers,
+        face_xyz,
+        face_normal,
+        face_plane_d,
+        face_edge_normal,
+        face_edge_d,
+        face_split_normal,
+        face_split_d,
         leaf_scales,
         next_cell,
         n_polar,
@@ -1236,10 +1205,14 @@ def _trace_one_ray_kernel(
     t_min: float,
     t_max: float,
     leaf_valid: np.ndarray,
-    leaf_points: np.ndarray,
-    leaf_centers: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
-    face_corners: np.ndarray,
     next_cell: np.ndarray,
     n_polar: int,
     n_azimuth: int,
@@ -1268,10 +1241,14 @@ def _trace_one_ray_kernel(
         if current_t >= t_max:
             break
         ok, segment_enter, exit_t, exit_face, subface_id = _cell_segment_trace_kernel(
-            leaf_points[current_leaf],
-            leaf_centers[current_leaf],
+            face_xyz[current_leaf],
+            face_normal[current_leaf],
+            face_plane_d[current_leaf],
+            face_edge_normal[current_leaf],
+            face_edge_d[current_leaf],
+            face_split_normal[current_leaf],
+            face_split_d[current_leaf],
             leaf_scales[current_leaf],
-            face_corners,
             origin_xyz,
             direction_xyz,
             current_t,
@@ -1293,7 +1270,7 @@ def _trace_one_ray_kernel(
         initial_count = 0
         if subface_id >= 0:
             candidate_cell = int(next_cell[current_leaf, exit_face, subface_id])
-            if candidate_cell < leaf_points.shape[0] and candidate_cell >= 0 and np.all(np.isfinite(leaf_points[candidate_cell, 0])):
+            if candidate_cell >= 0 and candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
                 candidate = candidate_cell
             elif candidate_cell >= 0:
                 candidate = _probe_neighbor_leaf_from_direction_kernel(
@@ -1314,10 +1291,14 @@ def _trace_one_ray_kernel(
                 candidate = -1
             if candidate >= 0:
                 candidate_ok, _, _, _, _ = _cell_segment_trace_kernel(
-                    leaf_points[candidate],
-                    leaf_centers[candidate],
+                    face_xyz[candidate],
+                    face_normal[candidate],
+                    face_plane_d[candidate],
+                    face_edge_normal[candidate],
+                    face_edge_d[candidate],
+                    face_split_normal[candidate],
+                    face_split_d[candidate],
                     leaf_scales[candidate],
-                    face_corners,
                     exit_xyz,
                     direction_xyz,
                     0.0,
@@ -1329,9 +1310,10 @@ def _trace_one_ray_kernel(
             initial_leaf_ids, initial_count = _touching_neighbor_leaves_kernel(
                 current_leaf,
                 exit_xyz,
-                face_corners,
-                leaf_points,
-                leaf_centers,
+                leaf_valid,
+                face_xyz,
+                face_normal,
+                face_plane_d,
                 leaf_scales,
                 next_cell,
                 tree_coord_code,
@@ -1349,9 +1331,13 @@ def _trace_one_ray_kernel(
                 exit_xyz,
                 direction_xyz,
                 current_leaf,
-                face_corners,
-                leaf_points,
-                leaf_centers,
+                face_xyz,
+                face_normal,
+                face_plane_d,
+                face_edge_normal,
+                face_edge_d,
+                face_split_normal,
+                face_split_d,
                 leaf_scales,
             )
         if next_leaf_id < 0:
@@ -1361,10 +1347,14 @@ def _trace_one_ray_kernel(
                 exit_xyz,
                 direction_xyz,
                 current_leaf,
-                face_corners,
                 leaf_valid,
-                leaf_points,
-                leaf_centers,
+                face_xyz,
+                face_normal,
+                face_plane_d,
+                face_edge_normal,
+                face_edge_d,
+                face_split_normal,
+                face_split_d,
                 leaf_scales,
                 next_cell,
                 n_polar,
@@ -1406,10 +1396,15 @@ def trace_one_ray_kernel(
     """Walk one ray from one packed raw tracing-state bundle."""
     (
         leaf_valid,
-        leaf_points,
-        leaf_centers,
+        face_xyz,
+        face_normal,
+        face_plane_d,
+        face_edge_normal,
+        face_edge_d,
+        face_split_normal,
+        face_split_d,
         leaf_scales,
-        face_corners,
+        face_patch_center,
         next_cell,
         n_polar,
         n_azimuth,
@@ -1430,10 +1425,14 @@ def trace_one_ray_kernel(
         t_min,
         t_max,
         leaf_valid,
-        leaf_points,
-        leaf_centers,
+        face_xyz,
+        face_normal,
+        face_plane_d,
+        face_edge_normal,
+        face_edge_d,
+        face_split_normal,
+        face_split_d,
         leaf_scales,
-        face_corners,
         next_cell,
         n_polar,
         n_azimuth,
@@ -1457,10 +1456,15 @@ def _trace_rays_kernel(
     clip_lo: float,
     t_hi: float,
     leaf_valid: np.ndarray,
-    leaf_points: np.ndarray,
-    leaf_centers: np.ndarray,
+    face_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_plane_d: np.ndarray,
+    face_edge_normal: np.ndarray,
+    face_edge_d: np.ndarray,
+    face_split_normal: np.ndarray,
+    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
-    face_corners: np.ndarray,
+    face_patch_center: np.ndarray,
     next_cell: np.ndarray,
     n_polar: int,
     n_azimuth: int,
@@ -1511,10 +1515,15 @@ def _trace_rays_kernel(
             seed_leaf_id,
             seed,
             -direction,
-            face_corners,
             leaf_valid,
-            leaf_points,
-            leaf_centers,
+            face_normal,
+            face_patch_center,
+            face_xyz,
+            face_plane_d,
+            face_edge_normal,
+            face_edge_d,
+            face_split_normal,
+            face_split_d,
             leaf_scales,
             next_cell,
             n_polar,
@@ -1532,10 +1541,15 @@ def _trace_rays_kernel(
             seed_leaf_id,
             seed,
             direction,
-            face_corners,
             leaf_valid,
-            leaf_points,
-            leaf_centers,
+            face_normal,
+            face_patch_center,
+            face_xyz,
+            face_plane_d,
+            face_edge_normal,
+            face_edge_d,
+            face_split_normal,
+            face_split_d,
             leaf_scales,
             next_cell,
             n_polar,
@@ -1559,10 +1573,14 @@ def _trace_rays_kernel(
                 0.0,
                 float(backward_limit),
                 leaf_valid,
-                leaf_points,
-                leaf_centers,
+                face_xyz,
+                face_normal,
+                face_plane_d,
+                face_edge_normal,
+                face_edge_d,
+                face_split_normal,
+                face_split_d,
                 leaf_scales,
-                face_corners,
                 next_cell,
                 n_polar,
                 n_azimuth,
@@ -1590,10 +1608,14 @@ def _trace_rays_kernel(
                 0.0,
                 float(forward_limit),
                 leaf_valid,
-                leaf_points,
-                leaf_centers,
+                face_xyz,
+                face_normal,
+                face_plane_d,
+                face_edge_normal,
+                face_edge_d,
+                face_split_normal,
+                face_split_d,
                 leaf_scales,
-                face_corners,
                 next_cell,
                 n_polar,
                 n_azimuth,
@@ -1775,27 +1797,85 @@ class OctreeRayTracer:
         logger.info("_prepare_seed_domain complete in %.2fs", float(time.perf_counter() - t_seed))
         valid_leaf_ids = np.flatnonzero(leaf_valid).astype(np.int64)
         n_valid_leaf = int(valid_leaf_ids.size)
-        leaf_points = np.full((leaf_slot_count, 8, 3), np.nan, dtype=np.float64)
-        leaf_centers = np.full((leaf_slot_count, 3), np.nan, dtype=np.float64)
         leaf_scales = np.full(leaf_slot_count, np.nan, dtype=np.float64)
-        logger.info("build leaf geometry cache...")
+        face_xyz = np.full((leaf_slot_count, 6, 4, 3), np.nan, dtype=np.float64)
+        face_normal = np.full((leaf_slot_count, 6, 3), np.nan, dtype=np.float64)
+        face_plane_d = np.full((leaf_slot_count, 6), np.nan, dtype=np.float64)
+        face_edge_normal = np.full((leaf_slot_count, 6, 4, 3), np.nan, dtype=np.float64)
+        face_edge_d = np.full((leaf_slot_count, 6, 4), np.nan, dtype=np.float64)
+        face_split_normal = np.full((leaf_slot_count, 6, 2, 3), np.nan, dtype=np.float64)
+        face_split_d = np.full((leaf_slot_count, 6, 2), np.nan, dtype=np.float64)
+        face_patch_center = np.full((leaf_slot_count, 6, 4, 3), np.nan, dtype=np.float64)
+        logger.info("build face trace cache...")
         t_geom = time.perf_counter()
         cell_xyz = tree.cell_points(valid_leaf_ids)
-        leaf_points[valid_leaf_ids] = cell_xyz
-        leaf_centers[valid_leaf_ids] = np.mean(cell_xyz, axis=1)
-        leaf_scales[valid_leaf_ids] = np.max(
-            np.linalg.norm(cell_xyz - leaf_centers[valid_leaf_ids, None, :], axis=2),
-            axis=1,
+        leaf_centers = np.mean(cell_xyz, axis=1)
+        leaf_scales[valid_leaf_ids] = np.max(np.linalg.norm(cell_xyz - leaf_centers[:, None, :], axis=2), axis=1)
+
+        valid_face_xyz = cell_xyz[:, face_corners, :]
+        valid_face_normal = np.cross(valid_face_xyz[:, :, 1] - valid_face_xyz[:, :, 0], valid_face_xyz[:, :, 2] - valid_face_xyz[:, :, 1])
+        valid_face_center = np.mean(valid_face_xyz, axis=2)
+        normal_flip = np.sum(valid_face_normal * (valid_face_center - leaf_centers[:, None, :]), axis=2) < 0.0
+        valid_face_normal[normal_flip] *= -1.0
+        valid_face_plane_d = np.sum(valid_face_normal * valid_face_xyz[:, :, 0, :], axis=2)
+
+        valid_edge_p0 = valid_face_xyz
+        valid_edge_p1 = np.roll(valid_face_xyz, -1, axis=2)
+        valid_edge_vec = valid_edge_p1 - valid_edge_p0
+        valid_face_edge_normal = np.cross(valid_edge_vec, valid_face_normal[:, :, None, :])
+        valid_face_edge_ref = valid_face_center[:, :, None, :] - valid_edge_p0
+        edge_flip = np.sum(valid_face_edge_normal * valid_face_edge_ref, axis=3) < 0.0
+        valid_face_edge_normal[edge_flip] *= -1.0
+        valid_face_edge_d = np.sum(valid_face_edge_normal * valid_edge_p0, axis=3)
+
+        first_split0 = 0.5 * (valid_face_xyz[:, :, 0, :] + valid_face_xyz[:, :, 3, :])
+        first_split1 = 0.5 * (valid_face_xyz[:, :, 1, :] + valid_face_xyz[:, :, 2, :])
+        second_split0 = 0.5 * (valid_face_xyz[:, :, 0, :] + valid_face_xyz[:, :, 1, :])
+        second_split1 = 0.5 * (valid_face_xyz[:, :, 3, :] + valid_face_xyz[:, :, 2, :])
+        first_split_normal = np.cross(valid_face_normal, first_split1 - first_split0)
+        second_split_normal = np.cross(valid_face_normal, second_split1 - second_split0)
+        first_split_flip = np.sum(first_split_normal * (valid_face_xyz[:, :, 0, :] - first_split0), axis=2) < 0.0
+        second_split_flip = np.sum(second_split_normal * (valid_face_xyz[:, :, 0, :] - second_split0), axis=2) < 0.0
+        first_split_normal[first_split_flip] *= -1.0
+        second_split_normal[second_split_flip] *= -1.0
+        valid_face_split_normal = np.empty((n_valid_leaf, 6, 2, 3), dtype=np.float64)
+        valid_face_split_normal[:, :, 0, :] = first_split_normal
+        valid_face_split_normal[:, :, 1, :] = second_split_normal
+        valid_face_split_d = np.empty((n_valid_leaf, 6, 2), dtype=np.float64)
+        valid_face_split_d[:, :, 0] = np.sum(first_split_normal * first_split0, axis=2)
+        valid_face_split_d[:, :, 1] = np.sum(second_split_normal * second_split0, axis=2)
+
+        subface_u = np.array([0.25, 0.25, 0.75, 0.75], dtype=np.float64)
+        subface_v = np.array([0.25, 0.75, 0.25, 0.75], dtype=np.float64)
+        valid_face_patch_center = (
+            ((1.0 - subface_u)[None, None, :, None] * (1.0 - subface_v)[None, None, :, None]) * valid_face_xyz[:, :, None, 0, :]
+            + ((1.0 - subface_u)[None, None, :, None] * subface_v[None, None, :, None]) * valid_face_xyz[:, :, None, 1, :]
+            + (subface_u[None, None, :, None] * subface_v[None, None, :, None]) * valid_face_xyz[:, :, None, 2, :]
+            + (subface_u[None, None, :, None] * (1.0 - subface_v)[None, None, :, None]) * valid_face_xyz[:, :, None, 3, :]
         )
-        logger.info("build leaf geometry cache complete in %.2fs", float(time.perf_counter() - t_geom))
+
+        face_xyz[valid_leaf_ids] = valid_face_xyz
+        face_normal[valid_leaf_ids] = valid_face_normal
+        face_plane_d[valid_leaf_ids] = valid_face_plane_d
+        face_edge_normal[valid_leaf_ids] = valid_face_edge_normal
+        face_edge_d[valid_leaf_ids] = valid_face_edge_d
+        face_split_normal[valid_leaf_ids] = valid_face_split_normal
+        face_split_d[valid_leaf_ids] = valid_face_split_d
+        face_patch_center[valid_leaf_ids] = valid_face_patch_center
+        logger.info("build face trace cache complete in %.2fs", float(time.perf_counter() - t_geom))
         logger.info("_pack_trace_state...")
         t_state = time.perf_counter()
         self._trace_state = (
             leaf_valid,
-            leaf_points,
-            leaf_centers,
+            face_xyz,
+            face_normal,
+            face_plane_d,
+            face_edge_normal,
+            face_edge_d,
+            face_split_normal,
+            face_split_d,
             leaf_scales,
-            face_corners,
+            face_patch_center,
             next_cell,
             n_polar,
             n_azimuth,
