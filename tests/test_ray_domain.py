@@ -4,12 +4,14 @@ import math
 
 import numpy as np
 import pytest
+from numba import njit
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import camera_rays
 from batcamp import render_midpoint_image
+from batcamp.ray import trace_one_ray_kernel
 from fake_dataset import build_cartesian_hex_mesh
 from fake_dataset import build_spherical_hex_mesh
 from sample_data_helper import data_file
@@ -218,9 +220,7 @@ def test_seed_domain_rpa_handles_miss_and_shell_only_paths() -> None:
 
     assert np.all(np.isnan(seeds[0]))
     np.testing.assert_allclose(seeds[1], np.array([0.0, 1.5, 0.0]))
-    outer_entry = -math.sqrt(4.0 - 0.5 * 0.5)
-    inner_entry = -math.sqrt(1.0 - 0.5 * 0.5)
-    np.testing.assert_allclose(seeds[2], np.array([0.5 * (outer_entry + inner_entry), 0.5, 0.0]))
+    np.testing.assert_allclose(seeds[2], np.array([-math.sqrt(2.0), 0.5, 0.0]))
 
 
 def test_seed_domain_rpa_sample_file_uses_mid_shell_seed() -> None:
@@ -385,7 +385,7 @@ def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
     leaf_ids, t_enter, t_exit = tracer._trace_one_ray(start_leaf, origin, direction)
     t_seed = float(seed_xyz[0, 0] - origin[0])
 
-    np.testing.assert_allclose(seed_xyz, np.array([[-24.41295076, 0.5, 0.25]], dtype=float), atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(seed_xyz, np.array([[-24.49362194, 0.5, 0.25]], dtype=float), atol=1.0e-8, rtol=0.0)
     assert start_leaf == 5685
     assert leaf_ids.size == 25
     np.testing.assert_array_equal(leaf_ids[:5], np.array([5685, 5684, 5683, 5682, 5591], dtype=np.int64))
@@ -448,6 +448,34 @@ def test_cell_segment_handles_one_real_sample_seam_leaf_exit() -> None:
     assert subface_id == 0
 
 
+def test_public_trace_one_ray_kernel_is_jittable() -> None:
+    """The public one-ray tracing kernel should compile against raw tracer state."""
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origin = np.array([-2.0, -0.3, -0.2], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    seed_xyz = tracer.seed_domain(origin, direction)
+    start_leaf = int(tracer.tree.lookup_points(seed_xyz, coord="xyz")[0])
+    trace_state = tracer.trace_kernel_state()
+    expected_leaf_ids, expected_t_enter, expected_t_exit = tracer._trace_one_ray(start_leaf, origin, direction)
+
+    @njit(cache=True)
+    def run_trace(
+        start_leaf_id: int,
+        origin_xyz: np.ndarray,
+        direction_xyz: np.ndarray,
+        state: tuple,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return trace_one_ray_kernel(start_leaf_id, origin_xyz, direction_xyz, 0.0, np.inf, state)
+
+    leaf_ids, t_enter, t_exit = run_trace(start_leaf, origin, direction, trace_state)
+
+    np.testing.assert_array_equal(leaf_ids, expected_leaf_ids)
+    np.testing.assert_allclose(t_enter, expected_t_enter, atol=0.0, rtol=0.0)
+    np.testing.assert_allclose(t_exit, expected_t_exit, atol=0.0, rtol=0.0)
+    assert run_trace.signatures
+    assert trace_one_ray_kernel.signatures
+
+
 def test_launch_leaf_finds_both_shell_branches_from_one_spherical_seed() -> None:
     """One through-hole shell seed should launch into valid leaves in both directions."""
     points, corners = build_spherical_hex_mesh(
@@ -471,11 +499,11 @@ def test_launch_leaf_finds_both_shell_branches_from_one_spherical_seed() -> None
     forward_segment = tracer._cell_segment(forward_leaf, seed_xyz, direction, current_t=0.0, t_min=0.0)
 
     assert seed_leaf == 2639
-    np.testing.assert_allclose(seed_xyz, np.array([-1.4656556, 0.2236068, 0.2], dtype=float), atol=1.0e-8, rtol=0.0)
+    np.testing.assert_allclose(seed_xyz, np.array([-1.46969385, 0.2236068, 0.2], dtype=float), atol=1.0e-8, rtol=0.0)
     assert backward_leaf == 3407
     assert forward_leaf == 3407
-    np.testing.assert_allclose(backward_segment[:2], np.array([0.0, 0.03147187786169955]), atol=1.0e-15, rtol=0.0)
-    np.testing.assert_allclose(forward_segment[:2], np.array([0.0, 0.0013492152492310624]), atol=1.0e-15, rtol=0.0)
+    np.testing.assert_allclose(backward_segment[:2], np.array([0.0, 0.02743362956452474]), atol=1.0e-15, rtol=0.0)
+    np.testing.assert_allclose(forward_segment[:2], np.array([0.0, 0.005387463546405859]), atol=1.0e-15, rtol=0.0)
 
 
 def test_launch_leaf_resolves_one_real_sample_seam_seed_in_both_directions() -> None:

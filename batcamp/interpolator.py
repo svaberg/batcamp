@@ -267,6 +267,16 @@ class OctreeInterpolator:
         if self.tree.tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
 
+    @property
+    def n_components(self) -> int:
+        """Return the flat component count carried by each interpolation value."""
+        return int(self._point_values_2d.shape[1])
+
+    @property
+    def value_shape(self) -> tuple[int, ...]:
+        """Return the trailing shape of one interpolated value."""
+        return self._value_shape_tail
+
     def _flatten_point_values(self, values: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
         """Flatten one `(n_points, ...)` value array for interpolation kernels."""
         if values is None or isinstance(values, str) or isinstance(values, list):
