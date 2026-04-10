@@ -494,20 +494,144 @@ def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_cell_ce
         )
 
 
-def test_trace_one_ray_kernel_handles_corner_rays_to_all_regular_mesh_corners() -> None:
-    """Corner-origin rays toward every other regular-grid mesh corner should trace contiguously to the box boundary."""
+@pytest.mark.parametrize(
+    "direction",
+    [
+        (-1.0, -1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, 1.0, 1.0),
+        (1.0, -1.0, -1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, 1.0, -1.0),
+        (1.0, 1.0, 1.0),
+    ],
+    ids=[
+        "origin---",
+        "origin--+",
+        "origin-+-",
+        "origin-++",
+        "origin+--",
+        "origin+-+",
+        "origin++-",
+        "origin+++",
+    ],
+)
+def test_trace_one_ray_kernel_handles_origin_space_diagonal_regular_rays(direction: tuple[float, float, float]) -> None:
+    """All space diagonals from the true mesh corner origin should trace contiguously to the expected box exit."""
     tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([0.0, 0.0, 0.0], dtype=float)
-    points = tracer.tree._points
+    direction = np.array(direction, dtype=float)
+    owner_sign = np.where(direction > 0.0, 1.0, -1.0)
+    start_xyz = origin + 1.0e-12 * owner_sign
+    start_leaf = int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
 
-    assert tracer.tree.root_shape == (1, 1, 1)
-    np.testing.assert_array_equal(np.unique(tracer.tree.cell_levels), np.array([3], dtype=np.int64))
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
+        start_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
+    )
 
-    for target in points:
+    assert leaf_ids.size > 0, f"no traced segments for direction={direction.tolist()}"
+    np.testing.assert_allclose(
+        t_enter[0],
+        0.0,
+        atol=1.0e-12,
+        rtol=0.0,
+        err_msg=f"bad first entry for direction={direction.tolist()}",
+    )
+    expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=expected_exit_xyz,
+        expected_length=expected_length,
+    )
+
+
+@pytest.mark.parametrize(
+    "direction",
+    [
+        (-1.0, -1.0, 0.0),
+        (-1.0, 1.0, 0.0),
+        (1.0, -1.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (-1.0, 0.0, -1.0),
+        (-1.0, 0.0, 1.0),
+        (1.0, 0.0, -1.0),
+        (1.0, 0.0, 1.0),
+        (0.0, -1.0, -1.0),
+        (0.0, -1.0, 1.0),
+        (0.0, 1.0, -1.0),
+        (0.0, 1.0, 1.0),
+    ],
+    ids=[
+        "origin- -0".replace(" ", ""),
+        "origin-+0",
+        "origin+-0",
+        "origin++0",
+        "origin-0-",
+        "origin-0+",
+        "origin+0-",
+        "origin+0+",
+        "origin0--",
+        "origin0-+",
+        "origin0+-",
+        "origin0++",
+    ],
+)
+def test_trace_one_ray_kernel_handles_origin_plane_diagonal_regular_rays(direction: tuple[float, float, float]) -> None:
+    """All plane diagonals from the true mesh corner origin should trace contiguously to the expected box exit."""
+    tracer = OctreeRayTracer(_build_xyz_regular_tree())
+    origin = np.array([0.0, 0.0, 0.0], dtype=float)
+    direction = np.array(direction, dtype=float)
+    owner_sign = np.where(direction > 0.0, 1.0, -1.0)
+    start_xyz = origin + 1.0e-12 * owner_sign
+    start_leaf = int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
+
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
+        start_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
+    )
+
+    assert leaf_ids.size > 0, f"no traced segments for direction={direction.tolist()}"
+    np.testing.assert_allclose(
+        t_enter[0],
+        0.0,
+        atol=1.0e-12,
+        rtol=0.0,
+        err_msg=f"bad first entry for direction={direction.tolist()}",
+    )
+    expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=expected_exit_xyz,
+        expected_length=expected_length,
+    )
+
+
+def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_origin() -> None:
+    """All rays from the true mesh corner origin toward mesh corners should trace contiguously to the expected box exit."""
+    tracer = OctreeRayTracer(_build_xyz_regular_tree())
+    origin = np.array([0.0, 0.0, 0.0], dtype=float)
+
+    for target in tracer.tree._points:
         direction = np.asarray(target - origin, dtype=float)
         if np.allclose(direction, 0.0):
             continue
-        owner_sign = np.where(direction > 0.0, 1.0, -1.0)
+        owner_sign = np.sign(direction)
         start_xyz = origin + 1.0e-12 * owner_sign
         start_leaf = int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
 
@@ -521,31 +645,21 @@ def test_trace_one_ray_kernel_handles_corner_rays_to_all_regular_mesh_corners() 
         )
 
         assert leaf_ids.size > 0, f"no traced segments for target={target.tolist()} direction={direction.tolist()}"
-        assert leaf_ids.size == t_enter.size == t_exit.size, f"shape mismatch for target={target.tolist()}"
-        np.testing.assert_allclose(t_enter[0], 0.0, atol=1.0e-12, rtol=0.0, err_msg=f"bad first entry for target={target.tolist()}")
-        assert np.all(t_exit > t_enter), f"nonpositive segment for target={target.tolist()}"
         np.testing.assert_allclose(
-            t_enter[1:],
-            t_exit[:-1],
+            t_enter[0],
+            0.0,
             atol=1.0e-12,
             rtol=0.0,
-            err_msg=f"noncontiguous segments for target={target.tolist()}",
+            err_msg=f"bad first entry for target={target.tolist()}",
         )
-        assert np.all((leaf_ids >= 0) & (leaf_ids < tracer.tree.corners.shape[0])), f"invalid leaf ids for target={target.tolist()}"
-
-        positive_exit = []
-        for axis in range(3):
-            if direction[axis] > 0.0:
-                positive_exit.append((4.0 - origin[axis]) / direction[axis])
-            elif direction[axis] < 0.0:
-                positive_exit.append((-4.0 - origin[axis]) / direction[axis])
-        expected_t_exit = min(float(t) for t in positive_exit)
-        np.testing.assert_allclose(
-            t_exit[-1],
-            expected_t_exit,
-            atol=1.0e-12,
-            rtol=0.0,
-            err_msg=f"wrong terminal exit for target={target.tolist()}",
+        expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
+        _assert_segments_match_expected_path(
+            origin,
+            direction,
+            t_enter,
+            t_exit,
+            expected_exit_xyz=expected_exit_xyz,
+            expected_length=expected_length,
         )
 
 

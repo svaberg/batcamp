@@ -59,8 +59,8 @@ _RPA_CORNER_BITS = np.array(
     dtype=np.int8,
 )
 _EXIT_TOL = 1.0e-12
-_SUBFACE_TOL = 1.0e-12
 _BOUNDARY_SHIFT_FACTOR = 1.0e-6
+_OWNERSHIP_SHIFT_FACTOR = 1.0e-6
 _TREE_COORD_XYZ = np.int8(0)
 _TREE_COORD_RPA = np.int8(1)
 
@@ -363,7 +363,6 @@ def _probe_neighbor_leaf_from_direction_kernel(
         axis2_periodic,
     )
 
-
 @njit(cache=True)
 def _probe_neighbor_leaf_from_normal_kernel(
     point_xyz: np.ndarray,
@@ -396,6 +395,102 @@ def _probe_neighbor_leaf_from_normal_kernel(
         axis2_period,
         axis2_periodic,
     )
+
+
+@njit(cache=True)
+def _boundary_probe_direction_kernel(
+    direction_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    active_face_mask: int,
+) -> np.ndarray:
+    """Return one forward ownership probe direction with one small outward boundary bias."""
+    probe_direction = np.empty(3, dtype=np.float64)
+    probe_direction[0] = direction_xyz[0]
+    probe_direction[1] = direction_xyz[1]
+    probe_direction[2] = direction_xyz[2]
+    for face_id in range(6):
+        if (active_face_mask & (1 << face_id)) != 0:
+            probe_direction += face_normal[face_id]
+    return probe_direction
+
+
+@njit(cache=True)
+def _face_exit_subface_kernel(face_patch_center: np.ndarray, point_xyz: np.ndarray) -> int:
+    """Return the nearest cached face patch for one boundary point."""
+    best_subface = 0
+    best_distance_sq = np.inf
+    for subface_id in range(4):
+        delta = point_xyz - face_patch_center[subface_id]
+        distance_sq = _dot3(delta, delta)
+        if distance_sq < best_distance_sq:
+            best_distance_sq = distance_sq
+            best_subface = subface_id
+    return int(best_subface)
+
+
+@njit(cache=True)
+def _resolve_boundary_owner_leaf_kernel(
+    current_leaf: int,
+    point_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    face_normal: np.ndarray,
+    face_patch_center: np.ndarray,
+    active_face_mask: int,
+    leaf_valid: np.ndarray,
+    next_cell: np.ndarray,
+    leaf_scales: np.ndarray,
+    tree_coord_code: int,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> int:
+    """Resolve one boundary owner leaf by crossing the active face topology once."""
+    if active_face_mask == 0:
+        return -1
+    candidate_cell = int(current_leaf)
+    for face_id in range(6):
+        if (active_face_mask & (1 << face_id)) == 0:
+            continue
+        subface_id = _face_exit_subface_kernel(face_patch_center[current_leaf, face_id], point_xyz)
+        candidate_cell = int(next_cell[candidate_cell, face_id, subface_id])
+        if candidate_cell < 0:
+            return -1
+    if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell] and candidate_cell != current_leaf:
+        return int(candidate_cell)
+
+    probe_direction = _boundary_probe_direction_kernel(direction_xyz, face_normal[current_leaf], active_face_mask)
+    direction_norm = math.sqrt(_dot3(probe_direction, probe_direction))
+    if direction_norm <= 0.0:
+        return -1
+    probe_scale = 0.0
+    for axis in range(3):
+        width = float(cell_bounds[candidate_cell, axis, 1])
+        if width > probe_scale:
+            probe_scale = width
+    if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
+        probe_scale = float(leaf_scales[candidate_cell])
+    if probe_scale <= 0.0:
+        return -1
+    probe_xyz = point_xyz + ((_OWNERSHIP_SHIFT_FACTOR * probe_scale) / direction_norm) * probe_direction
+    candidate_leaf = _lookup_xyz_leaf_kernel(
+        probe_xyz,
+        candidate_cell,
+        tree_coord_code,
+        cell_child,
+        root_cell_ids,
+        cell_parent,
+        cell_bounds,
+        domain_bounds,
+        axis2_period,
+        axis2_periodic,
+    )
+    if candidate_leaf >= 0 and candidate_leaf != current_leaf:
+        return int(candidate_leaf)
+    return -1
 
 
 @njit(cache=True)
@@ -467,15 +562,13 @@ def _solve_cell_segment_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scale: float,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     current_t: float,
     t_min: float,
 ) -> tuple[bool, float, float, int, int]:
-    """Return one forward cell segment plus exit face/subface, or `(False, ...)` if unresolved."""
+    """Return one forward cell segment plus one active exit-face mask, or `(False, ...)` if unresolved."""
     point_tol = _EXIT_TOL * max(1.0, leaf_scale)
     inside_now = _point_inside_cell_kernel(
         face_normal,
@@ -486,8 +579,6 @@ def _solve_cell_segment_kernel(
 
     hit_t = np.empty(6, dtype=np.float64)
     hit_face = np.empty(6, dtype=np.int64)
-    hit_xyz = np.empty((6, 3), dtype=np.float64)
-    hit_normal = np.empty((6, 3), dtype=np.float64)
     hit_count = 0
     for face_id in range(6):
         normal_xyz = face_normal[face_id]
@@ -499,8 +590,6 @@ def _solve_cell_segment_kernel(
         if _point_inside_face_kernel(face_xyz[face_id], face_edge_normal[face_id], face_edge_d[face_id], face_hit_xyz, point_tol):
             hit_t[hit_count] = t_hit
             hit_face[hit_count] = face_id
-            hit_xyz[hit_count] = face_hit_xyz
-            hit_normal[hit_count] = normal_xyz
             hit_count += 1
     if hit_count == 0:
         return False, np.nan, np.nan, -1, -1
@@ -517,19 +606,11 @@ def _solve_cell_segment_kernel(
             swap_face = hit_face[i]
             hit_face[i] = hit_face[best]
             hit_face[best] = swap_face
-            swap_xyz = hit_xyz[i].copy()
-            hit_xyz[i] = hit_xyz[best]
-            hit_xyz[best] = swap_xyz
-            swap_normal = hit_normal[i].copy()
-            hit_normal[i] = hit_normal[best]
-            hit_normal[best] = swap_normal
 
     enter_tol = _EXIT_TOL * max(1.0, abs(current_t))
     segment_enter = current_t if inside_now else np.nan
     exit_t = np.nan
     exit_face = -1
-    exit_xyz = np.full(3, np.nan, dtype=np.float64)
-    exit_normal = np.full(3, np.nan, dtype=np.float64)
     for hit_id in range(hit_count):
         t_hit = hit_t[hit_id]
         if t_hit < (t_min - enter_tol):
@@ -541,27 +622,29 @@ def _solve_cell_segment_kernel(
             continue
         exit_t = t_hit
         exit_face = int(hit_face[hit_id])
-        exit_xyz = hit_xyz[hit_id]
-        exit_normal = hit_normal[hit_id]
         break
+    if np.isfinite(segment_enter) and not np.isfinite(exit_t) and inside_now:
+        active_face_mask = 0
+        for hit_id in range(hit_count):
+            if abs(hit_t[hit_id] - segment_enter) <= enter_tol:
+                if exit_face < 0:
+                    exit_face = int(hit_face[hit_id])
+                active_face_mask |= 1 << int(hit_face[hit_id])
+        if active_face_mask != 0:
+            return True, segment_enter, segment_enter, exit_face, int(active_face_mask)
     if not np.isfinite(segment_enter) or not np.isfinite(exit_t):
         return False, np.nan, np.nan, -1, -1
     if exit_t <= segment_enter:
         return False, np.nan, np.nan, -1, -1
 
     exit_tol = _EXIT_TOL * max(1.0, abs(exit_t))
-    degenerate_count = 0
-    min_face = exit_face
+    active_face_mask = 0
     for hit_id in range(hit_count):
         if abs(hit_t[hit_id] - exit_t) <= exit_tol:
-            degenerate_count += 1
-            if hit_face[hit_id] < min_face:
-                min_face = int(hit_face[hit_id])
-    exit_face = int(min_face)
-    subface_id = -1
-    if degenerate_count <= 1:
-        subface_id = _face_exit_subface_kernel(face_split_normal[exit_face], face_split_d[exit_face], exit_xyz)
-    return True, segment_enter, exit_t, exit_face, subface_id
+            active_face_mask |= 1 << int(hit_face[hit_id])
+    if active_face_mask == 0 and exit_face >= 0:
+        active_face_mask = 1 << int(exit_face)
+    return True, segment_enter, exit_t, exit_face, int(active_face_mask)
 
 
 @njit(cache=True)
@@ -571,8 +654,6 @@ def _cell_segment_trace_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scale: float,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
@@ -580,14 +661,12 @@ def _cell_segment_trace_kernel(
     t_min: float,
 ) -> tuple[bool, float, float, int, int]:
     """Return one exact forward cell segment with one boundary-shift retry."""
-    ok, segment_enter, exit_t, exit_face, subface_id = _solve_cell_segment_kernel(
+    ok, segment_enter, exit_t, exit_face, active_face_mask = _solve_cell_segment_kernel(
         face_xyz,
         face_normal,
         face_plane_d,
         face_edge_normal,
         face_edge_d,
-        face_split_normal,
-        face_split_d,
         leaf_scale,
         origin_xyz,
         direction_xyz,
@@ -595,20 +674,18 @@ def _cell_segment_trace_kernel(
         t_min,
     )
     if ok:
-        return True, segment_enter, exit_t, exit_face, subface_id
+        return True, segment_enter, exit_t, exit_face, active_face_mask
 
     direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
     if direction_norm <= 0.0:
         return False, np.nan, np.nan, -1, -1
     boundary_shift = (_BOUNDARY_SHIFT_FACTOR * max(1.0, leaf_scale)) / direction_norm
-    ok, segment_enter, exit_t, exit_face, subface_id = _solve_cell_segment_kernel(
+    ok, segment_enter, exit_t, exit_face, active_face_mask = _solve_cell_segment_kernel(
         face_xyz,
         face_normal,
         face_plane_d,
         face_edge_normal,
         face_edge_d,
-        face_split_normal,
-        face_split_d,
         leaf_scale,
         origin_xyz + boundary_shift * direction_xyz,
         direction_xyz,
@@ -617,21 +694,7 @@ def _cell_segment_trace_kernel(
     )
     if not ok:
         return False, np.nan, np.nan, -1, -1
-    return True, segment_enter + boundary_shift, exit_t + boundary_shift, exit_face, subface_id
-
-
-@njit(cache=True)
-def _face_exit_subface_kernel(face_split_normal: np.ndarray, face_split_d: np.ndarray, exit_xyz: np.ndarray) -> int:
-    """Return the crossed face quadrant, or `-1` for degenerate subface exits."""
-    first_sign = _dot3(face_split_normal[0], exit_xyz) - face_split_d[0]
-    if abs(first_sign) <= _SUBFACE_TOL:
-        return -1
-    second_sign = _dot3(face_split_normal[1], exit_xyz) - face_split_d[1]
-    if abs(second_sign) <= _SUBFACE_TOL:
-        return -1
-    first_bit = 0 if first_sign > 0.0 else 1
-    second_bit = 0 if second_sign > 0.0 else 1
-    return 2 * first_bit + second_bit
+    return True, segment_enter + boundary_shift, exit_t + boundary_shift, exit_face, active_face_mask
 
 
 @njit(cache=True)
@@ -804,8 +867,6 @@ def _best_continuation_leaf_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
 ) -> int:
     """Return the best directly valid continuation leaf from one small candidate set."""
@@ -829,8 +890,6 @@ def _best_continuation_leaf_kernel(
             face_plane_d[leaf_id],
             face_edge_normal[leaf_id],
             face_edge_d[leaf_id],
-            face_split_normal[leaf_id],
-            face_split_d[leaf_id],
             leaf_scales[leaf_id],
             point_xyz,
             direction_xyz,
@@ -899,8 +958,6 @@ def _boundary_continuation_leaf_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
     next_cell: np.ndarray,
     n_polar: int,
@@ -944,8 +1001,6 @@ def _boundary_continuation_leaf_kernel(
             face_plane_d[leaf_id],
             face_edge_normal[leaf_id],
             face_edge_d[leaf_id],
-            face_split_normal[leaf_id],
-            face_split_d[leaf_id],
             leaf_scales[leaf_id],
             point_xyz,
             direction_xyz,
@@ -1012,8 +1067,6 @@ def _boundary_continuation_leaf_kernel(
                 face_plane_d[leaf_id],
                 face_edge_normal[leaf_id],
                 face_edge_d[leaf_id],
-                face_split_normal[leaf_id],
-                face_split_d[leaf_id],
                 leaf_scales[leaf_id],
                 point_xyz,
                 direction_xyz,
@@ -1080,8 +1133,6 @@ def _launch_leaf_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
     next_cell: np.ndarray,
     n_polar: int,
@@ -1180,8 +1231,6 @@ def _launch_leaf_kernel(
         face_plane_d,
         face_edge_normal,
         face_edge_d,
-        face_split_normal,
-        face_split_d,
         leaf_scales,
         next_cell,
         n_polar,
@@ -1210,12 +1259,9 @@ def _trace_one_ray_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
+    face_patch_center: np.ndarray,
     next_cell: np.ndarray,
-    n_polar: int,
-    n_azimuth: int,
     tree_coord_code: int,
     cell_child: np.ndarray,
     root_cell_ids: np.ndarray,
@@ -1226,7 +1272,7 @@ def _trace_one_ray_kernel(
     axis2_periodic: bool,
     n_valid_leaf: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Walk one ray across neighboring leaves using exact cell intersections and face/subface continuation."""
+    """Walk one ray across neighboring leaves using exact cell intersections and boundary-ownership continuation."""
     current_leaf = int(start_leaf_id)
     if current_leaf < 0 or current_leaf >= leaf_valid.shape[0] or not leaf_valid[current_leaf]:
         raise ValueError("start_leaf_id must reference one valid leaf slot.")
@@ -1240,14 +1286,12 @@ def _trace_one_ray_kernel(
     for _ in range(max_steps):
         if current_t >= t_max:
             break
-        ok, segment_enter, exit_t, exit_face, subface_id = _cell_segment_trace_kernel(
+        ok, segment_enter, exit_t, _, active_face_mask = _cell_segment_trace_kernel(
             face_xyz[current_leaf],
             face_normal[current_leaf],
             face_plane_d[current_leaf],
             face_edge_normal[current_leaf],
             face_edge_d[current_leaf],
-            face_split_normal[current_leaf],
-            face_split_d[current_leaf],
             leaf_scales[current_leaf],
             origin_xyz,
             direction_xyz,
@@ -1255,67 +1299,54 @@ def _trace_one_ray_kernel(
             t_min,
         )
         if not ok:
-            raise ValueError("Failed to resolve a forward cell segment from the current leaf.")
+            break
+        zero_length_tol = _EXIT_TOL * max(1.0, abs(segment_enter), abs(exit_t))
         if segment_enter >= t_max:
             break
-        segment_exit = exit_t if exit_t < t_max else t_max
-        leaf_ids.append(current_leaf)
-        t_enter_list.append(segment_enter)
-        t_exit_list.append(segment_exit)
-        if exit_t >= t_max:
-            break
+        zero_length_step = exit_t <= (segment_enter + zero_length_tol)
+        if not zero_length_step:
+            segment_exit = exit_t if exit_t < t_max else t_max
+            leaf_ids.append(current_leaf)
+            t_enter_list.append(segment_enter)
+            t_exit_list.append(segment_exit)
+            if exit_t >= t_max:
+                break
         exit_xyz = origin_xyz + exit_t * direction_xyz
-        next_leaf_id = -1
-        initial_leaf_ids = np.empty(0, dtype=np.int64)
-        initial_count = 0
-        if subface_id >= 0:
-            candidate_cell = int(next_cell[current_leaf, exit_face, subface_id])
-            if candidate_cell >= 0 and candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
-                candidate = candidate_cell
-            elif candidate_cell >= 0:
-                candidate = _probe_neighbor_leaf_from_direction_kernel(
-                    exit_xyz,
-                    direction_xyz,
-                    leaf_scales[current_leaf],
-                    candidate_cell,
-                    tree_coord_code,
-                    cell_child,
-                    root_cell_ids,
-                    cell_parent,
-                    cell_bounds,
-                    domain_bounds,
-                    axis2_period,
-                    axis2_periodic,
-                )
-            else:
-                candidate = -1
-            if candidate >= 0:
-                candidate_ok, _, _, _, _ = _cell_segment_trace_kernel(
-                    face_xyz[candidate],
-                    face_normal[candidate],
-                    face_plane_d[candidate],
-                    face_edge_normal[candidate],
-                    face_edge_d[candidate],
-                    face_split_normal[candidate],
-                    face_split_d[candidate],
-                    leaf_scales[candidate],
-                    exit_xyz,
-                    direction_xyz,
-                    0.0,
-                    0.0,
-                )
-                if candidate_ok:
-                    next_leaf_id = candidate
-        if next_leaf_id < 0:
-            initial_leaf_ids, initial_count = _touching_neighbor_leaves_kernel(
+        if zero_length_step:
+            handoff_face_mask = 0
+            for face_id in range(6):
+                if (active_face_mask & (1 << face_id)) == 0:
+                    continue
+                if _dot3(direction_xyz, face_normal[current_leaf, face_id]) > 0.0:
+                    handoff_face_mask |= 1 << face_id
+            next_leaf_id = -1
+            if handoff_face_mask != 0:
+                candidate_cell = int(current_leaf)
+                for face_id in range(6):
+                    if (handoff_face_mask & (1 << face_id)) == 0:
+                        continue
+                    subface_id = _face_exit_subface_kernel(face_patch_center[current_leaf, face_id], exit_xyz)
+                    candidate_cell = int(next_cell[candidate_cell, face_id, subface_id])
+                    if candidate_cell < 0:
+                        break
+                if (
+                    candidate_cell >= 0
+                    and candidate_cell < leaf_valid.shape[0]
+                    and leaf_valid[candidate_cell]
+                    and candidate_cell != current_leaf
+                ):
+                    next_leaf_id = int(candidate_cell)
+        else:
+            next_leaf_id = _resolve_boundary_owner_leaf_kernel(
                 current_leaf,
                 exit_xyz,
-                leaf_valid,
-                face_xyz,
+                direction_xyz,
                 face_normal,
-                face_plane_d,
-                leaf_scales,
+                face_patch_center,
+                active_face_mask,
+                leaf_valid,
                 next_cell,
+                leaf_scales,
                 tree_coord_code,
                 cell_child,
                 root_cell_ids,
@@ -1325,50 +1356,7 @@ def _trace_one_ray_kernel(
                 axis2_period,
                 axis2_periodic,
             )
-            next_leaf_id = _best_continuation_leaf_kernel(
-                initial_leaf_ids,
-                initial_count,
-                exit_xyz,
-                direction_xyz,
-                current_leaf,
-                face_xyz,
-                face_normal,
-                face_plane_d,
-                face_edge_normal,
-                face_edge_d,
-                face_split_normal,
-                face_split_d,
-                leaf_scales,
-            )
-        if next_leaf_id < 0:
-            next_leaf_id = _boundary_continuation_leaf_kernel(
-                initial_leaf_ids,
-                initial_count,
-                exit_xyz,
-                direction_xyz,
-                current_leaf,
-                leaf_valid,
-                face_xyz,
-                face_normal,
-                face_plane_d,
-                face_edge_normal,
-                face_edge_d,
-                face_split_normal,
-                face_split_d,
-                leaf_scales,
-                next_cell,
-                n_polar,
-                n_azimuth,
-                tree_coord_code,
-                cell_child,
-                root_cell_ids,
-                cell_parent,
-                cell_bounds,
-                domain_bounds,
-                axis2_period,
-                axis2_periodic,
-            )
-        if next_leaf_id < 0:
+        if next_leaf_id < 0 or next_leaf_id == current_leaf:
             break
         current_leaf = int(next_leaf_id)
         current_t = exit_t
@@ -1401,8 +1389,6 @@ def trace_one_ray_kernel(
         face_plane_d,
         face_edge_normal,
         face_edge_d,
-        face_split_normal,
-        face_split_d,
         leaf_scales,
         face_patch_center,
         next_cell,
@@ -1430,12 +1416,9 @@ def trace_one_ray_kernel(
         face_plane_d,
         face_edge_normal,
         face_edge_d,
-        face_split_normal,
-        face_split_d,
         leaf_scales,
+        face_patch_center,
         next_cell,
-        n_polar,
-        n_azimuth,
         tree_coord_code,
         cell_child,
         root_cell_ids,
@@ -1461,8 +1444,6 @@ def _trace_rays_kernel(
     face_plane_d: np.ndarray,
     face_edge_normal: np.ndarray,
     face_edge_d: np.ndarray,
-    face_split_normal: np.ndarray,
-    face_split_d: np.ndarray,
     leaf_scales: np.ndarray,
     face_patch_center: np.ndarray,
     next_cell: np.ndarray,
@@ -1522,8 +1503,6 @@ def _trace_rays_kernel(
             face_plane_d,
             face_edge_normal,
             face_edge_d,
-            face_split_normal,
-            face_split_d,
             leaf_scales,
             next_cell,
             n_polar,
@@ -1548,8 +1527,6 @@ def _trace_rays_kernel(
             face_plane_d,
             face_edge_normal,
             face_edge_d,
-            face_split_normal,
-            face_split_d,
             leaf_scales,
             next_cell,
             n_polar,
@@ -1578,12 +1555,9 @@ def _trace_rays_kernel(
                 face_plane_d,
                 face_edge_normal,
                 face_edge_d,
-                face_split_normal,
-                face_split_d,
                 leaf_scales,
+                face_patch_center,
                 next_cell,
-                n_polar,
-                n_azimuth,
                 tree_coord_code,
                 cell_child,
                 root_cell_ids,
@@ -1613,12 +1587,9 @@ def _trace_rays_kernel(
                 face_plane_d,
                 face_edge_normal,
                 face_edge_d,
-                face_split_normal,
-                face_split_d,
                 leaf_scales,
+                face_patch_center,
                 next_cell,
-                n_polar,
-                n_azimuth,
                 tree_coord_code,
                 cell_child,
                 root_cell_ids,
@@ -1803,8 +1774,6 @@ class OctreeRayTracer:
         face_plane_d = np.full((leaf_slot_count, 6), np.nan, dtype=np.float64)
         face_edge_normal = np.full((leaf_slot_count, 6, 4, 3), np.nan, dtype=np.float64)
         face_edge_d = np.full((leaf_slot_count, 6, 4), np.nan, dtype=np.float64)
-        face_split_normal = np.full((leaf_slot_count, 6, 2, 3), np.nan, dtype=np.float64)
-        face_split_d = np.full((leaf_slot_count, 6, 2), np.nan, dtype=np.float64)
         face_patch_center = np.full((leaf_slot_count, 6, 4, 3), np.nan, dtype=np.float64)
         logger.info("build face trace cache...")
         t_geom = time.perf_counter()
@@ -1828,23 +1797,6 @@ class OctreeRayTracer:
         valid_face_edge_normal[edge_flip] *= -1.0
         valid_face_edge_d = np.sum(valid_face_edge_normal * valid_edge_p0, axis=3)
 
-        first_split0 = 0.5 * (valid_face_xyz[:, :, 0, :] + valid_face_xyz[:, :, 3, :])
-        first_split1 = 0.5 * (valid_face_xyz[:, :, 1, :] + valid_face_xyz[:, :, 2, :])
-        second_split0 = 0.5 * (valid_face_xyz[:, :, 0, :] + valid_face_xyz[:, :, 1, :])
-        second_split1 = 0.5 * (valid_face_xyz[:, :, 3, :] + valid_face_xyz[:, :, 2, :])
-        first_split_normal = np.cross(valid_face_normal, first_split1 - first_split0)
-        second_split_normal = np.cross(valid_face_normal, second_split1 - second_split0)
-        first_split_flip = np.sum(first_split_normal * (valid_face_xyz[:, :, 0, :] - first_split0), axis=2) < 0.0
-        second_split_flip = np.sum(second_split_normal * (valid_face_xyz[:, :, 0, :] - second_split0), axis=2) < 0.0
-        first_split_normal[first_split_flip] *= -1.0
-        second_split_normal[second_split_flip] *= -1.0
-        valid_face_split_normal = np.empty((n_valid_leaf, 6, 2, 3), dtype=np.float64)
-        valid_face_split_normal[:, :, 0, :] = first_split_normal
-        valid_face_split_normal[:, :, 1, :] = second_split_normal
-        valid_face_split_d = np.empty((n_valid_leaf, 6, 2), dtype=np.float64)
-        valid_face_split_d[:, :, 0] = np.sum(first_split_normal * first_split0, axis=2)
-        valid_face_split_d[:, :, 1] = np.sum(second_split_normal * second_split0, axis=2)
-
         subface_u = np.array([0.25, 0.25, 0.75, 0.75], dtype=np.float64)
         subface_v = np.array([0.25, 0.75, 0.25, 0.75], dtype=np.float64)
         valid_face_patch_center = (
@@ -1859,8 +1811,6 @@ class OctreeRayTracer:
         face_plane_d[valid_leaf_ids] = valid_face_plane_d
         face_edge_normal[valid_leaf_ids] = valid_face_edge_normal
         face_edge_d[valid_leaf_ids] = valid_face_edge_d
-        face_split_normal[valid_leaf_ids] = valid_face_split_normal
-        face_split_d[valid_leaf_ids] = valid_face_split_d
         face_patch_center[valid_leaf_ids] = valid_face_patch_center
         logger.info("build face trace cache complete in %.2fs", float(time.perf_counter() - t_geom))
         logger.info("_pack_trace_state...")
@@ -1872,8 +1822,6 @@ class OctreeRayTracer:
             face_plane_d,
             face_edge_normal,
             face_edge_d,
-            face_split_normal,
-            face_split_d,
             leaf_scales,
             face_patch_center,
             next_cell,
