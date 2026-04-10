@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
+import time
 
 import numpy as np
 from numba import njit
@@ -14,6 +16,8 @@ from .octree import _contains_box
 from .spherical import xyz_to_rpa_components
 
 __all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image", "trace_one_ray_kernel"]
+
+logger = logging.getLogger(__name__)
 
 _FACE_AXIS = np.array([0, 0, 1, 1, 2, 2], dtype=np.int8)
 _FACE_SIDE = np.array([0, 1, 0, 1, 0, 1], dtype=np.int8)
@@ -1709,7 +1713,11 @@ class OctreeRayTracer:
         """Bind one tracer to one built octree."""
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
+        logger.info("OctreeRayTracer.__init__: coord=%s", tree.tree_coord)
+        t0 = time.perf_counter()
         self.tree = tree
+        logger.info("_resolve_trace_coord...")
+        t_coord = time.perf_counter()
         resolved_tree_coord = str(tree.tree_coord)
         if resolved_tree_coord == "xyz":
             self._face_corners = _build_face_corner_order(_XYZ_CORNER_BITS)
@@ -1723,6 +1731,9 @@ class OctreeRayTracer:
             self._axis2_periodic = True
         else:
             raise NotImplementedError(f"Unsupported tree_coord '{tree.tree_coord}' for OctreeRayTracer.")
+        logger.info("_resolve_trace_coord complete in %.2fs", float(time.perf_counter() - t_coord))
+        logger.info("_bind_tree_arrays...")
+        t_bind = time.perf_counter()
         self._leaf_slot_count = int(tree.corners.shape[0])
         self._leaf_valid = tree.cell_levels >= 0
         self._n_polar = int(tree.leaf_shape[1])
@@ -1732,6 +1743,9 @@ class OctreeRayTracer:
         self._root_cell_ids = np.flatnonzero(self._cell_parent < 0).astype(np.int64)
         self._cell_bounds = np.asarray(tree.cell_bounds, dtype=np.float64)
         self._next_cell = np.asarray(tree.cell_neighbor, dtype=np.int32)
+        logger.info("_bind_tree_arrays complete in %.2fs", float(time.perf_counter() - t_bind))
+        logger.info("_prepare_seed_domain...")
+        t_seed = time.perf_counter()
         domain_lo, domain_hi = tree.domain_bounds(coord=tree.tree_coord)
         self._domain_bounds = np.empty((3, 2), dtype=np.float64)
         self._domain_bounds[:, 0] = domain_lo
@@ -1758,17 +1772,23 @@ class OctreeRayTracer:
                 raise ValueError(
                     f"Invalid spherical domain radii r_min={self._seed_domain_r_min}, r_max={self._seed_domain_r_max}."
                 )
+        logger.info("_prepare_seed_domain complete in %.2fs", float(time.perf_counter() - t_seed))
         valid_leaf_ids = np.flatnonzero(self._leaf_valid).astype(np.int64)
         self._n_valid_leaf = int(valid_leaf_ids.size)
         self._leaf_points = np.full((self._leaf_slot_count, 8, 3), np.nan, dtype=np.float64)
         self._leaf_centers = np.full((self._leaf_slot_count, 3), np.nan, dtype=np.float64)
         self._leaf_scales = np.full(self._leaf_slot_count, np.nan, dtype=np.float64)
+        logger.info("_build_leaf_geometry_cache...")
+        t_geom = time.perf_counter()
         for leaf_id in valid_leaf_ids:
             cell_xyz = np.asarray(tree.cell_points(int(leaf_id)), dtype=np.float64)
             center_xyz = np.mean(cell_xyz, axis=0)
             self._leaf_points[leaf_id] = cell_xyz
             self._leaf_centers[leaf_id] = center_xyz
             self._leaf_scales[leaf_id] = float(np.max(np.linalg.norm(cell_xyz - center_xyz, axis=1)))
+        logger.info("_build_leaf_geometry_cache complete in %.2fs", float(time.perf_counter() - t_geom))
+        logger.info("_pack_trace_state...")
+        t_state = time.perf_counter()
         self._next_leaf = np.full((self._leaf_slot_count, 6, 4), -2, dtype=np.int32)
         self._trace_state = (
             self._leaf_valid,
@@ -1789,6 +1809,8 @@ class OctreeRayTracer:
             bool(self._axis2_periodic),
             int(self._n_valid_leaf),
         )
+        logger.info("_pack_trace_state complete in %.2fs", float(time.perf_counter() - t_state))
+        logger.info("OctreeRayTracer.__init__ complete in %.2fs", float(time.perf_counter() - t0))
 
     @staticmethod
     def _normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:

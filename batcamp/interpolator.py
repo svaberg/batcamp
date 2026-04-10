@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Literal
 
 from numba import njit
@@ -261,11 +262,17 @@ class OctreeInterpolator:
         """Create an interpolator from one built tree and point values."""
         if not isinstance(tree, Octree):
             raise TypeError("OctreeInterpolator requires a built Octree as its first argument.")
+        logger.info("OctreeInterpolator.__init__: coord=%s", tree.tree_coord)
+        t0 = time.perf_counter()
         self.tree = tree
         self.fill_value = fill_value
+        logger.info("_flatten_point_values...")
+        t_flat = time.perf_counter()
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
+        logger.info("_flatten_point_values complete in %.2fs", float(time.perf_counter() - t_flat))
         if self.tree.tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
+        logger.info("OctreeInterpolator.__init__ complete in %.2fs", float(time.perf_counter() - t0))
 
     @property
     def n_components(self) -> int:
