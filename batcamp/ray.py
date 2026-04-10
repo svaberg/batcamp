@@ -54,8 +54,6 @@ _RPA_CORNER_BITS = np.array(
     ],
     dtype=np.int8,
 )
-_UNKNOWN_TRANSITION = np.int32(-2)
-_NO_TRANSITION = np.int32(-1)
 _EXIT_TOL = 1.0e-12
 _SUBFACE_TOL = 1.0e-12
 _BOUNDARY_SHIFT_FACTOR = 1.0e-6
@@ -99,15 +97,6 @@ def _cross3(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         ),
         dtype=np.float64,
     )
-
-
-def _pack_leaf_key(depth: int, ijk: np.ndarray, axis_bases: np.ndarray) -> np.uint64:
-    """Pack one `(depth, axis0, axis1, axis2)` leaf address into one sortable key."""
-    key = np.uint64(depth)
-    key = key * np.uint64(axis_bases[0]) + np.uint64(ijk[0])
-    key = key * np.uint64(axis_bases[1]) + np.uint64(ijk[1])
-    key = key * np.uint64(axis_bases[2]) + np.uint64(ijk[2])
-    return key
 
 
 def _build_face_corner_order(corner_bits: np.ndarray) -> np.ndarray:
@@ -335,6 +324,93 @@ def _lookup_xyz_leaf_kernel(
         if next_cell_id < 0:
             return -1
         current = int(next_cell_id)
+
+
+@njit(cache=True)
+def _probe_neighbor_leaf_from_direction_kernel(
+    point_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    point_scale: float,
+    hint_cell_id: int,
+    tree_coord_code: int,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> int:
+    """Probe slightly forward from one boundary point and resolve the owning leaf."""
+    direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
+    if direction_norm <= 0.0:
+        return -1
+    probe_xyz = point_xyz + ((_BOUNDARY_SHIFT_FACTOR * max(1.0, point_scale)) / direction_norm) * direction_xyz
+    return _lookup_xyz_leaf_kernel(
+        probe_xyz,
+        hint_cell_id,
+        tree_coord_code,
+        cell_child,
+        root_cell_ids,
+        cell_parent,
+        cell_bounds,
+        domain_bounds,
+        axis2_period,
+        axis2_periodic,
+    )
+
+
+@njit(cache=True)
+def _probe_neighbor_leaf_from_normal_kernel(
+    point_xyz: np.ndarray,
+    normal_xyz: np.ndarray,
+    point_scale: float,
+    hint_cell_id: int,
+    tree_coord_code: int,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> int:
+    """Probe slightly across one face normal and resolve the owning leaf."""
+    normal_norm = math.sqrt(_dot3(normal_xyz, normal_xyz))
+    if normal_norm <= 0.0:
+        return -1
+    probe_xyz = point_xyz + ((_BOUNDARY_SHIFT_FACTOR * max(1.0, point_scale)) / normal_norm) * normal_xyz
+    return _lookup_xyz_leaf_kernel(
+        probe_xyz,
+        hint_cell_id,
+        tree_coord_code,
+        cell_child,
+        root_cell_ids,
+        cell_parent,
+        cell_bounds,
+        domain_bounds,
+        axis2_period,
+        axis2_periodic,
+    )
+
+
+@njit(cache=True)
+def _subface_patch_center_kernel(face_xyz: np.ndarray, subface_id: int) -> np.ndarray:
+    """Return one face-subpatch center in bilinear face coordinates."""
+    first = (int(subface_id) >> 1) & 1
+    second = int(subface_id) & 1
+    u = 0.25 if first == 0 else 0.75
+    v = 0.25 if second == 0 else 0.75
+    c00 = face_xyz[0]
+    c01 = face_xyz[1]
+    c11 = face_xyz[2]
+    c10 = face_xyz[3]
+    return (
+        ((1.0 - u) * (1.0 - v)) * c00
+        + ((1.0 - u) * v) * c01
+        + (u * v) * c11
+        + (u * (1.0 - v)) * c10
+    )
 
 
 @njit(cache=True)
@@ -623,7 +699,15 @@ def _touching_neighbor_leaves_kernel(
     leaf_points: np.ndarray,
     leaf_centers: np.ndarray,
     leaf_scales: np.ndarray,
-    next_leaf: np.ndarray,
+    next_cell: np.ndarray,
+    tree_coord_code: int,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
 ) -> tuple[np.ndarray, int]:
     """Return unique neighboring leaves whose cells touch one boundary point of one leaf."""
     neighbors = np.full(24, -1, dtype=np.int64)
@@ -636,7 +720,26 @@ def _touching_neighbor_leaves_kernel(
         if abs(face_distance) > point_tol:
             continue
         for subface_id in range(4):
-            candidate = int(next_leaf[leaf_id, face_id, subface_id])
+            candidate_cell = int(next_cell[leaf_id, face_id, subface_id])
+            if candidate_cell < 0:
+                continue
+            if candidate_cell < leaf_points.shape[0] and np.all(np.isfinite(leaf_points[candidate_cell, 0])):
+                candidate = candidate_cell
+            else:
+                candidate = _probe_neighbor_leaf_from_normal_kernel(
+                    point_xyz,
+                    normal_xyz,
+                    leaf_scales[leaf_id],
+                    candidate_cell,
+                    tree_coord_code,
+                    cell_child,
+                    root_cell_ids,
+                    cell_parent,
+                    cell_bounds,
+                    domain_bounds,
+                    axis2_period,
+                    axis2_periodic,
+                )
             if candidate < 0:
                 continue
             seen = False
@@ -844,7 +947,7 @@ def _boundary_continuation_leaf_kernel(
     leaf_points: np.ndarray,
     leaf_centers: np.ndarray,
     leaf_scales: np.ndarray,
-    next_leaf: np.ndarray,
+    next_cell: np.ndarray,
     n_polar: int,
     n_azimuth: int,
     tree_coord_code: int,
@@ -908,7 +1011,15 @@ def _boundary_continuation_leaf_kernel(
             leaf_points,
             leaf_centers,
             leaf_scales,
-            next_leaf,
+            next_cell,
+            tree_coord_code,
+            cell_child,
+            root_cell_ids,
+            cell_parent,
+            cell_bounds,
+            domain_bounds,
+            axis2_period,
+            axis2_periodic,
         )
         for idx in range(touching_count):
             next_id = int(touching[idx])
@@ -1003,7 +1114,7 @@ def _launch_leaf_kernel(
     leaf_points: np.ndarray,
     leaf_centers: np.ndarray,
     leaf_scales: np.ndarray,
-    next_leaf: np.ndarray,
+    next_cell: np.ndarray,
     n_polar: int,
     n_azimuth: int,
     tree_coord_code: int,
@@ -1016,19 +1127,37 @@ def _launch_leaf_kernel(
     axis2_periodic: bool,
 ) -> int:
     """Return the unique leaf to launch into from one seed boundary point."""
-    initial_leaf_ids = np.full(50 + n_azimuth, -1, dtype=np.int64)
+    initial_leaf_ids = np.full(1 + 48 + n_azimuth, -1, dtype=np.int64)
     count = 0
 
     if seed_leaf_id >= 0:
         count = _append_unique_leaf_id(initial_leaf_ids, count, int(seed_leaf_id))
         for face_id in range(6):
+            face_xyz = _leaf_face_xyz(leaf_points[seed_leaf_id], face_corners, face_id)
+            normal_xyz = _face_normal_kernel(face_xyz, leaf_centers[seed_leaf_id])
             for subface_id in range(4):
-                count = _append_unique_leaf_id(
-                    initial_leaf_ids,
-                    count,
-                    int(next_leaf[seed_leaf_id, face_id, subface_id]),
-                )
-
+                candidate_cell = int(next_cell[seed_leaf_id, face_id, subface_id])
+                if candidate_cell < 0:
+                    continue
+                if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
+                    candidate_leaf = candidate_cell
+                else:
+                    patch_center = _subface_patch_center_kernel(face_xyz, subface_id)
+                    candidate_leaf = _probe_neighbor_leaf_from_normal_kernel(
+                        patch_center,
+                        normal_xyz,
+                        leaf_scales[seed_leaf_id],
+                        candidate_cell,
+                        tree_coord_code,
+                        cell_child,
+                        root_cell_ids,
+                        cell_parent,
+                        cell_bounds,
+                        domain_bounds,
+                        axis2_period,
+                        axis2_periodic,
+                    )
+                count = _append_unique_leaf_id(initial_leaf_ids, count, int(candidate_leaf))
         touching_leaf_ids, touching_count = _touching_neighbor_leaves_kernel(
             int(seed_leaf_id),
             seed_xyz,
@@ -1036,7 +1165,15 @@ def _launch_leaf_kernel(
             leaf_points,
             leaf_centers,
             leaf_scales,
-            next_leaf,
+            next_cell,
+            tree_coord_code,
+            cell_child,
+            root_cell_ids,
+            cell_parent,
+            cell_bounds,
+            domain_bounds,
+            axis2_period,
+            axis2_periodic,
         )
         for idx in range(touching_count):
             count = _append_unique_leaf_id(initial_leaf_ids, count, int(touching_leaf_ids[idx]))
@@ -1073,7 +1210,7 @@ def _launch_leaf_kernel(
         leaf_points,
         leaf_centers,
         leaf_scales,
-        next_leaf,
+        next_cell,
         n_polar,
         n_azimuth,
         tree_coord_code,
@@ -1099,7 +1236,7 @@ def _trace_one_ray_kernel(
     leaf_centers: np.ndarray,
     leaf_scales: np.ndarray,
     face_corners: np.ndarray,
-    next_leaf: np.ndarray,
+    next_cell: np.ndarray,
     n_polar: int,
     n_azimuth: int,
     tree_coord_code: int,
@@ -1148,8 +1285,29 @@ def _trace_one_ray_kernel(
             break
         exit_xyz = origin_xyz + exit_t * direction_xyz
         next_leaf_id = -1
+        initial_leaf_ids = np.empty(0, dtype=np.int64)
+        initial_count = 0
         if subface_id >= 0:
-            candidate = int(next_leaf[current_leaf, exit_face, subface_id])
+            candidate_cell = int(next_cell[current_leaf, exit_face, subface_id])
+            if candidate_cell < leaf_points.shape[0] and candidate_cell >= 0 and np.all(np.isfinite(leaf_points[candidate_cell, 0])):
+                candidate = candidate_cell
+            elif candidate_cell >= 0:
+                candidate = _probe_neighbor_leaf_from_direction_kernel(
+                    exit_xyz,
+                    direction_xyz,
+                    leaf_scales[current_leaf],
+                    candidate_cell,
+                    tree_coord_code,
+                    cell_child,
+                    root_cell_ids,
+                    cell_parent,
+                    cell_bounds,
+                    domain_bounds,
+                    axis2_period,
+                    axis2_periodic,
+                )
+            else:
+                candidate = -1
             if candidate >= 0:
                 candidate_ok, _, _, _, _ = _cell_segment_trace_kernel(
                     leaf_points[candidate],
@@ -1171,7 +1329,15 @@ def _trace_one_ray_kernel(
                 leaf_points,
                 leaf_centers,
                 leaf_scales,
-                next_leaf,
+                next_cell,
+                tree_coord_code,
+                cell_child,
+                root_cell_ids,
+                cell_parent,
+                cell_bounds,
+                domain_bounds,
+                axis2_period,
+                axis2_periodic,
             )
             next_leaf_id = _best_continuation_leaf_kernel(
                 initial_leaf_ids,
@@ -1196,7 +1362,7 @@ def _trace_one_ray_kernel(
                 leaf_points,
                 leaf_centers,
                 leaf_scales,
-                next_leaf,
+                next_cell,
                 n_polar,
                 n_azimuth,
                 tree_coord_code,
@@ -1240,7 +1406,7 @@ def trace_one_ray_kernel(
         leaf_centers,
         leaf_scales,
         face_corners,
-        next_leaf,
+        next_cell,
         n_polar,
         n_azimuth,
         tree_coord_code,
@@ -1264,7 +1430,7 @@ def trace_one_ray_kernel(
         leaf_centers,
         leaf_scales,
         face_corners,
-        next_leaf,
+        next_cell,
         n_polar,
         n_azimuth,
         tree_coord_code,
@@ -1291,7 +1457,7 @@ def _trace_rays_kernel(
     leaf_centers: np.ndarray,
     leaf_scales: np.ndarray,
     face_corners: np.ndarray,
-    next_leaf: np.ndarray,
+    next_cell: np.ndarray,
     n_polar: int,
     n_azimuth: int,
     tree_coord_code: int,
@@ -1346,7 +1512,7 @@ def _trace_rays_kernel(
             leaf_points,
             leaf_centers,
             leaf_scales,
-            next_leaf,
+            next_cell,
             n_polar,
             n_azimuth,
             tree_coord_code,
@@ -1367,7 +1533,7 @@ def _trace_rays_kernel(
             leaf_points,
             leaf_centers,
             leaf_scales,
-            next_leaf,
+            next_cell,
             n_polar,
             n_azimuth,
             tree_coord_code,
@@ -1393,7 +1559,7 @@ def _trace_rays_kernel(
                 leaf_centers,
                 leaf_scales,
                 face_corners,
-                next_leaf,
+                next_cell,
                 n_polar,
                 n_azimuth,
                 tree_coord_code,
@@ -1424,7 +1590,7 @@ def _trace_rays_kernel(
                 leaf_centers,
                 leaf_scales,
                 face_corners,
-                next_leaf,
+                next_cell,
                 n_polar,
                 n_azimuth,
                 tree_coord_code,
@@ -1444,6 +1610,13 @@ def _trace_rays_kernel(
 
         back_count = int(back_leaf_ids_local.shape[0])
         forward_count = int(forward_leaf_ids_local.shape[0])
+        if forward_count > 1:
+            direction_norm = math.sqrt(direction_norm_sq)
+            tail_leaf_id = int(forward_leaf_ids_local[forward_count - 1])
+            tail_floor = (_BOUNDARY_SHIFT_FACTOR * max(1.0, leaf_scales[tail_leaf_id])) / direction_norm
+            tail_length = float(forward_exit_local[forward_count - 1] - forward_enter_local[forward_count - 1])
+            if tail_length <= tail_floor:
+                forward_count -= 1
         joined = False
         if back_count > 0 and forward_count > 0 and back_leaf_ids_local[0] == forward_leaf_ids_local[0]:
             back_last_exit = t_seed - back_enter_local[0]
@@ -1552,14 +1725,13 @@ class OctreeRayTracer:
             raise NotImplementedError(f"Unsupported tree_coord '{tree.tree_coord}' for OctreeRayTracer.")
         self._leaf_slot_count = int(tree.corners.shape[0])
         self._leaf_valid = tree.cell_levels >= 0
-        self._axis_bases = np.asarray(tree.leaf_shape, dtype=np.uint64) + np.uint64(1)
-        self._max_level = int(tree.max_level)
         self._n_polar = int(tree.leaf_shape[1])
         self._n_azimuth = int(tree.leaf_shape[2])
         self._cell_child = np.asarray(tree.cell_child, dtype=np.int64)
         self._cell_parent = np.asarray(tree.cell_parent, dtype=np.int64)
         self._root_cell_ids = np.flatnonzero(self._cell_parent < 0).astype(np.int64)
         self._cell_bounds = np.asarray(tree.cell_bounds, dtype=np.float64)
+        self._next_cell = np.asarray(tree.cell_neighbor, dtype=np.int32)
         domain_lo, domain_hi = tree.domain_bounds(coord=tree.tree_coord)
         self._domain_bounds = np.empty((3, 2), dtype=np.float64)
         self._domain_bounds[:, 0] = domain_lo
@@ -1588,22 +1760,6 @@ class OctreeRayTracer:
                 )
         valid_leaf_ids = np.flatnonzero(self._leaf_valid).astype(np.int64)
         self._n_valid_leaf = int(valid_leaf_ids.size)
-        valid_depth = tree.cell_depth[valid_leaf_ids]
-        valid_ijk = tree.cell_ijk[valid_leaf_ids]
-        valid_keys = np.array(
-            [_pack_leaf_key(int(valid_depth[i]), valid_ijk[i], self._axis_bases) for i in range(valid_leaf_ids.size)],
-            dtype=np.uint64,
-        )
-        order = np.argsort(valid_keys)
-        self._leaf_keys_sorted = valid_keys[order]
-        self._leaf_ids_sorted = valid_leaf_ids[order].astype(np.int32, copy=False)
-        self._next_leaf = np.full((self._leaf_slot_count, 6, 4), _UNKNOWN_TRANSITION, dtype=np.int32)
-        for leaf_id in valid_leaf_ids:
-            for face_id in range(6):
-                for subface_id in range(4):
-                    self._resolve_transition(int(leaf_id), face_id, subface_id)
-        self._trace_next_leaf = np.array(self._next_leaf, copy=True)
-        self._next_leaf.fill(_UNKNOWN_TRANSITION)
         self._leaf_points = np.full((self._leaf_slot_count, 8, 3), np.nan, dtype=np.float64)
         self._leaf_centers = np.full((self._leaf_slot_count, 3), np.nan, dtype=np.float64)
         self._leaf_scales = np.full(self._leaf_slot_count, np.nan, dtype=np.float64)
@@ -1613,13 +1769,14 @@ class OctreeRayTracer:
             self._leaf_points[leaf_id] = cell_xyz
             self._leaf_centers[leaf_id] = center_xyz
             self._leaf_scales[leaf_id] = float(np.max(np.linalg.norm(cell_xyz - center_xyz, axis=1)))
+        self._next_leaf = np.full((self._leaf_slot_count, 6, 4), -2, dtype=np.int32)
         self._trace_state = (
             self._leaf_valid,
             self._leaf_points,
             self._leaf_centers,
             self._leaf_scales,
             self._face_corners,
-            self._trace_next_leaf,
+            self._next_cell,
             int(self._n_polar),
             int(self._n_azimuth),
             int(self._tree_coord_code),
@@ -1647,17 +1804,10 @@ class OctreeRayTracer:
             float(radius),
         )
 
-    def _lookup_leaf(self, depth: int, ijk: np.ndarray) -> int:
-        """Return one exact leaf-slot id for one `(depth, ijk)` address, or `-1`."""
-        if depth < 0 or depth > self._max_level:
-            return -1
-        if np.any(ijk < 0):
-            return -1
-        key = _pack_leaf_key(int(depth), ijk, self._axis_bases)
-        pos = int(np.searchsorted(self._leaf_keys_sorted, key))
-        if pos >= int(self._leaf_keys_sorted.size) or self._leaf_keys_sorted[pos] != key:
-            return -1
-        return int(self._leaf_ids_sorted[pos])
+    @staticmethod
+    def _subface_patch_center(face_xyz: np.ndarray, subface_id: int) -> np.ndarray:
+        """Return one Cartesian face-subpatch center in bilinear face coordinates."""
+        return _subface_patch_center_kernel(face_xyz, int(subface_id))
 
     def _resolve_transition(self, leaf_id: int, face_id: int, subface_id: int) -> int:
         """Return the neighboring leaf across one face/subface, or `-1` at the domain boundary.
@@ -1682,40 +1832,37 @@ class OctreeRayTracer:
             raise ValueError("face_id must be in the range [0, 5].")
         if subface < 0 or subface >= 4:
             raise ValueError("subface_id must be in the range [0, 3].")
-
         cached = int(self._next_leaf[leaf, face, subface])
-        if cached != int(_UNKNOWN_TRANSITION):
+        if cached != -2:
             return cached
 
-        axis = int(_FACE_AXIS[face])
-        side = int(_FACE_SIDE[face])
-        tangential_axes = _FACE_TANGENTIAL_AXES[face]
-        delta = -1 if side == 0 else 1
-        depth = int(self.tree.cell_depth[leaf])
-        ijk = self.tree.cell_ijk[leaf]
-
-        next_leaf = _NO_TRANSITION
-
-        same_ijk = np.array(ijk, copy=True)
-        same_ijk[axis] += delta
-        next_leaf = np.int32(self._lookup_leaf(depth, same_ijk))
-
-        if next_leaf < 0 and depth > 0:
-            coarse_ijk = np.right_shift(ijk, 1).astype(np.int64, copy=False)
-            coarse_ijk = np.array(coarse_ijk, copy=True)
-            coarse_ijk[axis] = (int(ijk[axis]) + delta) >> 1
-            next_leaf = np.int32(self._lookup_leaf(depth - 1, coarse_ijk))
-
-        if next_leaf < 0 and depth < self._max_level:
-            fine_ijk = np.left_shift(ijk, 1).astype(np.int64, copy=False)
-            fine_ijk = np.array(fine_ijk, copy=True)
-            fine_ijk[int(tangential_axes[0])] += (subface >> 1) & 1
-            fine_ijk[int(tangential_axes[1])] += subface & 1
-            fine_ijk[axis] = 2 * int(ijk[axis]) + (-1 if side == 0 else 2)
-            next_leaf = np.int32(self._lookup_leaf(depth + 1, fine_ijk))
-
-        self._next_leaf[leaf, face, subface] = np.int32(next_leaf)
-        return int(next_leaf)
+        candidate_cell = int(self._next_cell[leaf, face, subface])
+        if candidate_cell < 0:
+            resolved = -1
+        elif candidate_cell < self._leaf_slot_count and bool(self._leaf_valid[candidate_cell]):
+            resolved = candidate_cell
+        else:
+            face_xyz = _leaf_face_xyz(self._leaf_points[leaf], self._face_corners, face)
+            normal_xyz = _face_normal_kernel(face_xyz, self._leaf_centers[leaf])
+            patch_center = _subface_patch_center_kernel(face_xyz, subface)
+            resolved = int(
+                _probe_neighbor_leaf_from_normal_kernel(
+                    patch_center,
+                    normal_xyz,
+                    float(self._leaf_scales[leaf]),
+                    candidate_cell,
+                    int(self._tree_coord_code),
+                    self._cell_child,
+                    self._root_cell_ids,
+                    self._cell_parent,
+                    self._cell_bounds,
+                    self._domain_bounds,
+                    float(self._axis2_period),
+                    bool(self._axis2_periodic),
+                )
+            )
+        self._next_leaf[leaf, face, subface] = np.int32(resolved)
+        return int(resolved)
 
     def _cell_faces(self, leaf_id: int) -> tuple[np.ndarray, np.ndarray]:
         """Return one leaf's explicit corners and geometric center in physical `xyz`."""
@@ -2045,7 +2192,7 @@ class OctreeRayTracer:
             self._leaf_points,
             self._leaf_centers,
             self._leaf_scales,
-            self._trace_next_leaf,
+            self._next_cell,
             int(self._n_polar),
             int(self._n_azimuth),
             int(self._tree_coord_code),
@@ -2389,7 +2536,7 @@ class OctreeRayTracer:
             leaf_centers,
             leaf_scales,
             face_corners,
-            next_leaf,
+            next_cell,
             n_polar,
             n_azimuth,
             tree_coord_code,
@@ -2413,7 +2560,7 @@ class OctreeRayTracer:
             leaf_centers,
             leaf_scales,
             face_corners,
-            next_leaf,
+            next_cell,
             n_polar,
             n_azimuth,
             tree_coord_code,
