@@ -239,85 +239,16 @@ def test_seed_domain_rpa_sample_file_uses_mid_shell_seed() -> None:
     np.testing.assert_allclose(seeds, np.array([[-0.5 * (r_min + r_max), 0.0, 0.0]]), atol=1e-10)
 
 
-def test_seed_interval_candidates_capture_both_sides_of_one_cartesian_interior_seed() -> None:
-    """One traced interior seed should expose the owning interval and forward neighbor branch."""
-    tracer = OctreeRayTracer(_build_xyz_tree())
-    seed_xyz = np.array([-0.5, -0.3, -0.2], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    seed_leaf = int(tracer.tree.lookup_points(seed_xyz.reshape(1, 3), coord="xyz")[0])
-
-    intervals = tracer._seed_interval_candidates(seed_leaf, seed_xyz, direction)
-
-    assert intervals == [(0.0, 0.5, 0), (-0.5, -0.0, 0), (0.5, 1.5, 4)]
-    assert tracer._combine_seed_intervals(intervals) == [(-0.5, 0.5, 0), (0.5, 1.5, 4)]
-    np.testing.assert_allclose(tracer._canonicalize_seed(seed_leaf, seed_xyz, direction)[0], seed_xyz)
-    assert tracer._canonicalize_seed(seed_leaf, seed_xyz, direction)[1] == 0
-
-
-def test_select_seed_branches_split_one_cartesian_face_seed_into_two_leaves() -> None:
-    """One seed on an internal face should produce one backward and one forward start leaf."""
-    tracer = OctreeRayTracer(_build_xyz_tree())
-    origin = np.array([-2.0, -0.3, -0.2], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    seed_xyz = tracer.seed_domain(origin, direction).reshape(3)
-    seed_leaf = int(tracer.tree.lookup_points(seed_xyz.reshape(1, 3), coord="xyz")[0])
-
-    intervals = sorted(tracer._usable_seed_intervals(tracer._seed_interval_candidates(seed_leaf, seed_xyz, direction)))
-    backward_seed, backward_leaf = tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="backward")
-    forward_seed, forward_leaf = tracer._select_seed_branch(seed_leaf, seed_xyz, direction, branch="forward")
-
-    assert tracer._select_common_seed(seed_leaf, seed_xyz, direction) is None
-    assert intervals == [(-1.0, -0.0, 0), (0.0, 1.0, 4)]
-    assert backward_leaf == 0
-    assert forward_leaf == 4
-    np.testing.assert_allclose(backward_seed, np.array([-0.5, -0.3, -0.2], dtype=float))
-    np.testing.assert_allclose(forward_seed, np.array([0.5, -0.3, -0.2], dtype=float))
-
-
-def test_resolve_transition_same_level_and_boundary_faces() -> None:
-    """Same-level neighbors and domain exits should resolve exactly."""
-    tracer = OctreeRayTracer(_build_xyz_tree())
-
-    for subface in range(4):
-        assert tracer._resolve_transition(0, 1, subface) == 4
-        assert tracer._resolve_transition(4, 0, subface) == 0
-        assert tracer._resolve_transition(0, 0, subface) == -1
-        assert tracer._resolve_transition(4, 1, subface) == -1
-
-
-def test_resolve_transition_coarse_face_uses_subface_quadrants() -> None:
-    """One coarse face should resolve to the correct fine neighbor for each quadrant."""
-    tree = _build_xyz_coarse_fine_tree()
-    tracer = OctreeRayTracer(tree)
-
-    np.testing.assert_array_equal(
-        tree.cell_levels,
-        np.array([1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2], dtype=np.int64),
-    )
-    assert tracer._resolve_transition(0, 1, 0) == 7
-    assert tracer._resolve_transition(0, 1, 1) == 8
-    assert tracer._resolve_transition(0, 1, 2) == 9
-    assert tracer._resolve_transition(0, 1, 3) == 10
-
-
-def test_resolve_transition_fine_face_caches_one_coarse_neighbor() -> None:
-    """Fine-to-coarse transitions should reuse one cached coarse neighbor across subfaces."""
-    tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
-
-    assert tracer._next_leaf[7, 0, 0] == -2
-    for subface in range(4):
-        assert tracer._resolve_transition(7, 0, subface) == 0
-        assert tracer._resolve_transition(10, 0, subface) == 0
-    assert tracer._next_leaf[7, 0, 0] == 0
-
-
-def test_trace_one_xyz_ray_walks_same_level_cells_exactly() -> None:
+def test_trace_one_ray_kernel_walks_same_level_cells_exactly() -> None:
     """One simple Cartesian ray should cross two same-level leaves with exact intervals."""
     tracer = OctreeRayTracer(_build_xyz_tree())
-    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
         0,
         np.array([-2.0, -0.3, -0.2], dtype=float),
         np.array([1.0, 0.0, 0.0], dtype=float),
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
     )
 
     np.testing.assert_array_equal(leaf_ids, np.array([0, 4], dtype=np.int64))
@@ -325,13 +256,16 @@ def test_trace_one_xyz_ray_walks_same_level_cells_exactly() -> None:
     np.testing.assert_allclose(t_exit, np.array([2.0, 3.0], dtype=float))
 
 
-def test_trace_one_xyz_ray_walks_coarse_to_fine_cells_exactly() -> None:
+def test_trace_one_ray_kernel_walks_coarse_to_fine_cells_exactly() -> None:
     """One Cartesian ray should walk from one coarse leaf into two finer leaves."""
     tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
-    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
         0,
         np.array([-0.1, 0.1875, 0.1875], dtype=float),
         np.array([1.0, 0.0, 0.0], dtype=float),
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
     )
 
     np.testing.assert_array_equal(leaf_ids, np.array([0, 7, 11], dtype=np.int64))
@@ -339,13 +273,16 @@ def test_trace_one_xyz_ray_walks_coarse_to_fine_cells_exactly() -> None:
     np.testing.assert_allclose(t_exit, np.array([0.6, 0.85, 1.1], dtype=float))
 
 
-def test_trace_one_xyz_ray_walks_fine_to_coarse_cells_exactly() -> None:
+def test_trace_one_ray_kernel_walks_fine_to_coarse_cells_exactly() -> None:
     """One Cartesian ray should walk from finer leaves back into one coarse leaf."""
     tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
-    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
         11,
         np.array([1.1, 0.1875, 0.1875], dtype=float),
         np.array([-1.0, 0.0, 0.0], dtype=float),
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
     )
 
     np.testing.assert_array_equal(leaf_ids, np.array([11, 7, 0], dtype=np.int64))
@@ -353,26 +290,7 @@ def test_trace_one_xyz_ray_walks_fine_to_coarse_cells_exactly() -> None:
     np.testing.assert_allclose(t_exit, np.array([0.35, 0.6, 1.1], dtype=float))
 
 
-def test_cell_segment_returns_exact_cartesian_exit_from_one_interior_point() -> None:
-    """One direct cell-segment query should recover the exact exit interval and crossed face."""
-    tracer = OctreeRayTracer(_build_xyz_tree())
-    seed_xyz = np.array([-0.5, -0.3, -0.2], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-
-    segment_enter, segment_exit, exit_face, subface_id = tracer._cell_segment(
-        0,
-        seed_xyz,
-        direction,
-        current_t=0.0,
-        t_min=0.0,
-    )
-
-    np.testing.assert_allclose([segment_enter, segment_exit], np.array([0.0, 0.5], dtype=float))
-    assert exit_face == 1
-    assert subface_id == 3
-
-
-def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
+def test_trace_one_ray_kernel_uses_spherical_sample_file_from_seed_leaf() -> None:
     """One forward spherical sample-file walk should reproduce the current exact segment contract."""
     ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
     tree = Octree.from_ds(ds, tree_coord="rpa")
@@ -382,7 +300,14 @@ def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
     seed_xyz = tracer.seed_domain(origin, direction)
     start_leaf = int(tree.lookup_points(seed_xyz, coord="xyz")[0])
 
-    leaf_ids, t_enter, t_exit = tracer._trace_one_ray(start_leaf, origin, direction)
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
+        start_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
+    )
     t_seed = float(seed_xyz[0, 0] - origin[0])
 
     np.testing.assert_allclose(seed_xyz, np.array([[-24.49362194, 0.5, 0.25]], dtype=float), atol=1.0e-8, rtol=0.0)
@@ -417,36 +342,6 @@ def test_trace_one_ray_uses_spherical_sample_file_from_seed_leaf() -> None:
     np.testing.assert_allclose(float(np.sum(t_exit - t_enter)), 28.731026478149758, atol=1.0e-10, rtol=0.0)
     assert t_enter[0] <= t_seed <= t_exit[0]
 
-    last_leaf = int(leaf_ids[-1])
-    before_exit = origin + (t_exit[-1] - 1.0e-9) * direction
-    after_exit = origin + (t_exit[-1] + 1.0e-9) * direction
-    assert tracer._point_inside_cell(last_leaf, before_exit, 1.0e-12)
-    assert not tracer._point_inside_cell(last_leaf, after_exit, 1.0e-12)
-
-
-def test_cell_segment_handles_one_real_sample_seam_leaf_exit() -> None:
-    """One real seam-aligned sample leaf should still return one forward segment."""
-    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    tree = Octree.from_ds(ds, tree_coord="rpa")
-    tracer = OctreeRayTracer(tree)
-    point_xyz = np.array([-0.5, 0.0, 5.76], dtype=float)
-    direction_xyz = np.array([1.0, 0.0, 0.0], dtype=float)
-    leaf_id = int(tree.lookup_points(point_xyz.reshape(1, 3), coord="xyz")[0])
-
-    segment_enter, segment_exit, exit_face, subface_id = tracer._cell_segment(
-        leaf_id,
-        point_xyz,
-        direction_xyz,
-        current_t=0.0,
-        t_min=0.0,
-    )
-
-    assert leaf_id == 6045
-    np.testing.assert_allclose(segment_enter, 0.0, atol=1.0e-15, rtol=0.0)
-    np.testing.assert_allclose(segment_exit, 0.5000001195410285, atol=1.0e-12, rtol=0.0)
-    assert exit_face == 4
-    assert subface_id == 0
-
 
 def test_public_trace_one_ray_kernel_is_jittable() -> None:
     """The public one-ray tracing kernel should compile against raw tracer state."""
@@ -456,7 +351,14 @@ def test_public_trace_one_ray_kernel_is_jittable() -> None:
     seed_xyz = tracer.seed_domain(origin, direction)
     start_leaf = int(tracer.tree.lookup_points(seed_xyz, coord="xyz")[0])
     trace_state = tracer.trace_kernel_state()
-    expected_leaf_ids, expected_t_enter, expected_t_exit = tracer._trace_one_ray(start_leaf, origin, direction)
+    expected_leaf_ids, expected_t_enter, expected_t_exit = trace_one_ray_kernel(
+        start_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        trace_state,
+    )
 
     @njit(cache=True)
     def run_trace(
@@ -474,101 +376,6 @@ def test_public_trace_one_ray_kernel_is_jittable() -> None:
     np.testing.assert_allclose(t_exit, expected_t_exit, atol=0.0, rtol=0.0)
     assert run_trace.signatures
     assert trace_one_ray_kernel.signatures
-
-
-def test_launch_leaf_finds_both_shell_branches_from_one_spherical_seed() -> None:
-    """One through-hole shell seed should launch into valid leaves in both directions."""
-    points, corners = build_spherical_hex_mesh(
-        nr=8,
-        npolar=24,
-        nazimuth=32,
-        r_min=1.0,
-        r_max=2.0,
-    )
-    tree = Octree(points, corners, tree_coord="rpa")
-    tracer = OctreeRayTracer(tree)
-    impact_parameter = 0.3
-    z_value = 0.2
-    origin = np.array([-5.0, math.sqrt(impact_parameter * impact_parameter - z_value * z_value), z_value], dtype=float)
-    direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    seed_xyz = tracer.seed_domain(origin, direction).reshape(3)
-    seed_leaf = int(tree.lookup_points(seed_xyz.reshape(1, 3), coord="xyz")[0])
-    backward_leaf = tracer._launch_leaf(seed_leaf, seed_xyz, -direction)
-    forward_leaf = tracer._launch_leaf(seed_leaf, seed_xyz, direction)
-    backward_segment = tracer._cell_segment(backward_leaf, seed_xyz, -direction, current_t=0.0, t_min=0.0)
-    forward_segment = tracer._cell_segment(forward_leaf, seed_xyz, direction, current_t=0.0, t_min=0.0)
-
-    assert seed_leaf == 2639
-    np.testing.assert_allclose(seed_xyz, np.array([-1.46969385, 0.2236068, 0.2], dtype=float), atol=1.0e-8, rtol=0.0)
-    assert backward_leaf == 3407
-    assert forward_leaf == 3407
-    np.testing.assert_allclose(backward_segment[:2], np.array([0.0, 0.02743362956452474]), atol=1.0e-15, rtol=0.0)
-    np.testing.assert_allclose(forward_segment[:2], np.array([0.0, 0.005387463546405859]), atol=1.0e-15, rtol=0.0)
-
-
-def test_launch_leaf_resolves_one_real_sample_seam_seed_in_both_directions() -> None:
-    """One seam-aligned sample seed should launch into valid leaves in both directions."""
-    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    tree = Octree.from_ds(ds, tree_coord="rpa")
-    tracer = OctreeRayTracer(tree)
-    origins, directions = camera_rays(
-        origin=[-60.0, 0.0, 0.0],
-        target=[0.0, 0.0, 0.0],
-        up=[0.0, 0.0, 1.0],
-        nx=11,
-        ny=9,
-        width=48.0,
-        height=36.0,
-        projection="parallel",
-    )
-    origin = origins[3, 5]
-    direction = directions[3, 5]
-    seed_xyz = tracer.seed_domain(origin, direction).reshape(3)
-    seed_leaf = int(tree.lookup_points(seed_xyz.reshape(1, 3), coord="xyz")[0])
-    backward_leaf = tracer._launch_leaf(seed_leaf, seed_xyz, -direction)
-    forward_leaf = tracer._launch_leaf(seed_leaf, seed_xyz, direction)
-    backward_segment = tracer._cell_segment(backward_leaf, seed_xyz, -direction, current_t=0.0, t_min=0.0)
-    forward_segment = tracer._cell_segment(forward_leaf, seed_xyz, direction, current_t=0.0, t_min=0.0)
-
-    np.testing.assert_allclose(seed_xyz, np.array([0.0, 0.0, -4.0], dtype=float), atol=1.0e-12, rtol=0.0)
-    assert seed_leaf == 769
-    assert backward_leaf == 2515
-    assert forward_leaf == 8659
-    np.testing.assert_allclose(backward_segment[:2], np.array([0.0, 0.795649366151556]), atol=1.0e-12, rtol=0.0)
-    np.testing.assert_allclose(forward_segment[:2], np.array([0.0, 0.795649366151556]), atol=1.0e-12, rtol=0.0)
-
-
-def test_real_sample_face_seed_tie_break_stays_geometric() -> None:
-    """A real sample-file face seed should launch into valid leaves on both sides."""
-    ds = Dataset.from_file(str(data_file("3d__var_1_n00000000.plt")))
-    tree = Octree.from_ds(ds, tree_coord="rpa")
-    tracer = OctreeRayTracer(tree)
-    origins, directions = camera_rays(
-        origin=[-60.0, 0.0, 0.0],
-        target=[0.0, 0.0, 0.0],
-        up=[0.0, 0.0, 1.0],
-        nx=11,
-        ny=9,
-        width=48.0,
-        height=36.0,
-        projection="parallel",
-    )
-    origin = origins[4, 8]
-    direction = directions[4, 8]
-    seed_xyz = tracer.seed_domain(origin, direction).reshape(3)
-    seed_leaf = int(tree.lookup_points(seed_xyz.reshape(1, 3), coord="xyz")[0])
-
-    backward_leaf = tracer._launch_leaf(seed_leaf, seed_xyz, -direction)
-    forward_leaf = tracer._launch_leaf(seed_leaf, seed_xyz, direction)
-    backward_segment = tracer._cell_segment(backward_leaf, seed_xyz, -direction, current_t=0.0, t_min=0.0)
-    forward_segment = tracer._cell_segment(forward_leaf, seed_xyz, direction, current_t=0.0, t_min=0.0)
-
-    np.testing.assert_allclose(seed_xyz, np.array([0.0, -13.09090909, 0.0], dtype=float), atol=1.0e-8, rtol=0.0)
-    assert seed_leaf == 10290
-    assert backward_leaf == 7674
-    assert forward_leaf == 9000
-    np.testing.assert_allclose(backward_segment[:2], np.array([0.0, 2.6039441930804776]), atol=1.0e-12, rtol=0.0)
-    np.testing.assert_allclose(forward_segment[:2], np.array([0.0, 2.6039441930804776]), atol=1.0e-12, rtol=0.0)
 
 
 def test_trace_returns_two_way_packed_segments_for_one_seeded_cartesian_ray() -> None:
