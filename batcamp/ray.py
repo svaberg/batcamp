@@ -1720,41 +1720,41 @@ class OctreeRayTracer:
         t_coord = time.perf_counter()
         resolved_tree_coord = str(tree.tree_coord)
         if resolved_tree_coord == "xyz":
-            self._face_corners = _build_face_corner_order(_XYZ_CORNER_BITS)
-            self._tree_coord_code = int(_TREE_COORD_XYZ)
-            self._axis2_period = 0.0
-            self._axis2_periodic = False
+            face_corners = _build_face_corner_order(_XYZ_CORNER_BITS)
+            tree_coord_code = int(_TREE_COORD_XYZ)
+            axis2_period = 0.0
+            axis2_periodic = False
         elif resolved_tree_coord == "rpa":
-            self._face_corners = _build_face_corner_order(_RPA_CORNER_BITS)
-            self._tree_coord_code = int(_TREE_COORD_RPA)
-            self._axis2_period = 2.0 * math.pi
-            self._axis2_periodic = True
+            face_corners = _build_face_corner_order(_RPA_CORNER_BITS)
+            tree_coord_code = int(_TREE_COORD_RPA)
+            axis2_period = 2.0 * math.pi
+            axis2_periodic = True
         else:
             raise NotImplementedError(f"Unsupported tree_coord '{tree.tree_coord}' for OctreeRayTracer.")
         logger.info("_resolve_trace_coord complete in %.2fs", float(time.perf_counter() - t_coord))
         logger.info("_bind_tree_arrays...")
         t_bind = time.perf_counter()
         leaf_slot_count = int(tree.corners.shape[0])
-        self._leaf_valid = tree.cell_levels >= 0
-        self._n_polar = int(tree.leaf_shape[1])
-        self._n_azimuth = int(tree.leaf_shape[2])
-        self._cell_child = tree.cell_child
-        self._cell_parent = tree.cell_parent
-        self._root_cell_ids = np.flatnonzero(self._cell_parent < 0).astype(np.int64)
-        self._cell_bounds = tree.cell_bounds
-        self._next_cell = tree.cell_neighbor
+        leaf_valid = tree.cell_levels >= 0
+        n_polar = int(tree.leaf_shape[1])
+        n_azimuth = int(tree.leaf_shape[2])
+        cell_child = tree.cell_child
+        cell_parent = tree.cell_parent
+        root_cell_ids = np.flatnonzero(cell_parent < 0).astype(np.int64)
+        cell_bounds = tree.cell_bounds
+        next_cell = tree.cell_neighbor
         logger.info("_bind_tree_arrays complete in %.2fs", float(time.perf_counter() - t_bind))
         logger.info("_prepare_seed_domain...")
         t_seed = time.perf_counter()
         domain_lo, domain_hi = tree.domain_bounds(coord=tree.tree_coord)
-        self._domain_bounds = np.empty((3, 2), dtype=np.float64)
-        self._domain_bounds[:, 0] = domain_lo
-        self._domain_bounds[:, 1] = domain_hi - domain_lo
-        if self._tree_coord_code == int(_TREE_COORD_XYZ):
-            self._seed_domain_xyz_lo = np.asarray(domain_lo, dtype=np.float64)
-            self._seed_domain_xyz_hi = np.asarray(domain_hi, dtype=np.float64)
-            self._seed_domain_r_min = np.nan
-            self._seed_domain_r_max = np.nan
+        domain_bounds = np.empty((3, 2), dtype=np.float64)
+        domain_bounds[:, 0] = domain_lo
+        domain_bounds[:, 1] = domain_hi - domain_lo
+        if tree_coord_code == int(_TREE_COORD_XYZ):
+            seed_domain_xyz_lo = np.asarray(domain_lo, dtype=np.float64)
+            seed_domain_xyz_hi = np.asarray(domain_hi, dtype=np.float64)
+            seed_domain_r_min = np.nan
+            seed_domain_r_max = np.nan
         else:
             if not np.isclose(float(domain_lo[1]), 0.0, atol=1e-12, rtol=0.0):
                 raise NotImplementedError("seed_domain for rpa currently requires polar_min == 0.")
@@ -1764,50 +1764,57 @@ class OctreeRayTracer:
                 raise NotImplementedError("seed_domain for rpa currently requires azimuth_start == 0.")
             if not np.isclose(float(domain_hi[2] - domain_lo[2]), 2.0 * math.pi, atol=1e-12, rtol=0.0):
                 raise NotImplementedError("seed_domain for rpa currently requires full 2pi azimuth coverage.")
-            self._seed_domain_xyz_lo = np.full(3, np.nan, dtype=np.float64)
-            self._seed_domain_xyz_hi = np.full(3, np.nan, dtype=np.float64)
-            self._seed_domain_r_min = float(domain_lo[0])
-            self._seed_domain_r_max = float(domain_hi[0])
-            if self._seed_domain_r_min < 0.0 or self._seed_domain_r_max <= self._seed_domain_r_min:
+            seed_domain_xyz_lo = np.full(3, np.nan, dtype=np.float64)
+            seed_domain_xyz_hi = np.full(3, np.nan, dtype=np.float64)
+            seed_domain_r_min = float(domain_lo[0])
+            seed_domain_r_max = float(domain_hi[0])
+            if seed_domain_r_min < 0.0 or seed_domain_r_max <= seed_domain_r_min:
                 raise ValueError(
-                    f"Invalid spherical domain radii r_min={self._seed_domain_r_min}, r_max={self._seed_domain_r_max}."
+                    f"Invalid spherical domain radii r_min={seed_domain_r_min}, r_max={seed_domain_r_max}."
                 )
         logger.info("_prepare_seed_domain complete in %.2fs", float(time.perf_counter() - t_seed))
-        valid_leaf_ids = np.flatnonzero(self._leaf_valid).astype(np.int64)
-        self._n_valid_leaf = int(valid_leaf_ids.size)
-        self._leaf_points = np.full((leaf_slot_count, 8, 3), np.nan, dtype=np.float64)
-        self._leaf_centers = np.full((leaf_slot_count, 3), np.nan, dtype=np.float64)
-        self._leaf_scales = np.full(leaf_slot_count, np.nan, dtype=np.float64)
+        valid_leaf_ids = np.flatnonzero(leaf_valid).astype(np.int64)
+        n_valid_leaf = int(valid_leaf_ids.size)
+        leaf_points = np.full((leaf_slot_count, 8, 3), np.nan, dtype=np.float64)
+        leaf_centers = np.full((leaf_slot_count, 3), np.nan, dtype=np.float64)
+        leaf_scales = np.full(leaf_slot_count, np.nan, dtype=np.float64)
         logger.info("build leaf geometry cache...")
         t_geom = time.perf_counter()
         cell_xyz = tree.cell_points(valid_leaf_ids)
-        self._leaf_points[valid_leaf_ids] = cell_xyz
-        self._leaf_centers[valid_leaf_ids] = np.mean(cell_xyz, axis=1)
-        self._leaf_scales[valid_leaf_ids] = np.max(
-            np.linalg.norm(cell_xyz - self._leaf_centers[valid_leaf_ids, None, :], axis=2),
+        leaf_points[valid_leaf_ids] = cell_xyz
+        leaf_centers[valid_leaf_ids] = np.mean(cell_xyz, axis=1)
+        leaf_scales[valid_leaf_ids] = np.max(
+            np.linalg.norm(cell_xyz - leaf_centers[valid_leaf_ids, None, :], axis=2),
             axis=1,
         )
         logger.info("build leaf geometry cache complete in %.2fs", float(time.perf_counter() - t_geom))
         logger.info("_pack_trace_state...")
         t_state = time.perf_counter()
         self._trace_state = (
-            self._leaf_valid,
-            self._leaf_points,
-            self._leaf_centers,
-            self._leaf_scales,
-            self._face_corners,
-            self._next_cell,
-            int(self._n_polar),
-            int(self._n_azimuth),
-            int(self._tree_coord_code),
-            self._cell_child,
-            self._root_cell_ids,
-            self._cell_parent,
-            self._cell_bounds,
-            self._domain_bounds,
-            float(self._axis2_period),
-            bool(self._axis2_periodic),
-            int(self._n_valid_leaf),
+            leaf_valid,
+            leaf_points,
+            leaf_centers,
+            leaf_scales,
+            face_corners,
+            next_cell,
+            n_polar,
+            n_azimuth,
+            tree_coord_code,
+            cell_child,
+            root_cell_ids,
+            cell_parent,
+            cell_bounds,
+            domain_bounds,
+            axis2_period,
+            axis2_periodic,
+            n_valid_leaf,
+        )
+        self._seed_domain_state = (
+            tree_coord_code,
+            seed_domain_xyz_lo,
+            seed_domain_xyz_hi,
+            seed_domain_r_min,
+            seed_domain_r_max,
         )
         logger.info("_pack_trace_state complete in %.2fs", float(time.perf_counter() - t_state))
         logger.info("OctreeRayTracer.__init__ complete in %.2fs", float(time.perf_counter() - t0))
@@ -1889,48 +1896,13 @@ class OctreeRayTracer:
             else self._normalize_seed(seed_xyz, ray_shape)
         )
         clip_lo = max(0.0, t_lo)
-        (
-            leaf_valid,
-            leaf_points,
-            leaf_centers,
-            leaf_scales,
-            face_corners,
-            next_cell,
-            n_polar,
-            n_azimuth,
-            tree_coord_code,
-            cell_child,
-            root_cell_ids,
-            cell_parent,
-            cell_bounds,
-            domain_bounds,
-            axis2_period,
-            axis2_periodic,
-            n_valid_leaf,
-        ) = self._trace_state
         ray_offsets, cell_ids, t_enter, t_exit = _trace_rays_kernel(
             o_flat,
             d_flat,
             seed_flat,
             float(clip_lo),
             float(t_hi),
-            leaf_valid,
-            leaf_points,
-            leaf_centers,
-            leaf_scales,
-            face_corners,
-            next_cell,
-            n_polar,
-            n_azimuth,
-            tree_coord_code,
-            cell_child,
-            root_cell_ids,
-            cell_parent,
-            cell_bounds,
-            domain_bounds,
-            axis2_period,
-            axis2_periodic,
-            n_valid_leaf,
+            *self._trace_state,
         )
         return RaySegments(
             ray_offsets=ray_offsets,
@@ -1972,26 +1944,33 @@ class OctreeRayTracer:
 
         o_flat, d_flat, shape = _normalize_ray_arrays(origins, directions)
         clip_lo = max(0.0, t_lo)
-        if self._tree_coord_code == int(_TREE_COORD_XYZ):
+        (
+            tree_coord_code,
+            seed_domain_xyz_lo,
+            seed_domain_xyz_hi,
+            seed_domain_r_min,
+            seed_domain_r_max,
+        ) = self._seed_domain_state
+        if tree_coord_code == int(_TREE_COORD_XYZ):
             seed_xyz = _seed_domain_xyz_kernel(
                 o_flat,
                 d_flat,
                 float(clip_lo),
                 float(t_hi),
-                self._seed_domain_xyz_lo,
-                self._seed_domain_xyz_hi,
+                seed_domain_xyz_lo,
+                seed_domain_xyz_hi,
             )
             return seed_xyz.reshape(shape + (3,))
 
-        if self._tree_coord_code != int(_TREE_COORD_RPA):
+        if tree_coord_code != int(_TREE_COORD_RPA):
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for seed_domain.")
         seed_xyz = _seed_domain_rpa_kernel(
             o_flat,
             d_flat,
             float(clip_lo),
             float(t_hi),
-            float(self._seed_domain_r_min),
-            float(self._seed_domain_r_max),
+            float(seed_domain_r_min),
+            float(seed_domain_r_max),
         )
         return seed_xyz.reshape(shape + (3,))
 
