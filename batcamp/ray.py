@@ -1778,26 +1778,16 @@ class OctreeRayTracer:
         self._leaf_points = np.full((self._leaf_slot_count, 8, 3), np.nan, dtype=np.float64)
         self._leaf_centers = np.full((self._leaf_slot_count, 3), np.nan, dtype=np.float64)
         self._leaf_scales = np.full(self._leaf_slot_count, np.nan, dtype=np.float64)
-        logger.info("_build_leaf_geometry_cache...")
+        logger.info("build leaf geometry cache...")
         t_geom = time.perf_counter()
-        logger.info("_gather_leaf_points...")
-        t_points = time.perf_counter()
-        for leaf_id in valid_leaf_ids:
-            cell_xyz = np.asarray(tree.cell_points(int(leaf_id)), dtype=np.float64)
-            self._leaf_points[leaf_id] = cell_xyz
-        logger.info("_gather_leaf_points complete in %.2fs", float(time.perf_counter() - t_points))
-        logger.info("_compute_leaf_centers...")
-        t_centers = time.perf_counter()
-        for leaf_id in valid_leaf_ids:
-            self._leaf_centers[leaf_id] = np.mean(self._leaf_points[leaf_id], axis=0)
-        logger.info("_compute_leaf_centers complete in %.2fs", float(time.perf_counter() - t_centers))
-        logger.info("_compute_leaf_scales...")
-        t_scales = time.perf_counter()
-        for leaf_id in valid_leaf_ids:
-            center_xyz = self._leaf_centers[leaf_id]
-            self._leaf_scales[leaf_id] = float(np.max(np.linalg.norm(self._leaf_points[leaf_id] - center_xyz, axis=1)))
-        logger.info("_compute_leaf_scales complete in %.2fs", float(time.perf_counter() - t_scales))
-        logger.info("_build_leaf_geometry_cache complete in %.2fs", float(time.perf_counter() - t_geom))
+        cell_xyz = np.asarray(tree.cell_points(valid_leaf_ids), dtype=np.float64)
+        self._leaf_points[valid_leaf_ids] = cell_xyz
+        self._leaf_centers[valid_leaf_ids] = np.mean(cell_xyz, axis=1)
+        self._leaf_scales[valid_leaf_ids] = np.max(
+            np.linalg.norm(cell_xyz - self._leaf_centers[valid_leaf_ids, None, :], axis=2),
+            axis=1,
+        )
+        logger.info("build leaf geometry cache complete in %.2fs", float(time.perf_counter() - t_geom))
         logger.info("_pack_trace_state...")
         t_state = time.perf_counter()
         self._next_leaf = np.full((self._leaf_slot_count, 6, 4), -2, dtype=np.int32)

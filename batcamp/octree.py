@@ -679,12 +679,19 @@ class Octree:
         """Return leaf-row corner point ids in Tecplot/BATSRUS brick order."""
         return self._corners
 
-    def cell_points(self, cell_id: int) -> np.ndarray:
-        """Return one leaf cell's explicit corner point coordinates with shape `(8, 3)`."""
-        leaf_id = int(cell_id)
-        if leaf_id < 0 or leaf_id >= self._leaf_slot_count or self._cell_depth[leaf_id] < 0:
+    def cell_points(self, cell_id: int | np.ndarray) -> np.ndarray:
+        """Return explicit leaf corner point coordinates with shape `(..., 8, 3)`."""
+        leaf_ids = np.asarray(cell_id, dtype=np.int64)
+        if leaf_ids.ndim == 0:
+            leaf_id = int(leaf_ids)
+            if leaf_id < 0 or leaf_id >= self._leaf_slot_count or self._cell_depth[leaf_id] < 0:
+                raise ValueError("cell_points only supports valid leaf cell ids.")
+            return self._points[self._corners[leaf_id]]
+        if np.any(leaf_ids < 0) or np.any(leaf_ids >= self._leaf_slot_count):
             raise ValueError("cell_points only supports valid leaf cell ids.")
-        return self._points[self._corners[leaf_id]]
+        if np.any(self._cell_depth[leaf_ids] < 0):
+            raise ValueError("cell_points only supports valid leaf cell ids.")
+        return self._points[self._corners[leaf_ids]]
 
     @property
     def cell_bounds(self) -> np.ndarray:
