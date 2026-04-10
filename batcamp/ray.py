@@ -1780,12 +1780,23 @@ class OctreeRayTracer:
         self._leaf_scales = np.full(self._leaf_slot_count, np.nan, dtype=np.float64)
         logger.info("_build_leaf_geometry_cache...")
         t_geom = time.perf_counter()
+        logger.info("_gather_leaf_points...")
+        t_points = time.perf_counter()
         for leaf_id in valid_leaf_ids:
             cell_xyz = np.asarray(tree.cell_points(int(leaf_id)), dtype=np.float64)
-            center_xyz = np.mean(cell_xyz, axis=0)
             self._leaf_points[leaf_id] = cell_xyz
-            self._leaf_centers[leaf_id] = center_xyz
-            self._leaf_scales[leaf_id] = float(np.max(np.linalg.norm(cell_xyz - center_xyz, axis=1)))
+        logger.info("_gather_leaf_points complete in %.2fs", float(time.perf_counter() - t_points))
+        logger.info("_compute_leaf_centers...")
+        t_centers = time.perf_counter()
+        for leaf_id in valid_leaf_ids:
+            self._leaf_centers[leaf_id] = np.mean(self._leaf_points[leaf_id], axis=0)
+        logger.info("_compute_leaf_centers complete in %.2fs", float(time.perf_counter() - t_centers))
+        logger.info("_compute_leaf_scales...")
+        t_scales = time.perf_counter()
+        for leaf_id in valid_leaf_ids:
+            center_xyz = self._leaf_centers[leaf_id]
+            self._leaf_scales[leaf_id] = float(np.max(np.linalg.norm(self._leaf_points[leaf_id] - center_xyz, axis=1)))
+        logger.info("_compute_leaf_scales complete in %.2fs", float(time.perf_counter() - t_scales))
         logger.info("_build_leaf_geometry_cache complete in %.2fs", float(time.perf_counter() - t_geom))
         logger.info("_pack_trace_state...")
         t_state = time.perf_counter()
