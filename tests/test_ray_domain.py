@@ -39,6 +39,48 @@ def _build_xyz_regular_tree() -> Octree:
     return Octree(points, corners, tree_coord="xyz")
 
 
+def _regular_mesh_points() -> np.ndarray:
+    """Return logical mesh points of the regular [-4, 4]^3 grid."""
+    return np.asarray(_build_xyz_regular_tree()._points, dtype=float)
+
+
+def _build_xyz_stretched_tree() -> Octree:
+    """Return one one-root uniform Cartesian tree with one separable nonlinear stretch."""
+    regular_tree = _build_xyz_regular_tree()
+    stretched_tree = object.__new__(Octree)
+    stretched_tree._init_from_state(
+        root_shape=regular_tree.root_shape,
+        tree_coord=regular_tree.tree_coord,
+        cell_levels=regular_tree.cell_levels,
+        cell_ijk=regular_tree.cell_ijk[: regular_tree.corners.shape[0]],
+        points=_stretch_regular_xyz(np.asarray(regular_tree._points, dtype=float)),
+        corners=np.asarray(regular_tree.corners, dtype=np.int64),
+    )
+    return stretched_tree
+
+
+def _stretch_regular_xyz(logical_xyz: np.ndarray) -> np.ndarray:
+    """Return one separable nonlinear xyz stretch of regular-grid coordinates."""
+    xyz = np.asarray(logical_xyz, dtype=float)
+    x = xyz[..., 0]
+    y = xyz[..., 1]
+    z = xyz[..., 2]
+    stretched = np.empty_like(xyz)
+    stretched[..., 0] = x + 0.02 * x * x * x
+    stretched[..., 1] = y + 0.015 * y * y * y
+    stretched[..., 2] = z + 0.01 * z * z * z
+    return stretched
+
+
+def _stretched_regular_edges() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return stretched regular-grid edge coordinates for x, y, and z."""
+    edges = np.arange(-4.0, 5.0, dtype=float)
+    x_edges = edges + 0.02 * edges * edges * edges
+    y_edges = edges + 0.015 * edges * edges * edges
+    z_edges = edges + 0.01 * edges * edges * edges
+    return x_edges, y_edges, z_edges
+
+
 def _build_rpa_tree() -> Octree:
     """Return one small spherical tree for unsupported-case coverage."""
     points, corners = build_spherical_hex_mesh(
@@ -161,16 +203,20 @@ def _expected_box_exit_and_length(
     origin: np.ndarray,
     direction: np.ndarray,
     *,
-    box_min: float = -4.0,
-    box_max: float = 4.0,
+    box_lo: np.ndarray | None = None,
+    box_hi: np.ndarray | None = None,
 ) -> tuple[np.ndarray, float]:
     """Return the exact box exit point and physical path length for one ray."""
+    if box_lo is None:
+        box_lo = np.array([-4.0, -4.0, -4.0], dtype=float)
+    if box_hi is None:
+        box_hi = np.array([4.0, 4.0, 4.0], dtype=float)
     t_exit = np.inf
     for axis in range(3):
         if direction[axis] > 0.0:
-            t_axis = (box_max - origin[axis]) / direction[axis]
+            t_axis = (box_hi[axis] - origin[axis]) / direction[axis]
         elif direction[axis] < 0.0:
-            t_axis = (box_min - origin[axis]) / direction[axis]
+            t_axis = (box_lo[axis] - origin[axis]) / direction[axis]
         else:
             continue
         if t_axis < t_exit:
@@ -178,6 +224,121 @@ def _expected_box_exit_and_length(
     if not np.isfinite(t_exit):
         raise ValueError("direction must have at least one nonzero component.")
     return origin + t_exit * direction, float(t_exit * np.linalg.norm(direction))
+
+
+@pytest.fixture(scope="module")
+def xyz_regular_tracer() -> OctreeRayTracer:
+    """Return one reusable tracer for the uniform [-4, 4]^3 unit grid."""
+    return OctreeRayTracer(_build_xyz_regular_tree())
+
+
+@pytest.fixture(scope="module")
+def xyz_stretched_grid_case() -> tuple[OctreeRayTracer, np.ndarray, np.ndarray]:
+    """Return one reusable tracer plus outer box bounds for one stretched uniform grid."""
+    tree = _build_xyz_stretched_tree()
+    box_lo, box_hi = tree.domain_bounds(coord="xyz")
+    return OctreeRayTracer(tree), np.asarray(box_lo, dtype=float), np.asarray(box_hi, dtype=float)
+
+
+def _lookup_regular_start_leaf(tracer: OctreeRayTracer, origin: np.ndarray, direction: np.ndarray) -> int:
+    """Return one seam-aware start leaf for one regular-grid ray."""
+    start_xyz = np.array(origin, dtype=float, copy=True)
+    seam_mask = np.isclose(start_xyz, np.round(start_xyz), atol=1.0e-12, rtol=0.0)
+    start_xyz[seam_mask] += 1.0e-12 * np.sign(direction[seam_mask])
+    return int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
+
+
+def _assert_regular_ray_matches_expected_path(
+    tracer: OctreeRayTracer,
+    origin: np.ndarray,
+    direction: np.ndarray,
+    *,
+    start_leaf: int | None = None,
+    expected_first_t: float = 0.0,
+    expected_exit_xyz: np.ndarray | None = None,
+    expected_length: float | None = None,
+    box_lo: np.ndarray | None = None,
+    box_hi: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Trace one regular-grid ray and assert that it matches the exact box path."""
+    if start_leaf is None:
+        start_leaf = _lookup_regular_start_leaf(tracer, origin, direction)
+
+    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
+        start_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
+    )
+
+    assert leaf_ids.size > 0, f"no traced segments for origin={origin.tolist()} direction={direction.tolist()}"
+    np.testing.assert_allclose(t_enter[0], expected_first_t, atol=1.0e-12, rtol=0.0)
+    if expected_exit_xyz is None or expected_length is None:
+        expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction, box_lo=box_lo, box_hi=box_hi)
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=expected_exit_xyz,
+        expected_length=expected_length,
+    )
+    return leaf_ids, t_enter, t_exit
+
+
+def _assert_regular_corner_sweep(tracer: OctreeRayTracer, origin: np.ndarray) -> None:
+    """Assert that one regular-grid start point traces correctly toward every mesh corner."""
+    for target in tracer.tree._points:
+        direction = np.asarray(target - origin, dtype=float)
+        if np.allclose(direction, 0.0):
+            continue
+        _assert_regular_ray_matches_expected_path(tracer, origin, direction)
+
+
+def _lookup_stretched_start_leaf(
+    tracer: OctreeRayTracer,
+    logical_origin: np.ndarray,
+    logical_direction: np.ndarray,
+) -> int:
+    """Return one seam-aware start leaf for one stretched-grid ray."""
+    start_logical = np.array(logical_origin, dtype=float, copy=True)
+    seam_mask = np.isclose(start_logical, np.round(start_logical), atol=1.0e-12, rtol=0.0)
+    start_logical[seam_mask] += 1.0e-12 * np.sign(logical_direction[seam_mask])
+    start_xyz = _stretch_regular_xyz(start_logical)
+    return int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
+
+
+def _assert_stretched_corner_sweep(
+    tracer: OctreeRayTracer,
+    logical_origin: np.ndarray,
+    *,
+    box_lo: np.ndarray,
+    box_hi: np.ndarray,
+) -> None:
+    """Assert that one stretched-grid start point traces correctly toward every mesh corner."""
+    origin = _stretch_regular_xyz(np.asarray(logical_origin, dtype=float))
+    for logical_target in _regular_mesh_points():
+        logical_direction = np.asarray(logical_target - logical_origin, dtype=float)
+        if np.allclose(logical_direction, 0.0):
+            continue
+        direction = _stretched_local_direction(logical_origin, logical_target)
+        _assert_regular_ray_matches_expected_path(
+            tracer,
+            origin,
+            direction,
+            start_leaf=_lookup_stretched_start_leaf(tracer, logical_origin, logical_direction),
+            box_lo=box_lo,
+            box_hi=box_hi,
+        )
+
+
+def _stretched_local_direction(logical_origin: np.ndarray, logical_target: np.ndarray) -> np.ndarray:
+    """Return one physical-space direction toward the stretched image of one logical target."""
+    physical_origin = _stretch_regular_xyz(np.asarray(logical_origin, dtype=float))
+    physical_target = _stretch_regular_xyz(np.asarray(logical_target, dtype=float))
+    return np.asarray(physical_target - physical_origin, dtype=float)
 
 
 def test_seed_domain_parallel_camera_returns_midpoints_in_cartesian_box() -> None:
@@ -312,35 +473,29 @@ def test_trace_one_ray_kernel_walks_same_level_cells_exactly() -> None:
     np.testing.assert_allclose(t_exit, np.array([2.0, 3.0], dtype=float))
 
 
-def test_trace_one_ray_kernel_walks_full_regular_cartesian_line_exactly() -> None:
+def test_trace_one_ray_kernel_walks_full_regular_cartesian_line_exactly(xyz_regular_tracer: OctreeRayTracer) -> None:
     """One same-level Cartesian ray should cross all eight x-cells of the one-root [-4, 4]^3 grid."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([-5.0, -3.5, -3.5], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    start_leaf = int(tracer.tree.lookup_points(np.array([[-3.5, -3.5, -3.5]], dtype=float), coord="xyz")[0])
-
-    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-        start_leaf,
-        origin,
-        direction,
-        0.0,
-        np.inf,
-        tracer.trace_kernel_state(),
+    start_leaf = int(
+        xyz_regular_tracer.tree.lookup_points(np.array([[-3.5, -3.5, -3.5]], dtype=float), coord="xyz")[0]
     )
 
-    assert tracer.tree.root_shape == (1, 1, 1)
-    np.testing.assert_array_equal(np.unique(tracer.tree.cell_levels), np.array([3], dtype=np.int64))
-    np.testing.assert_array_equal(leaf_ids, np.arange(0, 512, 64, dtype=np.int64))
-    np.testing.assert_allclose(t_enter, 1.0 + np.arange(8, dtype=float))
-    np.testing.assert_allclose(t_exit, 2.0 + np.arange(8, dtype=float))
-    _assert_segments_match_expected_path(
+    leaf_ids, t_enter, t_exit = _assert_regular_ray_matches_expected_path(
+        xyz_regular_tracer,
         origin,
         direction,
-        t_enter,
-        t_exit,
+        start_leaf=start_leaf,
+        expected_first_t=1.0,
         expected_exit_xyz=np.array([4.0, -3.5, -3.5], dtype=float),
         expected_length=8.0,
     )
+
+    assert xyz_regular_tracer.tree.root_shape == (1, 1, 1)
+    np.testing.assert_array_equal(np.unique(xyz_regular_tracer.tree.cell_levels), np.array([3], dtype=np.int64))
+    np.testing.assert_array_equal(leaf_ids, np.arange(0, 512, 64, dtype=np.int64))
+    np.testing.assert_allclose(t_enter, 1.0 + np.arange(8, dtype=float))
+    np.testing.assert_allclose(t_exit, 2.0 + np.arange(8, dtype=float))
 
 
 @pytest.mark.parametrize(
@@ -366,33 +521,12 @@ def test_trace_one_ray_kernel_walks_full_regular_cartesian_line_exactly() -> Non
         "+++",
     ],
 )
-def test_trace_one_ray_kernel_handles_all_space_diagonal_regular_rays(direction: tuple[float, float, float]) -> None:
+def test_trace_one_ray_kernel_handles_all_space_diagonal_regular_rays(
+    xyz_regular_tracer: OctreeRayTracer, direction: tuple[float, float, float]
+) -> None:
     """All unit-grid space diagonals from one interior point should trace contiguously to the expected box exit."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([0.5, 0.5, 0.5], dtype=float)
-    direction = np.array(direction, dtype=float)
-    start_leaf = int(tracer.tree.lookup_points(origin[None, :], coord="xyz")[0])
-
-    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-        start_leaf,
-        origin,
-        direction,
-        0.0,
-        np.inf,
-        tracer.trace_kernel_state(),
-    )
-
-    assert leaf_ids.size > 0
-    np.testing.assert_allclose(t_enter[0], 0.0, atol=1.0e-12, rtol=0.0)
-    expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
-    _assert_segments_match_expected_path(
-        origin,
-        direction,
-        t_enter,
-        t_exit,
-        expected_exit_xyz=expected_exit_xyz,
-        expected_length=expected_length,
-    )
+    _assert_regular_ray_matches_expected_path(xyz_regular_tracer, origin, np.array(direction, dtype=float))
 
 
 @pytest.mark.parametrize(
@@ -426,72 +560,36 @@ def test_trace_one_ray_kernel_handles_all_space_diagonal_regular_rays(direction:
         "yz++",
     ],
 )
-def test_trace_one_ray_kernel_handles_all_plane_diagonal_regular_rays(direction: tuple[float, float, float]) -> None:
+def test_trace_one_ray_kernel_handles_all_plane_diagonal_regular_rays(
+    xyz_regular_tracer: OctreeRayTracer, direction: tuple[float, float, float]
+) -> None:
     """All unit-grid plane diagonals from one interior point should trace contiguously to the expected box exit."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([0.5, 0.5, 0.5], dtype=float)
-    direction = np.array(direction, dtype=float)
-    start_leaf = int(tracer.tree.lookup_points(origin[None, :], coord="xyz")[0])
-
-    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-        start_leaf,
-        origin,
-        direction,
-        0.0,
-        np.inf,
-        tracer.trace_kernel_state(),
-    )
-
-    assert leaf_ids.size > 0
-    np.testing.assert_allclose(t_enter[0], 0.0, atol=1.0e-12, rtol=0.0)
-    expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
-    _assert_segments_match_expected_path(
-        origin,
-        direction,
-        t_enter,
-        t_exit,
-        expected_exit_xyz=expected_exit_xyz,
-        expected_length=expected_length,
-    )
+    _assert_regular_ray_matches_expected_path(xyz_regular_tracer, origin, np.array(direction, dtype=float))
 
 
-def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_cell_center() -> None:
+def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_cell_center(
+    xyz_regular_tracer: OctreeRayTracer,
+) -> None:
     """All rays from one unit-cell center toward mesh corners should trace contiguously to the expected box exit."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([0.5, 0.5, 0.5], dtype=float)
-    start_leaf = int(tracer.tree.lookup_points(origin[None, :], coord="xyz")[0])
+    _assert_regular_corner_sweep(xyz_regular_tracer, origin)
 
-    for target in tracer.tree._points:
-        direction = np.asarray(target - origin, dtype=float)
-        if np.allclose(direction, 0.0):
-            continue
 
-        leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-            start_leaf,
-            origin,
-            direction,
-            0.0,
-            np.inf,
-            tracer.trace_kernel_state(),
-        )
+def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_x_face_seam(
+    xyz_regular_tracer: OctreeRayTracer,
+) -> None:
+    """All rays from one face-seam point toward mesh corners should trace contiguously to the expected box exit."""
+    origin = np.array([0.5, 0.0, 0.0], dtype=float)
+    _assert_regular_corner_sweep(xyz_regular_tracer, origin)
 
-        assert leaf_ids.size > 0, f"no traced segments for target={target.tolist()} direction={direction.tolist()}"
-        np.testing.assert_allclose(
-            t_enter[0],
-            0.0,
-            atol=1.0e-12,
-            rtol=0.0,
-            err_msg=f"bad first entry for target={target.tolist()}",
-        )
-        expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
-        _assert_segments_match_expected_path(
-            origin,
-            direction,
-            t_enter,
-            t_exit,
-            expected_exit_xyz=expected_exit_xyz,
-            expected_length=expected_length,
-        )
+
+def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_xy_edge_seam(
+    xyz_regular_tracer: OctreeRayTracer,
+) -> None:
+    """All rays from one edge-seam point toward mesh corners should trace contiguously to the expected box exit."""
+    origin = np.array([0.5, 0.5, 0.0], dtype=float)
+    _assert_regular_corner_sweep(xyz_regular_tracer, origin)
 
 
 @pytest.mark.parametrize(
@@ -517,41 +615,12 @@ def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_cell_ce
         "origin+++",
     ],
 )
-def test_trace_one_ray_kernel_handles_origin_space_diagonal_regular_rays(direction: tuple[float, float, float]) -> None:
+def test_trace_one_ray_kernel_handles_origin_space_diagonal_regular_rays(
+    xyz_regular_tracer: OctreeRayTracer, direction: tuple[float, float, float]
+) -> None:
     """All space diagonals from the true mesh corner origin should trace contiguously to the expected box exit."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([0.0, 0.0, 0.0], dtype=float)
-    direction = np.array(direction, dtype=float)
-    owner_sign = np.where(direction > 0.0, 1.0, -1.0)
-    start_xyz = origin + 1.0e-12 * owner_sign
-    start_leaf = int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
-
-    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-        start_leaf,
-        origin,
-        direction,
-        0.0,
-        np.inf,
-        tracer.trace_kernel_state(),
-    )
-
-    assert leaf_ids.size > 0, f"no traced segments for direction={direction.tolist()}"
-    np.testing.assert_allclose(
-        t_enter[0],
-        0.0,
-        atol=1.0e-12,
-        rtol=0.0,
-        err_msg=f"bad first entry for direction={direction.tolist()}",
-    )
-    expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
-    _assert_segments_match_expected_path(
-        origin,
-        direction,
-        t_enter,
-        t_exit,
-        expected_exit_xyz=expected_exit_xyz,
-        expected_length=expected_length,
-    )
+    _assert_regular_ray_matches_expected_path(xyz_regular_tracer, origin, np.array(direction, dtype=float))
 
 
 @pytest.mark.parametrize(
@@ -585,82 +654,343 @@ def test_trace_one_ray_kernel_handles_origin_space_diagonal_regular_rays(directi
         "origin0++",
     ],
 )
-def test_trace_one_ray_kernel_handles_origin_plane_diagonal_regular_rays(direction: tuple[float, float, float]) -> None:
+def test_trace_one_ray_kernel_handles_origin_plane_diagonal_regular_rays(
+    xyz_regular_tracer: OctreeRayTracer, direction: tuple[float, float, float]
+) -> None:
     """All plane diagonals from the true mesh corner origin should trace contiguously to the expected box exit."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
     origin = np.array([0.0, 0.0, 0.0], dtype=float)
-    direction = np.array(direction, dtype=float)
-    owner_sign = np.where(direction > 0.0, 1.0, -1.0)
-    start_xyz = origin + 1.0e-12 * owner_sign
+    _assert_regular_ray_matches_expected_path(xyz_regular_tracer, origin, np.array(direction, dtype=float))
+
+
+def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_origin(
+    xyz_regular_tracer: OctreeRayTracer,
+) -> None:
+    """All rays from the true mesh corner origin toward mesh corners should trace contiguously to the expected box exit."""
+    origin = np.array([0.0, 0.0, 0.0], dtype=float)
+    _assert_regular_corner_sweep(xyz_regular_tracer, origin)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        np.array([4.0, 0.5, 0.5], dtype=float),
+        np.array([0.5, 4.0, 0.5], dtype=float),
+        np.array([0.5, 0.5, 4.0], dtype=float),
+        np.array([4.0, 4.0, 0.5], dtype=float),
+        np.array([4.0, 0.5, 4.0], dtype=float),
+        np.array([0.5, 4.0, 4.0], dtype=float),
+        np.array([4.0, 4.0, 4.0], dtype=float),
+    ],
+    ids=[
+        "boundary-x",
+        "boundary-y",
+        "boundary-z",
+        "boundary-xy",
+        "boundary-xz",
+        "boundary-yz",
+        "boundary-xyz",
+    ],
+)
+def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_domain_boundary(
+    xyz_regular_tracer: OctreeRayTracer,
+    origin: np.ndarray,
+) -> None:
+    """All rays from one nonwarped domain-boundary point toward mesh corners should trace contiguously to the expected box exit."""
+    _assert_regular_corner_sweep(xyz_regular_tracer, origin)
+
+
+def test_trace_one_ray_kernel_handles_random_regular_rays(xyz_regular_tracer: OctreeRayTracer) -> None:
+    """One fixed-seed batch of random interior starts and directions should trace to the exact box exit."""
+    rng = np.random.default_rng(20260410)
+    origins = rng.uniform(-3.75, 3.75, size=(64, 3))
+    directions = rng.normal(size=(64, 3))
+    for ray_id in range(directions.shape[0]):
+        if np.linalg.norm(directions[ray_id]) <= 1.0e-12:
+            directions[ray_id] = np.array([1.0, 0.0, 0.0], dtype=float)
+        _assert_regular_ray_matches_expected_path(
+            xyz_regular_tracer,
+            np.asarray(origins[ray_id], dtype=float),
+            np.asarray(directions[ray_id], dtype=float),
+        )
+
+
+def test_trace_one_ray_kernel_walks_full_stretched_cartesian_line_exactly(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """One same-level Cartesian ray should cross all eight stretched x-cells of the one-root grid."""
+    tracer, _, _ = xyz_stretched_grid_case
+    x_edges, _, _ = _stretched_regular_edges()
+    logical_origin = np.array([-5.0, -3.5, -3.5], dtype=float)
+    origin = _stretch_regular_xyz(logical_origin)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    start_xyz = _stretch_regular_xyz(np.array([-3.5, -3.5, -3.5], dtype=float))
     start_leaf = int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
 
-    leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-        start_leaf,
+    leaf_ids, t_enter, t_exit = _assert_regular_ray_matches_expected_path(
+        tracer,
         origin,
         direction,
-        0.0,
-        np.inf,
-        tracer.trace_kernel_state(),
+        start_leaf=start_leaf,
+        expected_first_t=float(x_edges[0] - origin[0]),
+        expected_exit_xyz=np.array([x_edges[-1], origin[1], origin[2]], dtype=float),
+        expected_length=float(x_edges[-1] - x_edges[0]),
     )
 
-    assert leaf_ids.size > 0, f"no traced segments for direction={direction.tolist()}"
-    np.testing.assert_allclose(
-        t_enter[0],
-        0.0,
-        atol=1.0e-12,
-        rtol=0.0,
-        err_msg=f"bad first entry for direction={direction.tolist()}",
-    )
-    expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
-    _assert_segments_match_expected_path(
+    assert tracer.tree.root_shape == (1, 1, 1)
+    np.testing.assert_array_equal(np.unique(tracer.tree.cell_levels), np.array([3], dtype=np.int64))
+    np.testing.assert_array_equal(leaf_ids, np.arange(0, 512, 64, dtype=np.int64))
+    np.testing.assert_allclose(t_enter, x_edges[:-1] - origin[0], atol=1.0e-12, rtol=0.0)
+    np.testing.assert_allclose(t_exit, x_edges[1:] - origin[0], atol=1.0e-12, rtol=0.0)
+
+
+@pytest.mark.parametrize(
+    "direction",
+    [
+        (-1.0, -1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, 1.0, 1.0),
+        (1.0, -1.0, -1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, 1.0, -1.0),
+        (1.0, 1.0, 1.0),
+    ],
+    ids=[
+        "stretched---",
+        "stretched--+",
+        "stretched-+-",
+        "stretched-++",
+        "stretched+--",
+        "stretched+-+",
+        "stretched++-",
+        "stretched+++",
+    ],
+)
+def test_trace_one_ray_kernel_handles_all_space_diagonal_stretched_rays(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All stretched local space diagonals from one interior point should trace contiguously to the box exit."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    logical_origin = np.array([0.5, 0.5, 0.5], dtype=float)
+    logical_direction = np.array(direction, dtype=float)
+    origin = _stretch_regular_xyz(logical_origin)
+    direction_xyz = _stretched_local_direction(logical_origin, logical_origin + 0.5 * logical_direction)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
         origin,
-        direction,
-        t_enter,
-        t_exit,
-        expected_exit_xyz=expected_exit_xyz,
-        expected_length=expected_length,
+        direction_xyz,
+        start_leaf=_lookup_stretched_start_leaf(tracer, logical_origin, logical_direction),
+        box_lo=box_lo,
+        box_hi=box_hi,
     )
 
 
-def test_trace_one_ray_kernel_handles_all_regular_corner_directions_from_origin() -> None:
-    """All rays from the true mesh corner origin toward mesh corners should trace contiguously to the expected box exit."""
-    tracer = OctreeRayTracer(_build_xyz_regular_tree())
-    origin = np.array([0.0, 0.0, 0.0], dtype=float)
+@pytest.mark.parametrize(
+    "direction",
+    [
+        (-1.0, -1.0, 0.0),
+        (-1.0, 1.0, 0.0),
+        (1.0, -1.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (-1.0, 0.0, -1.0),
+        (-1.0, 0.0, 1.0),
+        (1.0, 0.0, -1.0),
+        (1.0, 0.0, 1.0),
+        (0.0, -1.0, -1.0),
+        (0.0, -1.0, 1.0),
+        (0.0, 1.0, -1.0),
+        (0.0, 1.0, 1.0),
+    ],
+    ids=[
+        "stretched-xy--",
+        "stretched-xy-+",
+        "stretched-xy+-",
+        "stretched-xy++",
+        "stretched-xz--",
+        "stretched-xz-+",
+        "stretched-xz+-",
+        "stretched-xz++",
+        "stretched-yz--",
+        "stretched-yz-+",
+        "stretched-yz+-",
+        "stretched-yz++",
+    ],
+)
+def test_trace_one_ray_kernel_handles_all_plane_diagonal_stretched_rays(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All stretched local plane diagonals from one interior point should trace contiguously to the box exit."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    logical_origin = np.array([0.5, 0.5, 0.5], dtype=float)
+    logical_direction = np.array(direction, dtype=float)
+    origin = _stretch_regular_xyz(logical_origin)
+    direction_xyz = _stretched_local_direction(logical_origin, logical_origin + 0.5 * logical_direction)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_stretched_start_leaf(tracer, logical_origin, logical_direction),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
 
-    for target in tracer.tree._points:
-        direction = np.asarray(target - origin, dtype=float)
-        if np.allclose(direction, 0.0):
-            continue
-        owner_sign = np.sign(direction)
-        start_xyz = origin + 1.0e-12 * owner_sign
-        start_leaf = int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
 
-        leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
-            start_leaf,
-            origin,
-            direction,
-            0.0,
-            np.inf,
-            tracer.trace_kernel_state(),
-        )
+def test_trace_one_ray_kernel_handles_all_stretched_corner_directions_from_cell_center(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one stretched unit-cell center toward stretched mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    _assert_stretched_corner_sweep(tracer, np.array([0.5, 0.5, 0.5], dtype=float), box_lo=box_lo, box_hi=box_hi)
 
-        assert leaf_ids.size > 0, f"no traced segments for target={target.tolist()} direction={direction.tolist()}"
-        np.testing.assert_allclose(
-            t_enter[0],
-            0.0,
-            atol=1.0e-12,
-            rtol=0.0,
-            err_msg=f"bad first entry for target={target.tolist()}",
-        )
-        expected_exit_xyz, expected_length = _expected_box_exit_and_length(origin, direction)
-        _assert_segments_match_expected_path(
-            origin,
-            direction,
-            t_enter,
-            t_exit,
-            expected_exit_xyz=expected_exit_xyz,
-            expected_length=expected_length,
-        )
+
+def test_trace_one_ray_kernel_handles_all_stretched_corner_directions_from_x_face_seam(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one stretched face-seam point toward stretched mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    _assert_stretched_corner_sweep(tracer, np.array([0.5, 0.0, 0.0], dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+def test_trace_one_ray_kernel_handles_all_stretched_corner_directions_from_xy_edge_seam(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one stretched edge-seam point toward stretched mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    _assert_stretched_corner_sweep(tracer, np.array([0.5, 0.5, 0.0], dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@pytest.mark.parametrize(
+    "direction",
+    [
+        (-1.0, -1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, 1.0, 1.0),
+        (1.0, -1.0, -1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, 1.0, -1.0),
+        (1.0, 1.0, 1.0),
+    ],
+    ids=[
+        "stretched-origin---",
+        "stretched-origin--+",
+        "stretched-origin-+-",
+        "stretched-origin-++",
+        "stretched-origin+--",
+        "stretched-origin+-+",
+        "stretched-origin++-",
+        "stretched-origin+++",
+    ],
+)
+def test_trace_one_ray_kernel_handles_origin_space_diagonal_stretched_rays(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All stretched space diagonals from the true mesh corner origin should trace contiguously to the box exit."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    logical_origin = np.array([0.0, 0.0, 0.0], dtype=float)
+    logical_direction = np.array(direction, dtype=float)
+    origin = _stretch_regular_xyz(logical_origin)
+    direction_xyz = _stretched_local_direction(logical_origin, logical_origin + logical_direction)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_stretched_start_leaf(tracer, logical_origin, logical_direction),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@pytest.mark.parametrize(
+    "direction",
+    [
+        (-1.0, -1.0, 0.0),
+        (-1.0, 1.0, 0.0),
+        (1.0, -1.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (-1.0, 0.0, -1.0),
+        (-1.0, 0.0, 1.0),
+        (1.0, 0.0, -1.0),
+        (1.0, 0.0, 1.0),
+        (0.0, -1.0, -1.0),
+        (0.0, -1.0, 1.0),
+        (0.0, 1.0, -1.0),
+        (0.0, 1.0, 1.0),
+    ],
+    ids=[
+        "stretched-origin- -0".replace(" ", ""),
+        "stretched-origin-+0",
+        "stretched-origin+-0",
+        "stretched-origin++0",
+        "stretched-origin-0-",
+        "stretched-origin-0+",
+        "stretched-origin+0-",
+        "stretched-origin+0+",
+        "stretched-origin0--",
+        "stretched-origin0-+",
+        "stretched-origin0+-",
+        "stretched-origin0++",
+    ],
+)
+def test_trace_one_ray_kernel_handles_origin_plane_diagonal_stretched_rays(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All stretched plane diagonals from the true mesh corner origin should trace contiguously to the box exit."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    logical_origin = np.array([0.0, 0.0, 0.0], dtype=float)
+    logical_direction = np.array(direction, dtype=float)
+    origin = _stretch_regular_xyz(logical_origin)
+    direction_xyz = _stretched_local_direction(logical_origin, logical_origin + logical_direction)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_stretched_start_leaf(tracer, logical_origin, logical_direction),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+def test_trace_one_ray_kernel_handles_all_stretched_corner_directions_from_origin(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from the true stretched mesh corner origin toward stretched mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    _assert_stretched_corner_sweep(tracer, np.array([0.0, 0.0, 0.0], dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@pytest.mark.parametrize(
+    "logical_origin",
+    [
+        np.array([4.0, 0.5, 0.5], dtype=float),
+        np.array([0.5, 4.0, 0.5], dtype=float),
+        np.array([0.5, 0.5, 4.0], dtype=float),
+        np.array([4.0, 4.0, 0.5], dtype=float),
+        np.array([4.0, 0.5, 4.0], dtype=float),
+        np.array([0.5, 4.0, 4.0], dtype=float),
+        np.array([4.0, 4.0, 4.0], dtype=float),
+    ],
+    ids=[
+        "stretched-boundary-x",
+        "stretched-boundary-y",
+        "stretched-boundary-z",
+        "stretched-boundary-xy",
+        "stretched-boundary-xz",
+        "stretched-boundary-yz",
+        "stretched-boundary-xyz",
+    ],
+)
+def test_trace_one_ray_kernel_handles_all_stretched_corner_directions_from_domain_boundary(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    logical_origin: np.ndarray,
+) -> None:
+    """All rays from one stretched domain-boundary point toward stretched mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    _assert_stretched_corner_sweep(tracer, logical_origin, box_lo=box_lo, box_hi=box_hi)
 
 
 def test_trace_one_ray_kernel_walks_coarse_to_fine_cells_exactly() -> None:
