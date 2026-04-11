@@ -861,23 +861,43 @@ class Octree:
         if self.tree_coord == "xyz":
             if resolved_coord != "xyz":
                 raise ValueError("Cartesian lookup supports only coord='xyz'.")
+            from .cartesian import _find_cells_xyz
+
             q_local = q
+            cell_ids = _find_cells_xyz(
+                q_local,
+                self._cell_child,
+                self._root_cell_ids,
+                self._cell_parent,
+                self._cell_bounds,
+                self._domain_bounds,
+            )
         elif resolved_coord == "rpa":
             q_local = q
+            cell_ids = _find_cells(
+                q_local,
+                self._cell_child,
+                self._root_cell_ids,
+                self._cell_parent,
+                self._cell_bounds,
+                self._domain_bounds,
+                self._axis2_period,
+                self._axis2_periodic,
+            )
         else:
             from .spherical import xyz_arrays_to_rpa
 
             q_local = np.column_stack(xyz_arrays_to_rpa(q[:, 0], q[:, 1], q[:, 2]))
-        cell_ids = _find_cells(
-            q_local,
-            self._cell_child,
-            self._root_cell_ids,
-            self._cell_parent,
-            self._cell_bounds,
-            self._domain_bounds,
-            self._axis2_period,
-            self._axis2_periodic,
-        )
+            cell_ids = _find_cells(
+                q_local,
+                self._cell_child,
+                self._root_cell_ids,
+                self._cell_parent,
+                self._cell_bounds,
+                self._domain_bounds,
+                self._axis2_period,
+                self._axis2_periodic,
+            )
         return cell_ids.reshape(shape)
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:

@@ -15,6 +15,7 @@ from .octree import START
 from .octree import WIDTH
 
 _TWO_PI = 2.0 * math.pi
+_RPA_LOOKUP_TOL = 1.0e-10
 
 
 def _attach_spherical_coord_state(
@@ -126,3 +127,27 @@ def xyz_arrays_to_rpa(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.n
         polar[valid] = np.arccos(zr)
     azimuth = np.mod(np.arctan2(y, x), _TWO_PI)
     return r, polar, azimuth
+
+
+@njit(cache=True)
+def _contains_box_rpa(
+    q: np.ndarray,
+    bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> bool:
+    """Return whether one spherical query lies in one packed box under the spherical lookup tolerance."""
+    for axis in range(AXIS2):
+        value = float(q[axis])
+        start = float(bounds[axis, START])
+        width = float(bounds[axis, WIDTH])
+        if value < (start - _RPA_LOOKUP_TOL) or value > (start + width + _RPA_LOOKUP_TOL):
+            return False
+    value = float(q[AXIS2])
+    start = float(bounds[AXIS2, START])
+    width = float(bounds[AXIS2, WIDTH])
+    if axis2_periodic:
+        if width >= (float(axis2_period) - _RPA_LOOKUP_TOL):
+            return True
+        return ((value - start) % float(axis2_period)) <= (width + _RPA_LOOKUP_TOL)
+    return value >= (start - _RPA_LOOKUP_TOL) and value <= (start + width + _RPA_LOOKUP_TOL)

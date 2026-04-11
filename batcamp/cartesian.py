@@ -9,7 +9,12 @@ Cartesian backend are exact under this axis-aligned representation.
 
 from __future__ import annotations
 import numpy as np
+from numba import njit
+from numba import prange
 
+from .octree import AXIS0
+from .octree import AXIS1
+from .octree import AXIS2
 from .octree import START
 from .octree import WIDTH
 
@@ -62,3 +67,81 @@ def _attach_cartesian_coord_state(
     domain_bounds[:, START] = xyz_min
     domain_bounds[:, WIDTH] = xyz_max - xyz_min
     return cell_bounds, domain_bounds, 0.0, False
+
+
+@njit(cache=True)
+def _contains_box_xyz(
+    q: np.ndarray,
+    bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+) -> bool:
+    """Return whether one Cartesian query lies in one exact half-open slab box."""
+    for axis in range(3):
+        value = float(q[axis])
+        start = float(bounds[axis, START])
+        stop = start + float(bounds[axis, WIDTH])
+        domain_start = float(domain_bounds[axis, START])
+        if start == domain_start:
+            if value < start or value > stop:
+                return False
+        else:
+            if value <= start or value > stop:
+                return False
+    return True
+
+
+@njit(cache=True, parallel=True)
+def _find_cells_xyz(
+    queries: np.ndarray,
+    cell_child: np.ndarray,
+    root_cell_ids: np.ndarray,
+    cell_parent: np.ndarray,
+    cell_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+) -> np.ndarray:
+    """Resolve Cartesian queries to containing cell ids using one exact slab rule."""
+    n_query = int(queries.shape[0])
+    cell_ids = np.full(n_query, -1, dtype=np.int64)
+    chunk_size = 1024
+    n_chunks = (n_query + chunk_size - 1) // chunk_size
+    for chunk_id in prange(n_chunks):
+        start = chunk_id * chunk_size
+        end = min(n_query, start + chunk_size)
+        hint_cell_id = -1
+        for i in range(start, end):
+            q = queries[i]
+            if not (np.isfinite(q[AXIS0]) and np.isfinite(q[AXIS1]) and np.isfinite(q[AXIS2])):
+                cell_id = -1
+            elif not _contains_box_xyz(q, domain_bounds, domain_bounds):
+                cell_id = -1
+            else:
+                current = int(hint_cell_id)
+                while current >= 0 and not _contains_box_xyz(q, cell_bounds[current], domain_bounds):
+                    current = int(cell_parent[current])
+
+                if current < 0:
+                    for root_pos in range(int(root_cell_ids.shape[0])):
+                        root_cell_id = int(root_cell_ids[root_pos])
+                        if _contains_box_xyz(q, cell_bounds[root_cell_id], domain_bounds):
+                            current = root_cell_id
+                            break
+                if current < 0:
+                    cell_id = -1
+                else:
+                    while np.any(cell_child[current] >= 0):
+                        next_cell_id = -1
+                        for child_ord in range(8):
+                            child_id = int(cell_child[current, child_ord])
+                            if child_id < 0:
+                                continue
+                            if _contains_box_xyz(q, cell_bounds[child_id], domain_bounds):
+                                next_cell_id = child_id
+                                break
+                        if next_cell_id < 0:
+                            current = -1
+                            break
+                        current = next_cell_id
+                    cell_id = int(current)
+            cell_ids[i] = cell_id
+            hint_cell_id = int(cell_id) if cell_id >= 0 else -1
+    return cell_ids

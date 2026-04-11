@@ -11,8 +11,9 @@ import time
 import numpy as np
 from numba import njit
 
+from .cartesian import _contains_box_xyz
 from .octree import Octree
-from .octree import _contains_box
+from .spherical import _contains_box_rpa
 from .spherical import xyz_to_rpa_components
 
 __all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image", "trace_one_ray_kernel"]
@@ -58,9 +59,8 @@ _RPA_CORNER_BITS = np.array(
     ],
     dtype=np.int8,
 )
-_EXIT_TOL = 1.0e-12
-_BOUNDARY_SHIFT_FACTOR = 1.0e-6
-_OWNERSHIP_SHIFT_FACTOR = 1.0e-6
+_EXIT_TOL = 10 ** -12
+_BOUNDARY_SHIFT_FACTOR = 10 ** -6
 _TREE_COORD_XYZ = np.int8(0)
 _TREE_COORD_RPA = np.int8(1)
 
@@ -78,7 +78,7 @@ def _normalize_ray_arrays(origins: np.ndarray, directions: np.ndarray) -> tuple[
     if not np.all(np.isfinite(d)):
         raise ValueError("directions must contain only finite values.")
     d_flat = d.reshape(-1, 3)
-    if np.any(np.linalg.norm(d_flat, axis=1) <= 0.0):
+    if np.any(np.linalg.norm(d_flat, axis=1) <= 0):
         raise ValueError("directions must be nonzero.")
     shape = (1,) if o.ndim == 1 else o.shape[:-1]
     return o.reshape(-1, 3), d_flat, shape
@@ -156,9 +156,9 @@ def _sphere_interval_kernel(origin_xyz: np.ndarray, direction_xyz: np.ndarray, r
     b = ox * dx + oy * dy + oz * dz
     c = ox * ox + oy * oy + oz * oz - rr
     disc = b * b - a * c
-    if disc < 0.0:
+    if disc < 0:
         return False, np.nan, np.nan
-    root = math.sqrt(max(0.0, disc))
+    root = math.sqrt(max(0, disc))
     t0 = (-b - root) / a
     t1 = (-b + root) / a
     if t0 <= t1:
@@ -190,7 +190,7 @@ def _seed_domain_xyz_kernel(
             da = directions[ray_id, axis]
             slab_lo = domain_lo[axis]
             slab_hi = domain_hi[axis]
-            if da == 0.0:
+            if da == 0:
                 if oa < slab_lo or oa > slab_hi:
                     hit[ray_id] = False
                 continue
@@ -208,7 +208,7 @@ def _seed_domain_xyz_kernel(
     for ray_id in range(n_rays):
         if not hit[ray_id]:
             continue
-        seed_t = 0.5 * (enter[ray_id] + exit_[ray_id])
+        seed_t = (1 / 2) * (enter[ray_id] + exit_[ray_id])
         seed_xyz[ray_id] = origins[ray_id] + seed_t * directions[ray_id]
     return seed_xyz
 
@@ -225,17 +225,17 @@ def _seed_domain_rpa_kernel(
     """Return one front-visible spherical shell seed per flat ray."""
     n_rays = int(origins.shape[0])
     seed_xyz = np.full((n_rays, 3), np.nan, dtype=np.float64)
-    tol = 1e-12 * max(r_max, 1.0)
+    tol = _EXIT_TOL * max(r_max, 1)
 
     for ray_id in range(n_rays):
         hit_outer, t_outer0, t_outer1 = _sphere_interval_kernel(origins[ray_id], directions[ray_id], r_max)
         if not hit_outer:
             continue
-        visible_start = max(0.0, t_outer0)
+        visible_start = max(0, t_outer0)
         visible_end = t_outer1
         if visible_end < visible_start:
             continue
-        if r_min > 0.0:
+        if r_min > 0:
             hit_inner, t_inner0, t_inner1 = _sphere_interval_kernel(origins[ray_id], directions[ray_id], r_min)
             if hit_inner and t_inner1 >= visible_start:
                 if t_inner0 > visible_start:
@@ -260,7 +260,7 @@ def _seed_domain_rpa_kernel(
         ):
             seed_t = t_closest
         if not np.isfinite(seed_t):
-            r_seed = 0.5 * (r_min + r_max)
+            r_seed = (1 / 2) * (r_min + r_max)
             hit_seed, t_seed0, t_seed1 = _sphere_interval_kernel(origins[ray_id], directions[ray_id], r_seed)
             if hit_seed:
                 if t_seed0 >= (visible_start - tol) and t_seed0 <= (visible_end + tol):
@@ -269,7 +269,7 @@ def _seed_domain_rpa_kernel(
                     if (not np.isfinite(seed_t)) or (t_seed1 < seed_t):
                         seed_t = t_seed1
         if not np.isfinite(seed_t):
-            seed_t = 0.5 * (visible_start + visible_end)
+            seed_t = (1 / 2) * (visible_start + visible_end)
         seed_xyz[ray_id] = origins[ray_id] + seed_t * directions[ray_id]
     return seed_xyz
 
@@ -296,17 +296,50 @@ def _lookup_xyz_leaf_kernel(
 
     if not (np.isfinite(q[0]) and np.isfinite(q[1]) and np.isfinite(q[2])):
         return -1
-    if not _contains_box(q, domain_bounds, axis2_period, axis2_periodic, 0.0):
+    current = int(hint_cell_id)
+    if tree_coord_code == _TREE_COORD_XYZ:
+        if not _contains_box_xyz(q, domain_bounds, domain_bounds):
+            return -1
+
+        while current >= 0 and not _contains_box_xyz(q, cell_bounds[current], domain_bounds):
+            current = int(cell_parent[current])
+
+        if current < 0:
+            for root_pos in range(int(root_cell_ids.shape[0])):
+                root_cell_id = int(root_cell_ids[root_pos])
+                if _contains_box_xyz(q, cell_bounds[root_cell_id], domain_bounds):
+                    current = root_cell_id
+                    break
+        if current < 0:
+            return -1
+
+        while True:
+            next_cell_id = -1
+            has_child = False
+            for child_ord in range(8):
+                child_id = int(cell_child[current, child_ord])
+                if child_id < 0:
+                    continue
+                has_child = True
+                if _contains_box_xyz(q, cell_bounds[child_id], domain_bounds):
+                    next_cell_id = child_id
+                    break
+            if not has_child:
+                return int(current)
+            if next_cell_id < 0:
+                return -1
+            current = int(next_cell_id)
+
+    if not _contains_box_rpa(q, domain_bounds, axis2_period, axis2_periodic):
         return -1
 
-    current = int(hint_cell_id)
-    while current >= 0 and not _contains_box(q, cell_bounds[current], axis2_period, axis2_periodic, 1.0e-10):
+    while current >= 0 and not _contains_box_rpa(q, cell_bounds[current], axis2_period, axis2_periodic):
         current = int(cell_parent[current])
 
     if current < 0:
         for root_pos in range(int(root_cell_ids.shape[0])):
             root_cell_id = int(root_cell_ids[root_pos])
-            if _contains_box(q, cell_bounds[root_cell_id], axis2_period, axis2_periodic, 1.0e-10):
+            if _contains_box_rpa(q, cell_bounds[root_cell_id], axis2_period, axis2_periodic):
                 current = root_cell_id
                 break
     if current < 0:
@@ -320,7 +353,7 @@ def _lookup_xyz_leaf_kernel(
             if child_id < 0:
                 continue
             has_child = True
-            if _contains_box(q, cell_bounds[child_id], axis2_period, axis2_periodic, 1.0e-10):
+            if _contains_box_rpa(q, cell_bounds[child_id], axis2_period, axis2_periodic):
                 next_cell_id = child_id
                 break
         if not has_child:
@@ -329,39 +362,6 @@ def _lookup_xyz_leaf_kernel(
             return -1
         current = int(next_cell_id)
 
-
-@njit(cache=True)
-def _probe_neighbor_leaf_from_direction_kernel(
-    point_xyz: np.ndarray,
-    direction_xyz: np.ndarray,
-    point_scale: float,
-    hint_cell_id: int,
-    tree_coord_code: int,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_parent: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    axis2_period: float,
-    axis2_periodic: bool,
-) -> int:
-    """Probe slightly forward from one boundary point and resolve the owning leaf."""
-    direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
-    if direction_norm <= 0.0:
-        return -1
-    probe_xyz = point_xyz + ((_BOUNDARY_SHIFT_FACTOR * max(1.0, point_scale)) / direction_norm) * direction_xyz
-    return _lookup_xyz_leaf_kernel(
-        probe_xyz,
-        hint_cell_id,
-        tree_coord_code,
-        cell_child,
-        root_cell_ids,
-        cell_parent,
-        cell_bounds,
-        domain_bounds,
-        axis2_period,
-        axis2_periodic,
-    )
 
 @njit(cache=True)
 def _probe_neighbor_leaf_from_normal_kernel(
@@ -380,9 +380,9 @@ def _probe_neighbor_leaf_from_normal_kernel(
 ) -> int:
     """Probe slightly across one face normal and resolve the owning leaf."""
     normal_norm = math.sqrt(_dot3(normal_xyz, normal_xyz))
-    if normal_norm <= 0.0:
+    if normal_norm <= 0:
         return -1
-    probe_xyz = point_xyz + ((_BOUNDARY_SHIFT_FACTOR * max(1.0, point_scale)) / normal_norm) * normal_xyz
+    probe_xyz = point_xyz + ((_BOUNDARY_SHIFT_FACTOR * max(1, point_scale)) / normal_norm) * normal_xyz
     return _lookup_xyz_leaf_kernel(
         probe_xyz,
         hint_cell_id,
@@ -395,32 +395,13 @@ def _probe_neighbor_leaf_from_normal_kernel(
         axis2_period,
         axis2_periodic,
     )
-
-
-@njit(cache=True)
-def _boundary_probe_direction_kernel(
-    direction_xyz: np.ndarray,
-    face_normal: np.ndarray,
-    active_face_mask: int,
-) -> np.ndarray:
-    """Return one forward ownership probe direction with one small outward boundary bias."""
-    probe_direction = np.empty(3, dtype=np.float64)
-    probe_direction[0] = direction_xyz[0]
-    probe_direction[1] = direction_xyz[1]
-    probe_direction[2] = direction_xyz[2]
-    for face_id in range(6):
-        if (active_face_mask & (1 << face_id)) != 0:
-            probe_direction += face_normal[face_id]
-    return probe_direction
-
-
 @njit(cache=True)
 def _wrapped_coord_delta(value: float, target: float, period: float, periodic: bool) -> float:
     """Return one coordinate difference, wrapped onto the principal interval when periodic."""
     delta = value - target
-    if not periodic or period <= 0.0:
+    if not periodic or period <= 0:
         return delta
-    half_period = 0.5 * period
+    half_period = (1 / 2) * period
     while delta <= -half_period:
         delta += period
     while delta > half_period:
@@ -449,7 +430,7 @@ def _point_on_cell_face_kernel(
     face_width = float(cell_bounds[cell_id, axis, 1])
     face_stop = face_start + face_width
     coord_value = float(point_coord[axis])
-    tol = _EXIT_TOL * max(1.0, abs(face_start), abs(face_stop), abs(face_width))
+    tol = _EXIT_TOL * max(1, abs(face_start), abs(face_stop), abs(face_width))
     if axis == 2:
         face_delta = _wrapped_coord_delta(coord_value, face_start if side == 0 else face_stop, axis2_period, axis2_periodic)
     else:
@@ -475,19 +456,13 @@ def _face_exit_subface_kernel(face_patch_center: np.ndarray, point_xyz: np.ndarr
 def _resolve_boundary_owner_leaf_kernel(
     current_leaf: int,
     point_xyz: np.ndarray,
-    direction_xyz: np.ndarray,
     face_normal: np.ndarray,
     face_patch_center: np.ndarray,
     active_face_mask: int,
     leaf_valid: np.ndarray,
     next_cell: np.ndarray,
-    leaf_scales: np.ndarray,
     tree_coord_code: int,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_parent: np.ndarray,
     cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
     axis2_period: float,
     axis2_periodic: bool,
 ) -> int:
@@ -518,35 +493,6 @@ def _resolve_boundary_owner_leaf_kernel(
             return -1
     if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell] and candidate_cell != current_leaf:
         return int(candidate_cell)
-
-    probe_direction = _boundary_probe_direction_kernel(direction_xyz, face_normal[current_leaf], active_face_mask)
-    direction_norm = math.sqrt(_dot3(probe_direction, probe_direction))
-    if direction_norm <= 0.0:
-        return -1
-    probe_scale = 0.0
-    for axis in range(3):
-        width = float(cell_bounds[candidate_cell, axis, 1])
-        if width > probe_scale:
-            probe_scale = width
-    if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
-        probe_scale = float(leaf_scales[candidate_cell])
-    if probe_scale <= 0.0:
-        return -1
-    probe_xyz = point_xyz + ((_OWNERSHIP_SHIFT_FACTOR * probe_scale) / direction_norm) * probe_direction
-    candidate_leaf = _lookup_xyz_leaf_kernel(
-        probe_xyz,
-        candidate_cell,
-        tree_coord_code,
-        cell_child,
-        root_cell_ids,
-        cell_parent,
-        cell_bounds,
-        domain_bounds,
-        axis2_period,
-        axis2_periodic,
-    )
-    if candidate_leaf >= 0 and candidate_leaf != current_leaf:
-        return int(candidate_leaf)
     return -1
 
 
@@ -570,7 +516,7 @@ def _point_inside_face_kernel(
     if all_nonnegative or all_nonpositive:
         return True
 
-    edge_scale = 0.0
+    edge_scale = 0
     for edge_id in range(4):
         p0 = face_xyz[edge_id]
         p1 = face_xyz[(edge_id + 1) % 4]
@@ -578,20 +524,20 @@ def _point_inside_face_kernel(
         edge_len = math.sqrt(_dot3(edge, edge))
         if edge_len > edge_scale:
             edge_scale = edge_len
-    edge_tol = max(tol, (2.0 * _BOUNDARY_SHIFT_FACTOR) * max(1.0, edge_scale))
+    edge_tol = max(tol, (2 * _BOUNDARY_SHIFT_FACTOR) * max(1, edge_scale))
     for edge_id in range(4):
         p0 = face_xyz[edge_id]
         p1 = face_xyz[(edge_id + 1) % 4]
         edge = p1 - p0
         edge_sq = _dot3(edge, edge)
-        if edge_sq <= 0.0:
+        if edge_sq <= 0:
             closest_xyz = p0
         else:
             weight = _dot3(point_xyz - p0, edge) / edge_sq
-            if weight < 0.0:
-                weight = 0.0
-            elif weight > 1.0:
-                weight = 1.0
+            if weight < 0:
+                weight = 0
+            elif weight > 1:
+                weight = 1
             closest_xyz = p0 + weight * edge
         if math.sqrt(_dot3(point_xyz - closest_xyz, point_xyz - closest_xyz)) <= edge_tol:
             return True
@@ -626,7 +572,7 @@ def _solve_cell_segment_kernel(
     t_min: float,
 ) -> tuple[bool, float, float, int, int]:
     """Return one forward cell segment plus one active exit-face mask, or `(False, ...)` if unresolved."""
-    point_tol = _EXIT_TOL * max(1.0, leaf_scale)
+    point_tol = _EXIT_TOL * max(1, leaf_scale)
     inside_now = _point_inside_cell_kernel(
         face_normal,
         face_plane_d,
@@ -664,7 +610,7 @@ def _solve_cell_segment_kernel(
             hit_face[i] = hit_face[best]
             hit_face[best] = swap_face
 
-    enter_tol = _EXIT_TOL * max(1.0, abs(current_t))
+    enter_tol = _EXIT_TOL * max(1, abs(current_t))
     segment_enter = current_t if inside_now else np.nan
     exit_t = np.nan
     exit_face = -1
@@ -694,7 +640,7 @@ def _solve_cell_segment_kernel(
     if exit_t <= segment_enter:
         return False, np.nan, np.nan, -1, -1
 
-    exit_tol = _EXIT_TOL * max(1.0, abs(exit_t))
+    exit_tol = _EXIT_TOL * max(1, abs(exit_t))
     active_face_mask = 0
     for hit_id in range(hit_count):
         if abs(hit_t[hit_id] - exit_t) <= exit_tol:
@@ -734,9 +680,9 @@ def _cell_segment_trace_kernel(
         return True, segment_enter, exit_t, exit_face, active_face_mask
 
     direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
-    if direction_norm <= 0.0:
+    if direction_norm <= 0:
         return False, np.nan, np.nan, -1, -1
-    boundary_shift = (_BOUNDARY_SHIFT_FACTOR * max(1.0, leaf_scale)) / direction_norm
+    boundary_shift = (_BOUNDARY_SHIFT_FACTOR * max(1, leaf_scale)) / direction_norm
     ok, segment_enter, exit_t, exit_face, active_face_mask = _solve_cell_segment_kernel(
         face_xyz,
         face_normal,
@@ -776,7 +722,7 @@ def _touching_neighbor_leaves_kernel(
     """Return unique neighboring leaves whose cells touch one boundary point of one leaf."""
     neighbors = np.full(24, -1, dtype=np.int64)
     count = 0
-    point_tol = _EXIT_TOL * max(1.0, leaf_scales[leaf_id])
+    point_tol = _EXIT_TOL * max(1, leaf_scales[leaf_id])
     for face_id in range(6):
         normal_xyz = face_normal[leaf_id, face_id]
         face_distance = _dot3(normal_xyz, point_xyz) - face_plane_d[leaf_id, face_id]
@@ -838,13 +784,13 @@ def _rpa_axis_candidate_leaves_kernel(
         return candidates, count
 
     radial_xy = math.hypot(point_xyz[0], point_xyz[1])
-    radial_scale = max(math.sqrt(_dot3(point_xyz, point_xyz)), 1.0)
+    radial_scale = max(math.sqrt(_dot3(point_xyz, point_xyz)), 1)
     axis_tol = _BOUNDARY_SHIFT_FACTOR * radial_scale
     if radial_xy > axis_tol:
         return candidates, count
 
     direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
-    if direction_norm > 0.0:
+    if direction_norm > 0:
         probe_xyz = point_xyz + ((_BOUNDARY_SHIFT_FACTOR * radial_scale) / direction_norm) * direction_xyz
         forward_leaf = _lookup_xyz_leaf_kernel(
             probe_xyz,
@@ -863,14 +809,14 @@ def _rpa_axis_candidate_leaves_kernel(
             count += 1
 
     r_value = math.sqrt(_dot3(point_xyz, point_xyz))
-    polar_center = 0.5 * (math.pi / float(n_polar))
-    if point_xyz[2] < 0.0:
+    polar_center = (1 / 2) * (math.pi / float(n_polar))
+    if point_xyz[2] < 0:
         polar_center = math.pi - polar_center
     sin_polar = math.sin(polar_center)
     cos_polar = math.cos(polar_center)
-    azimuth_width = (2.0 * math.pi) / float(n_azimuth)
+    azimuth_width = (2 * math.pi) / float(n_azimuth)
     for azimuth_id in range(n_azimuth):
-        azimuth_center = (float(azimuth_id) + 0.5) * azimuth_width
+        azimuth_center = (float(azimuth_id) + (1 / 2)) * azimuth_width
         query_xyz = np.empty(3, dtype=np.float64)
         query_xyz[0] = r_value * sin_polar * math.cos(azimuth_center)
         query_xyz[1] = r_value * sin_polar * math.sin(azimuth_center)
@@ -913,96 +859,6 @@ def _append_unique_leaf_id(candidates: np.ndarray, count: int, leaf_id: int) -> 
 
 
 @njit(cache=True)
-def _best_continuation_leaf_kernel(
-    candidate_leaf_ids: np.ndarray,
-    candidate_count: int,
-    point_xyz: np.ndarray,
-    direction_xyz: np.ndarray,
-    exclude_leaf_id: int,
-    face_xyz: np.ndarray,
-    face_normal: np.ndarray,
-    face_plane_d: np.ndarray,
-    face_edge_normal: np.ndarray,
-    face_edge_d: np.ndarray,
-    leaf_scales: np.ndarray,
-) -> int:
-    """Return the best directly valid continuation leaf from one small candidate set."""
-    if candidate_count <= 0:
-        return -1
-
-    valid_enter = np.empty(candidate_count, dtype=np.float64)
-    valid_length = np.empty(candidate_count, dtype=np.float64)
-    valid_exit = np.empty(candidate_count, dtype=np.float64)
-    valid_leaf_ids = np.empty(candidate_count, dtype=np.int64)
-    valid_count = 0
-    max_length = 0.0
-
-    for idx in range(candidate_count):
-        leaf_id = int(candidate_leaf_ids[idx])
-        if leaf_id < 0 or leaf_id == exclude_leaf_id:
-            continue
-        ok, segment_enter, segment_exit, _, _ = _cell_segment_trace_kernel(
-            face_xyz[leaf_id],
-            face_normal[leaf_id],
-            face_plane_d[leaf_id],
-            face_edge_normal[leaf_id],
-            face_edge_d[leaf_id],
-            leaf_scales[leaf_id],
-            point_xyz,
-            direction_xyz,
-            0.0,
-            0.0,
-        )
-        if not ok:
-            continue
-        length = segment_exit - segment_enter
-        valid_enter[valid_count] = segment_enter
-        valid_length[valid_count] = length
-        valid_exit[valid_count] = segment_exit
-        valid_leaf_ids[valid_count] = leaf_id
-        valid_count += 1
-        if length > max_length:
-            max_length = length
-
-    if valid_count == 0:
-        return -1
-
-    min_length = 1.0e-6 * max_length
-    use_noncollapsed = False
-    for idx in range(valid_count):
-        if valid_length[idx] > min_length:
-            use_noncollapsed = True
-            break
-
-    best_idx = -1
-    for idx in range(valid_count):
-        if use_noncollapsed and valid_length[idx] <= min_length:
-            continue
-        if best_idx < 0:
-            best_idx = idx
-            continue
-        if valid_enter[idx] < valid_enter[best_idx]:
-            best_idx = idx
-            continue
-        if valid_enter[idx] > valid_enter[best_idx]:
-            continue
-        if valid_length[idx] > valid_length[best_idx]:
-            best_idx = idx
-            continue
-        if valid_length[idx] < valid_length[best_idx]:
-            continue
-        if valid_exit[idx] > valid_exit[best_idx]:
-            best_idx = idx
-            continue
-        if valid_exit[idx] < valid_exit[best_idx]:
-            continue
-        if valid_leaf_ids[idx] < valid_leaf_ids[best_idx]:
-            best_idx = idx
-
-    return int(valid_leaf_ids[best_idx])
-
-
-@njit(cache=True)
 def _boundary_continuation_leaf_kernel(
     initial_leaf_ids: np.ndarray,
     initial_count: int,
@@ -1033,6 +889,9 @@ def _boundary_continuation_leaf_kernel(
     head = 0
     tail = 0
     visited = np.zeros(leaf_valid.shape[0], dtype=np.bool_)
+    direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
+    if direction_norm <= 0:
+        return -1
     for idx in range(initial_count):
         leaf_id = int(initial_leaf_ids[idx])
         if leaf_id >= 0:
@@ -1044,7 +903,6 @@ def _boundary_continuation_leaf_kernel(
     valid_exit = np.empty(leaf_valid.shape[0], dtype=np.float64)
     valid_leaf_ids = np.empty(leaf_valid.shape[0], dtype=np.int64)
     valid_count = 0
-    max_length = 0.0
 
     while head < tail:
         leaf_id = int(queue[head])
@@ -1061,19 +919,17 @@ def _boundary_continuation_leaf_kernel(
             leaf_scales[leaf_id],
             point_xyz,
             direction_xyz,
-            0.0,
-            0.0,
+            0,
+            0,
         )
         if ok:
             if leaf_id != exclude_leaf_id:
-                length = segment_exit - segment_enter
-                valid_enter[valid_count] = segment_enter
-                valid_length[valid_count] = length
+                enter_floor = (_BOUNDARY_SHIFT_FACTOR * max(1, leaf_scales[leaf_id])) / direction_norm
+                valid_enter[valid_count] = 0 if segment_enter <= enter_floor else segment_enter
+                valid_length[valid_count] = segment_exit - segment_enter
                 valid_exit[valid_count] = segment_exit
                 valid_leaf_ids[valid_count] = leaf_id
                 valid_count += 1
-                if length > max_length:
-                    max_length = length
                 continue
         touching, touching_count = _touching_neighbor_leaves_kernel(
             leaf_id,
@@ -1113,7 +969,7 @@ def _boundary_continuation_leaf_kernel(
             domain_bounds,
             axis2_period,
             axis2_periodic,
-        )
+            )
         for idx in range(axis_count):
             leaf_id = int(axis_candidates[idx])
             if leaf_id < 0 or visited[leaf_id] or leaf_id == exclude_leaf_id:
@@ -1127,33 +983,22 @@ def _boundary_continuation_leaf_kernel(
                 leaf_scales[leaf_id],
                 point_xyz,
                 direction_xyz,
-                0.0,
-                0.0,
+                0,
+                0,
             )
             if ok:
-                length = segment_exit - segment_enter
-                valid_enter[valid_count] = segment_enter
-                valid_length[valid_count] = length
+                enter_floor = (_BOUNDARY_SHIFT_FACTOR * max(1, leaf_scales[leaf_id])) / direction_norm
+                valid_enter[valid_count] = 0 if segment_enter <= enter_floor else segment_enter
+                valid_length[valid_count] = segment_exit - segment_enter
                 valid_exit[valid_count] = segment_exit
                 valid_leaf_ids[valid_count] = leaf_id
                 valid_count += 1
-                if length > max_length:
-                    max_length = length
 
     if valid_count == 0:
         return -1
 
-    min_length = 1.0e-6 * max_length
-    use_noncollapsed = False
-    for idx in range(valid_count):
-        if valid_length[idx] > min_length:
-            use_noncollapsed = True
-            break
-
     best_idx = -1
     for idx in range(valid_count):
-        if use_noncollapsed and valid_length[idx] <= min_length:
-            continue
         if best_idx < 0:
             best_idx = idx
             continue
@@ -1357,7 +1202,7 @@ def _trace_one_ray_kernel(
         )
         if not ok:
             break
-        zero_length_tol = _EXIT_TOL * max(1.0, abs(segment_enter), abs(exit_t))
+        zero_length_tol = _EXIT_TOL * max(1, abs(segment_enter), abs(exit_t))
         if segment_enter >= t_max:
             break
         zero_length_step = exit_t <= (segment_enter + zero_length_tol)
@@ -1374,7 +1219,7 @@ def _trace_one_ray_kernel(
             for face_id in range(6):
                 if (active_face_mask & (1 << face_id)) == 0:
                     continue
-                if _dot3(direction_xyz, face_normal[current_leaf, face_id]) > 0.0:
+                if _dot3(direction_xyz, face_normal[current_leaf, face_id]) > 0:
                     handoff_face_mask |= 1 << face_id
             next_leaf_id = -1
             if handoff_face_mask != 0:
@@ -1397,19 +1242,13 @@ def _trace_one_ray_kernel(
             next_leaf_id = _resolve_boundary_owner_leaf_kernel(
                 current_leaf,
                 exit_xyz,
-                direction_xyz,
                 face_normal,
                 face_patch_center,
                 active_face_mask,
                 leaf_valid,
                 next_cell,
-                leaf_scales,
                 tree_coord_code,
-                cell_child,
-                root_cell_ids,
-                cell_parent,
                 cell_bounds,
-                domain_bounds,
                 axis2_period,
                 axis2_periodic,
             )
@@ -1598,13 +1437,13 @@ def _trace_rays_kernel(
             axis2_periodic,
         )
 
-        backward_limit = max(0.0, t_seed - clip_lo)
-        if backward_limit > 0.0 and backward_leaf >= 0:
+        backward_limit = max(0, t_seed - clip_lo)
+        if backward_limit > 0 and backward_leaf >= 0:
             back_leaf_ids_local, back_enter_local, back_exit_local = _trace_one_ray_kernel(
                 int(backward_leaf),
                 seed,
                 -direction,
-                0.0,
+                0,
                 float(backward_limit),
                 leaf_valid,
                 face_xyz,
@@ -1630,13 +1469,13 @@ def _trace_rays_kernel(
             back_enter_local = np.empty(0, dtype=np.float64)
             back_exit_local = np.empty(0, dtype=np.float64)
 
-        forward_limit = max(0.0, t_hi - t_seed)
-        if forward_limit > 0.0 and forward_leaf >= 0:
+        forward_limit = max(0, t_hi - t_seed)
+        if forward_limit > 0 and forward_leaf >= 0:
             forward_leaf_ids_local, forward_enter_local, forward_exit_local = _trace_one_ray_kernel(
                 int(forward_leaf),
                 seed,
                 direction,
-                0.0,
+                0,
                 float(forward_limit),
                 leaf_valid,
                 face_xyz,
@@ -1667,7 +1506,7 @@ def _trace_rays_kernel(
         if forward_count > 1:
             direction_norm = math.sqrt(direction_norm_sq)
             tail_leaf_id = int(forward_leaf_ids_local[forward_count - 1])
-            tail_floor = (_BOUNDARY_SHIFT_FACTOR * max(1.0, leaf_scales[tail_leaf_id])) / direction_norm
+            tail_floor = (_BOUNDARY_SHIFT_FACTOR * max(1, leaf_scales[tail_leaf_id])) / direction_norm
             tail_length = float(forward_exit_local[forward_count - 1] - forward_enter_local[forward_count - 1])
             if tail_length <= tail_floor:
                 forward_count -= 1
@@ -1675,7 +1514,7 @@ def _trace_rays_kernel(
         if back_count > 0 and forward_count > 0 and back_leaf_ids_local[0] == forward_leaf_ids_local[0]:
             back_last_exit = t_seed - back_enter_local[0]
             forward_first_enter = t_seed + forward_enter_local[0]
-            join_tol = _EXIT_TOL * max(1.0, abs(back_last_exit), abs(forward_first_enter))
+            join_tol = _EXIT_TOL * max(1, abs(back_last_exit), abs(forward_first_enter))
             joined = abs(back_last_exit - forward_first_enter) <= join_tol
 
         back_stop = 0 if joined else -1
@@ -1772,12 +1611,12 @@ class OctreeRayTracer:
         if resolved_tree_coord == "xyz":
             face_corners = _build_face_corner_order(_XYZ_CORNER_BITS)
             tree_coord_code = int(_TREE_COORD_XYZ)
-            axis2_period = 0.0
+            axis2_period = 0
             axis2_periodic = False
         elif resolved_tree_coord == "rpa":
             face_corners = _build_face_corner_order(_RPA_CORNER_BITS)
             tree_coord_code = int(_TREE_COORD_RPA)
-            axis2_period = 2.0 * math.pi
+            axis2_period = 2 * math.pi
             axis2_periodic = True
         else:
             raise NotImplementedError(f"Unsupported tree_coord '{tree.tree_coord}' for OctreeRayTracer.")
@@ -1806,19 +1645,19 @@ class OctreeRayTracer:
             seed_domain_r_min = np.nan
             seed_domain_r_max = np.nan
         else:
-            if not np.isclose(float(domain_lo[1]), 0.0, atol=1e-12, rtol=0.0):
+            if not np.isclose(float(domain_lo[1]), 0, atol=_EXIT_TOL, rtol=0):
                 raise NotImplementedError("seed_domain for rpa currently requires polar_min == 0.")
-            if not np.isclose(float(domain_hi[1]), math.pi, atol=1e-12, rtol=0.0):
+            if not np.isclose(float(domain_hi[1]), math.pi, atol=_EXIT_TOL, rtol=0):
                 raise NotImplementedError("seed_domain for rpa currently requires polar_max == pi.")
-            if not np.isclose(float(domain_lo[2]), 0.0, atol=1e-12, rtol=0.0):
+            if not np.isclose(float(domain_lo[2]), 0, atol=_EXIT_TOL, rtol=0):
                 raise NotImplementedError("seed_domain for rpa currently requires azimuth_start == 0.")
-            if not np.isclose(float(domain_hi[2] - domain_lo[2]), 2.0 * math.pi, atol=1e-12, rtol=0.0):
+            if not np.isclose(float(domain_hi[2] - domain_lo[2]), 2 * math.pi, atol=_EXIT_TOL, rtol=0):
                 raise NotImplementedError("seed_domain for rpa currently requires full 2pi azimuth coverage.")
             seed_domain_xyz_lo = np.full(3, np.nan, dtype=np.float64)
             seed_domain_xyz_hi = np.full(3, np.nan, dtype=np.float64)
             seed_domain_r_min = float(domain_lo[0])
             seed_domain_r_max = float(domain_hi[0])
-            if seed_domain_r_min < 0.0 or seed_domain_r_max <= seed_domain_r_min:
+            if seed_domain_r_min < 0 or seed_domain_r_max <= seed_domain_r_min:
                 raise ValueError(
                     f"Invalid spherical domain radii r_min={seed_domain_r_min}, r_max={seed_domain_r_max}."
                 )
@@ -1841,8 +1680,8 @@ class OctreeRayTracer:
         valid_face_xyz = cell_xyz[:, face_corners, :]
         valid_face_normal = np.cross(valid_face_xyz[:, :, 1] - valid_face_xyz[:, :, 0], valid_face_xyz[:, :, 2] - valid_face_xyz[:, :, 1])
         valid_face_center = np.mean(valid_face_xyz, axis=2)
-        normal_flip = np.sum(valid_face_normal * (valid_face_center - leaf_centers[:, None, :]), axis=2) < 0.0
-        valid_face_normal[normal_flip] *= -1.0
+        normal_flip = np.sum(valid_face_normal * (valid_face_center - leaf_centers[:, None, :]), axis=2) < 0
+        valid_face_normal[normal_flip] *= -1
         valid_face_plane_d = np.sum(valid_face_normal * valid_face_xyz[:, :, 0, :], axis=2)
 
         valid_edge_p0 = valid_face_xyz
@@ -1850,17 +1689,17 @@ class OctreeRayTracer:
         valid_edge_vec = valid_edge_p1 - valid_edge_p0
         valid_face_edge_normal = np.cross(valid_edge_vec, valid_face_normal[:, :, None, :])
         valid_face_edge_ref = valid_face_center[:, :, None, :] - valid_edge_p0
-        edge_flip = np.sum(valid_face_edge_normal * valid_face_edge_ref, axis=3) < 0.0
-        valid_face_edge_normal[edge_flip] *= -1.0
+        edge_flip = np.sum(valid_face_edge_normal * valid_face_edge_ref, axis=3) < 0
+        valid_face_edge_normal[edge_flip] *= -1
         valid_face_edge_d = np.sum(valid_face_edge_normal * valid_edge_p0, axis=3)
 
-        subface_u = np.array([0.25, 0.25, 0.75, 0.75], dtype=np.float64)
-        subface_v = np.array([0.25, 0.75, 0.25, 0.75], dtype=np.float64)
+        subface_u = np.array([1 / 4, 1 / 4, 3 / 4, 3 / 4], dtype=np.float64)
+        subface_v = np.array([1 / 4, 3 / 4, 1 / 4, 3 / 4], dtype=np.float64)
         valid_face_patch_center = (
-            ((1.0 - subface_u)[None, None, :, None] * (1.0 - subface_v)[None, None, :, None]) * valid_face_xyz[:, :, None, 0, :]
-            + ((1.0 - subface_u)[None, None, :, None] * subface_v[None, None, :, None]) * valid_face_xyz[:, :, None, 1, :]
+            ((1 - subface_u)[None, None, :, None] * (1 - subface_v)[None, None, :, None]) * valid_face_xyz[:, :, None, 0, :]
+            + ((1 - subface_u)[None, None, :, None] * subface_v[None, None, :, None]) * valid_face_xyz[:, :, None, 1, :]
             + (subface_u[None, None, :, None] * subface_v[None, None, :, None]) * valid_face_xyz[:, :, None, 2, :]
-            + (subface_u[None, None, :, None] * (1.0 - subface_v)[None, None, :, None]) * valid_face_xyz[:, :, None, 3, :]
+            + (subface_u[None, None, :, None] * (1 - subface_v)[None, None, :, None]) * valid_face_xyz[:, :, None, 3, :]
         )
 
         face_xyz[valid_leaf_ids] = valid_face_xyz
@@ -1942,7 +1781,7 @@ class OctreeRayTracer:
                 np.concatenate((backward_t_exit, forward_t_exit)),
             )
 
-        join_tol = _EXIT_TOL * max(1.0, abs(float(backward_t_exit[-1])), abs(float(forward_t_enter[0])))
+        join_tol = _EXIT_TOL * max(1, abs(float(backward_t_exit[-1])), abs(float(forward_t_enter[0])))
         if abs(float(backward_t_exit[-1]) - float(forward_t_enter[0])) > join_tol:
             return (
                 np.concatenate((backward_leaf_ids, forward_leaf_ids)),
@@ -1961,7 +1800,7 @@ class OctreeRayTracer:
         directions: np.ndarray,
         *,
         seed_xyz: np.ndarray | None = None,
-        t_min: float = 0.0,
+        t_min: float = 0,
         t_max: float = np.inf,
     ) -> RaySegments:
         """Trace one batch of seeded rays and return packed per-cell intervals."""
@@ -1980,7 +1819,7 @@ class OctreeRayTracer:
             if seed_xyz is None
             else self._normalize_seed(seed_xyz, ray_shape)
         )
-        clip_lo = max(0.0, t_lo)
+        clip_lo = max(0, t_lo)
         ray_offsets, cell_ids, t_enter, t_exit = _trace_rays_kernel(
             o_flat,
             d_flat,
@@ -2002,7 +1841,7 @@ class OctreeRayTracer:
         origins: np.ndarray,
         directions: np.ndarray,
         *,
-        t_min: float = 0.0,
+        t_min: float = 0,
         t_max: float = np.inf,
     ) -> np.ndarray:
         """Return one in-domain seed point per ray, or `NaN` for misses.
@@ -2028,7 +1867,7 @@ class OctreeRayTracer:
             raise ValueError("t_max must be greater than or equal to t_min.")
 
         o_flat, d_flat, shape = _normalize_ray_arrays(origins, directions)
-        clip_lo = max(0.0, t_lo)
+        clip_lo = max(0, t_lo)
         (
             tree_coord_code,
             seed_domain_xyz_lo,
@@ -2091,7 +1930,7 @@ def render_midpoint_image(
 
     counts = np.diff(segments.ray_offsets)
     ray_ids = np.repeat(np.arange(n_rays, dtype=np.int64), counts)
-    mid_t = 0.5 * (segments.t_enter + segments.t_exit)
+    mid_t = (1 / 2) * (segments.t_enter + segments.t_exit)
     mid_xyz = o_flat[ray_ids] + mid_t[:, None] * d_flat[ray_ids]
     samples = np.asarray(interpolator(mid_xyz, query_coord="xyz", log_outside_domain=False), dtype=np.float64)
     samples_2d = samples.reshape(samples.shape[0], -1)
