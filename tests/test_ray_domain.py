@@ -269,18 +269,48 @@ def _assert_segments_match_expected_path(
     *,
     expected_exit_xyz: np.ndarray,
     expected_length: float,
+    atol: float = 1.0e-12,
 ) -> None:
     """Assert that traced segments are contiguous and match one expected geometric path."""
-    assert t_enter.size == t_exit.size
-    assert np.all(t_exit > t_enter)
-    np.testing.assert_allclose(t_enter[1:], t_exit[:-1], atol=1.0e-12, rtol=0.0)
-    np.testing.assert_allclose(origin + t_exit[-1] * direction, expected_exit_xyz, atol=1.0e-12, rtol=0.0)
+    _assert_segments_form_one_ray(origin, direction, t_enter, t_exit, atol=atol)
+    np.testing.assert_allclose(origin + t_exit[-1] * direction, expected_exit_xyz, atol=atol, rtol=0.0)
     np.testing.assert_allclose(
         float(np.sum((t_exit - t_enter) * np.linalg.norm(direction))),
         expected_length,
-        atol=1.0e-12,
+        atol=atol,
         rtol=0.0,
     )
+
+
+def _assert_segments_form_one_ray(
+    origin: np.ndarray,
+    direction: np.ndarray,
+    t_enter: np.ndarray,
+    t_exit: np.ndarray,
+    *,
+    atol: float = 1.0e-12,
+) -> None:
+    """Assert that one traced segment chain stays on one ordered, gap-free ray."""
+    assert t_enter.size == t_exit.size
+    assert t_enter.size > 0
+    assert np.all(np.isfinite(t_enter))
+    assert np.all(np.isfinite(t_exit))
+    assert np.all(t_exit > t_enter)
+    assert np.all(np.diff(t_enter) >= -atol)
+    assert np.all(np.diff(t_exit) >= -atol)
+    start_xyz = origin[None, :] + t_enter[:, None] * direction[None, :]
+    end_xyz = origin[None, :] + t_exit[:, None] * direction[None, :]
+    segment_xyz = end_xyz - start_xyz
+    if t_enter.size > 1:
+        np.testing.assert_allclose(t_enter[1:], t_exit[:-1], atol=atol, rtol=0.0)
+        np.testing.assert_allclose(start_xyz[1:], end_xyz[:-1], atol=atol, rtol=0.0)
+    np.testing.assert_allclose(
+        np.cross(segment_xyz, direction[None, :]),
+        0.0,
+        atol=atol,
+        rtol=0.0,
+    )
+    assert np.all(segment_xyz @ direction > 0.0)
 
 
 def _expected_box_exit_and_length(
@@ -654,10 +684,12 @@ def test_seed_domain_rpa_sample_file_uses_mid_shell_seed() -> None:
 def test_trace_one_ray_kernel_walks_same_level_cells_exactly() -> None:
     """One simple Cartesian ray should cross two same-level leaves with exact intervals."""
     tracer = OctreeRayTracer(_build_xyz_tree())
+    origin = np.array([-2.0, -0.3, -0.2], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
     leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
         0,
-        np.array([-2.0, -0.3, -0.2], dtype=float),
-        np.array([1.0, 0.0, 0.0], dtype=float),
+        origin,
+        direction,
         0.0,
         np.inf,
         tracer.trace_kernel_state(),
@@ -666,6 +698,14 @@ def test_trace_one_ray_kernel_walks_same_level_cells_exactly() -> None:
     np.testing.assert_array_equal(leaf_ids, np.array([0, 4], dtype=np.int64))
     np.testing.assert_allclose(t_enter, np.array([1.0, 2.0], dtype=float))
     np.testing.assert_allclose(t_exit, np.array([2.0, 3.0], dtype=float))
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=np.array([1.0, -0.3, -0.2], dtype=float),
+        expected_length=2.0,
+    )
 
 
 def test_trace_one_ray_kernel_walks_full_regular_cartesian_line_exactly(xyz_regular_tracer: OctreeRayTracer) -> None:
@@ -1242,7 +1282,6 @@ def test_trace_one_ray_kernel_walks_full_aligned_refined_cartesian_line_exactly(
     np.testing.assert_allclose(t_exit, np.array([0.6, 0.85, 1.1], dtype=float))
 
 
-@_REFINED_SKIP
 @pytest.mark.parametrize("direction", _SPACE_DIAGONAL_DIRECTIONS, ids=[f"aligned-refined{suffix}" for suffix in _SPACE_DIAGONAL_IDS])
 def test_trace_one_ray_kernel_handles_all_space_diagonal_aligned_refined_rays(
     xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
@@ -1623,10 +1662,12 @@ def test_trace_one_ray_kernel_handles_random_scaled_refined_rays(
 def test_trace_one_ray_kernel_walks_coarse_to_fine_cells_exactly() -> None:
     """One Cartesian ray should walk from one coarse leaf into two finer leaves."""
     tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
+    origin = np.array([-0.1, 0.1875, 0.1875], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
     leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
         0,
-        np.array([-0.1, 0.1875, 0.1875], dtype=float),
-        np.array([1.0, 0.0, 0.0], dtype=float),
+        origin,
+        direction,
         0.0,
         np.inf,
         tracer.trace_kernel_state(),
@@ -1635,15 +1676,25 @@ def test_trace_one_ray_kernel_walks_coarse_to_fine_cells_exactly() -> None:
     np.testing.assert_array_equal(leaf_ids, np.array([0, 7, 11], dtype=np.int64))
     np.testing.assert_allclose(t_enter, np.array([0.1, 0.6, 0.85], dtype=float))
     np.testing.assert_allclose(t_exit, np.array([0.6, 0.85, 1.1], dtype=float))
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=np.array([1.0, 0.1875, 0.1875], dtype=float),
+        expected_length=1.0,
+    )
 
 
 def test_trace_one_ray_kernel_walks_fine_to_coarse_cells_exactly() -> None:
     """One Cartesian ray should walk from finer leaves back into one coarse leaf."""
     tracer = OctreeRayTracer(_build_xyz_coarse_fine_tree())
+    origin = np.array([1.1, 0.1875, 0.1875], dtype=float)
+    direction = np.array([-1.0, 0.0, 0.0], dtype=float)
     leaf_ids, t_enter, t_exit = trace_one_ray_kernel(
         11,
-        np.array([1.1, 0.1875, 0.1875], dtype=float),
-        np.array([-1.0, 0.0, 0.0], dtype=float),
+        origin,
+        direction,
         0.0,
         np.inf,
         tracer.trace_kernel_state(),
@@ -1652,6 +1703,14 @@ def test_trace_one_ray_kernel_walks_fine_to_coarse_cells_exactly() -> None:
     np.testing.assert_array_equal(leaf_ids, np.array([11, 7, 0], dtype=np.int64))
     np.testing.assert_allclose(t_enter, np.array([0.1, 0.35, 0.6], dtype=float))
     np.testing.assert_allclose(t_exit, np.array([0.35, 0.6, 1.1], dtype=float))
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=np.array([0.0, 0.1875, 0.1875], dtype=float),
+        expected_length=1.0,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1703,6 +1762,14 @@ def test_trace_one_ray_kernel_handles_exact_uniform_cartesian_degeneracies(
     np.testing.assert_array_equal(leaf_ids, expected_leaf_ids)
     np.testing.assert_allclose(t_enter, expected_t_enter)
     np.testing.assert_allclose(t_exit, expected_t_exit)
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=origin + expected_t_exit[-1] * direction,
+        expected_length=float(np.sum((expected_t_exit - expected_t_enter) * np.linalg.norm(direction))),
+    )
 
 
 @pytest.mark.parametrize(
@@ -1738,6 +1805,14 @@ def test_trace_one_ray_kernel_handles_exact_refined_cartesian_degeneracies(
     np.testing.assert_array_equal(leaf_ids, np.array([0, 7, 11], dtype=np.int64))
     np.testing.assert_allclose(t_enter, np.array([0.1, 0.6, 0.85], dtype=float))
     np.testing.assert_allclose(t_exit, np.array([0.6, 0.85, 1.1], dtype=float))
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        t_enter,
+        t_exit,
+        expected_exit_xyz=origin + t_exit[-1] * direction,
+        expected_length=float(np.sum((t_exit - t_enter) * np.linalg.norm(direction))),
+    )
 
 
 def test_trace_one_ray_kernel_uses_spherical_sample_file_from_seed_leaf() -> None:
@@ -1789,6 +1864,7 @@ def test_trace_one_ray_kernel_uses_spherical_sample_file_from_seed_leaf() -> Non
         atol=1.0e-8,
         rtol=0.0,
     )
+    _assert_segments_form_one_ray(origin, direction, t_enter, t_exit, atol=1.0e-8)
     np.testing.assert_allclose(float(np.sum(t_exit - t_enter)), 28.731026478149758, atol=1.0e-10, rtol=0.0)
     assert t_enter[0] <= t_seed <= t_exit[0]
 
@@ -1841,6 +1917,14 @@ def test_trace_returns_two_way_packed_segments_for_one_seeded_cartesian_ray() ->
     np.testing.assert_array_equal(segments.cell_ids, np.array([0, 4], dtype=np.int64))
     np.testing.assert_allclose(segments.t_enter, np.array([1.0, 2.0], dtype=float))
     np.testing.assert_allclose(segments.t_exit, np.array([2.0, 3.0], dtype=float))
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        segments.t_enter,
+        segments.t_exit,
+        expected_exit_xyz=np.array([1.0, -0.3, -0.2], dtype=float),
+        expected_length=2.0,
+    )
 
 
 def test_trace_handles_seed_on_one_internal_cartesian_face() -> None:
@@ -1855,6 +1939,14 @@ def test_trace_handles_seed_on_one_internal_cartesian_face() -> None:
     np.testing.assert_array_equal(segments.cell_ids, np.array([0, 4], dtype=np.int64))
     np.testing.assert_allclose(segments.t_enter, np.array([1.0, 2.0], dtype=float))
     np.testing.assert_allclose(segments.t_exit, np.array([2.0, 3.0], dtype=float))
+    _assert_segments_match_expected_path(
+        origin,
+        direction,
+        segments.t_enter,
+        segments.t_exit,
+        expected_exit_xyz=np.array([1.0, -0.3, -0.2], dtype=float),
+        expected_length=2.0,
+    )
 
 
 def test_render_midpoint_image_integrates_constant_density_along_seeded_ray() -> None:
@@ -2132,8 +2224,7 @@ def test_trace_handles_one_spherical_symmetry_ray_with_exact_geometric_regressio
     segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
 
     np.testing.assert_allclose(seed_xyz, np.array([[0.0, 0.0, -12.0]], dtype=float), atol=1.0e-12, rtol=0.0)
-    assert np.all(np.diff(segments.t_enter) >= 0.0)
-    assert np.all(np.diff(segments.t_exit) >= 0.0)
+    _assert_segments_form_one_ray(origin, direction, segments.t_enter, segments.t_exit, atol=1.0e-6)
     np.testing.assert_allclose(segments.t_enter[0], 13.72182951, atol=1.0e-6, rtol=0.0)
     np.testing.assert_allclose(segments.t_exit[-1], 106.27817001, atol=1.0e-6, rtol=0.0)
     np.testing.assert_allclose(float(np.sum(segments.segment_length)), 92.5563404981293, atol=1.0e-6, rtol=0.0)
@@ -2151,8 +2242,7 @@ def test_trace_handles_one_spherical_axis_ray_with_exact_geometric_regression() 
     segments = tracer.trace(origin, direction, seed_xyz=seed_xyz)
 
     np.testing.assert_allclose(seed_xyz, np.array([[0.0, 0.0, 8.0]], dtype=float), atol=1.0e-12, rtol=0.0)
-    assert np.all(np.diff(segments.t_enter) >= 0.0)
-    assert np.all(np.diff(segments.t_exit) >= 0.0)
+    _assert_segments_form_one_ray(origin, direction, segments.t_enter, segments.t_exit, atol=2.0e-6)
     np.testing.assert_allclose(segments.t_enter[0], 12.78793421, atol=2.0e-6, rtol=0.0)
     np.testing.assert_allclose(segments.t_exit[-1], 107.21206448, atol=1.0e-6, rtol=0.0)
     np.testing.assert_allclose(float(np.sum(segments.segment_length)), 94.42413027227191, atol=3.0e-6, rtol=0.0)
@@ -2170,6 +2260,8 @@ def test_trace_matches_mirrored_real_sample_y_zero_rays() -> None:
         negative_origin = np.array([-60.0, 0.0, -z_value], dtype=float)
         positive_segments = tracer.trace(positive_origin, direction, seed_xyz=tracer.seed_domain(positive_origin, direction))
         negative_segments = tracer.trace(negative_origin, direction, seed_xyz=tracer.seed_domain(negative_origin, direction))
+        _assert_segments_form_one_ray(positive_origin, direction, positive_segments.t_enter, positive_segments.t_exit, atol=5.0e-6)
+        _assert_segments_form_one_ray(negative_origin, direction, negative_segments.t_enter, negative_segments.t_exit, atol=5.0e-6)
         np.testing.assert_allclose(
             float(np.sum(positive_segments.segment_length)),
             float(np.sum(negative_segments.segment_length)),
@@ -2202,9 +2294,20 @@ def test_trace_handles_batched_real_sample_shell_only_symmetric_rays() -> None:
 
     assert counts[0, 1] > 0
     assert counts[0, 0] > 0
-    assert np.all(np.isfinite(segments.t_enter))
-    assert np.all(np.isfinite(segments.t_exit))
-    assert np.all(segments.t_exit > segments.t_enter)
+    for flat_ray_id, (origin_xyz, direction_xyz) in enumerate(
+        zip(origins.reshape(-1, 3), directions.reshape(-1, 3), strict=True)
+    ):
+        ray_lo = int(segments.ray_offsets[flat_ray_id])
+        ray_hi = int(segments.ray_offsets[flat_ray_id + 1])
+        if ray_hi == ray_lo:
+            continue
+        _assert_segments_form_one_ray(
+            origin_xyz,
+            direction_xyz,
+            segments.t_enter[ray_lo:ray_hi],
+            segments.t_exit[ray_lo:ray_hi],
+            atol=1.0e-6,
+        )
 
 
 def test_render_midpoint_image_preserves_real_sample_central_symmetry_for_constant_field() -> None:
