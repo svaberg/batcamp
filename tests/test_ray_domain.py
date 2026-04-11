@@ -341,6 +341,68 @@ def _stretched_local_direction(logical_origin: np.ndarray, logical_target: np.nd
     return np.asarray(physical_target - physical_origin, dtype=float)
 
 
+def _stretched_random_failure_message(
+    tracer: OctreeRayTracer,
+    ray_id: int,
+    logical_origin: np.ndarray,
+    origin: np.ndarray,
+    direction: np.ndarray,
+    start_leaf: int,
+) -> str:
+    """Return one concrete diagnostic message for one failing stretched random ray."""
+    regular_tree = _build_xyz_regular_tree()
+    expected_leaf = int(regular_tree.lookup_points(logical_origin[None, :], coord="xyz")[0])
+
+    start_leaf_ids, start_t_enter, start_t_exit = trace_one_ray_kernel(
+        start_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
+    )
+    expected_leaf_ids, expected_t_enter, expected_t_exit = trace_one_ray_kernel(
+        expected_leaf,
+        origin,
+        direction,
+        0.0,
+        np.inf,
+        tracer.trace_kernel_state(),
+    )
+    start_ijk = np.asarray(tracer.tree.cell_ijk[start_leaf], dtype=np.int64)
+    expected_ijk = np.asarray(tracer.tree.cell_ijk[expected_leaf], dtype=np.int64)
+
+    lines = [
+        f"ray_id={ray_id}",
+        f"logical_origin={logical_origin.tolist()}",
+        f"origin={origin.tolist()}",
+        f"direction={direction.tolist()}",
+        f"start_leaf={start_leaf}",
+        f"start_leaf_ijk={start_ijk.tolist()}",
+        f"expected_leaf={expected_leaf}",
+        f"expected_leaf_ijk={expected_ijk.tolist()}",
+        f"start_leaf_segments={int(start_leaf_ids.size)}",
+        f"expected_leaf_segments={int(expected_leaf_ids.size)}",
+    ]
+    if expected_leaf_ids.size > 0:
+        lines.extend(
+            [
+                f"expected_first_leaf={int(expected_leaf_ids[0])}",
+                f"expected_first_t_enter={float(expected_t_enter[0])}",
+                f"expected_first_t_exit={float(expected_t_exit[0])}",
+            ]
+        )
+    if start_leaf_ids.size > 0:
+        lines.extend(
+            [
+                f"start_first_leaf={int(start_leaf_ids[0])}",
+                f"start_first_t_enter={float(start_t_enter[0])}",
+                f"start_first_t_exit={float(start_t_exit[0])}",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def test_seed_domain_parallel_camera_returns_midpoints_in_cartesian_box() -> None:
     """Parallel camera rays should seed at the midpoint of the visible box interval."""
     tree = _build_xyz_tree()
@@ -991,6 +1053,34 @@ def test_trace_one_ray_kernel_handles_all_stretched_corner_directions_from_domai
     """All rays from one stretched domain-boundary point toward stretched mesh corners should trace correctly."""
     tracer, box_lo, box_hi = xyz_stretched_grid_case
     _assert_stretched_corner_sweep(tracer, logical_origin, box_lo=box_lo, box_hi=box_hi)
+
+
+def test_trace_one_ray_kernel_handles_random_stretched_grid_rays(
+    xyz_stretched_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """One fixed-seed batch of random interior stretched-grid rays should trace to the exact box exit."""
+    tracer, box_lo, box_hi = xyz_stretched_grid_case
+    rng = np.random.default_rng(20260410)
+    logical_origins = rng.uniform(-3.75, 3.75, size=(64, 3))
+    origins = _stretch_regular_xyz(logical_origins)
+    directions = rng.normal(size=(64, 3))
+    for ray_id in range(directions.shape[0]):
+        if np.linalg.norm(directions[ray_id]) <= 1.0e-12:
+            directions[ray_id] = np.array([1.0, 0.0, 0.0], dtype=float)
+        origin = np.asarray(origins[ray_id], dtype=float)
+        direction = np.asarray(directions[ray_id], dtype=float)
+        start_leaf = int(tracer.tree.lookup_points(origin[None, :], coord="xyz")[0])
+        try:
+            _assert_regular_ray_matches_expected_path(
+                tracer,
+                origin,
+                direction,
+                start_leaf=start_leaf,
+                box_lo=box_lo,
+                box_hi=box_hi,
+            )
+        except AssertionError as exc:
+            pytest.fail(f"{exc}\n{_stretched_random_failure_message(tracer, ray_id, logical_origins[ray_id], origin, direction, start_leaf)}")
 
 
 def test_trace_one_ray_kernel_walks_coarse_to_fine_cells_exactly() -> None:
