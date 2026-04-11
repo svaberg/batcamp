@@ -415,6 +415,49 @@ def _boundary_probe_direction_kernel(
 
 
 @njit(cache=True)
+def _wrapped_coord_delta(value: float, target: float, period: float, periodic: bool) -> float:
+    """Return one coordinate difference, wrapped onto the principal interval when periodic."""
+    delta = value - target
+    if not periodic or period <= 0.0:
+        return delta
+    half_period = 0.5 * period
+    while delta <= -half_period:
+        delta += period
+    while delta > half_period:
+        delta -= period
+    return delta
+
+
+@njit(cache=True)
+def _point_on_cell_face_kernel(
+    point_xyz: np.ndarray,
+    face_id: int,
+    cell_id: int,
+    tree_coord_code: int,
+    cell_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> bool:
+    """Return whether one boundary point lies on one face of one runtime cell."""
+    if tree_coord_code == _TREE_COORD_XYZ:
+        point_coord = point_xyz
+    else:
+        point_coord = np.array(xyz_to_rpa_components(point_xyz[0], point_xyz[1], point_xyz[2]), dtype=np.float64)
+    axis = int(_FACE_AXIS[face_id])
+    side = int(_FACE_SIDE[face_id])
+    face_start = float(cell_bounds[cell_id, axis, 0])
+    face_width = float(cell_bounds[cell_id, axis, 1])
+    face_stop = face_start + face_width
+    coord_value = float(point_coord[axis])
+    tol = _EXIT_TOL * max(1.0, abs(face_start), abs(face_stop), abs(face_width))
+    if axis == 2:
+        face_delta = _wrapped_coord_delta(coord_value, face_start if side == 0 else face_stop, axis2_period, axis2_periodic)
+    else:
+        face_delta = coord_value - (face_start if side == 0 else face_stop)
+    return abs(face_delta) <= tol
+
+
+@njit(cache=True)
 def _face_exit_subface_kernel(face_patch_center: np.ndarray, point_xyz: np.ndarray) -> int:
     """Return the nearest cached face patch for one boundary point."""
     best_subface = 0
@@ -455,7 +498,21 @@ def _resolve_boundary_owner_leaf_kernel(
     for face_id in range(6):
         if (active_face_mask & (1 << face_id)) == 0:
             continue
-        subface_id = _face_exit_subface_kernel(face_patch_center[current_leaf, face_id], point_xyz)
+        if tree_coord_code == _TREE_COORD_XYZ:
+            if not _point_on_cell_face_kernel(
+                point_xyz,
+                face_id,
+                candidate_cell,
+                tree_coord_code,
+                cell_bounds,
+                axis2_period,
+                axis2_periodic,
+            ):
+                continue
+        patch_owner = int(current_leaf)
+        if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
+            patch_owner = int(candidate_cell)
+        subface_id = _face_exit_subface_kernel(face_patch_center[patch_owner, face_id], point_xyz)
         candidate_cell = int(next_cell[candidate_cell, face_id, subface_id])
         if candidate_cell < 0:
             return -1
