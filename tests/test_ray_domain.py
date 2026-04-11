@@ -301,15 +301,9 @@ def _assert_segments_form_one_ray(
     start_xyz = origin[None, :] + t_enter[:, None] * direction[None, :]
     end_xyz = origin[None, :] + t_exit[:, None] * direction[None, :]
     segment_xyz = end_xyz - start_xyz
-    direction_norm = float(np.linalg.norm(direction))
-    assert direction_norm > 0.0
-    direction_unit = direction / direction_norm
     if t_enter.size > 1:
-        join_delta = start_xyz[1:] - end_xyz[:-1]
-        gap_parallel = join_delta @ direction_unit
-        gap_perp = join_delta - gap_parallel[:, None] * direction_unit[None, :]
-        np.testing.assert_allclose(gap_parallel, 0.0, atol=atol, rtol=0.0)
-        np.testing.assert_allclose(gap_perp, 0.0, atol=atol, rtol=0.0)
+        np.testing.assert_allclose(t_enter[1:], t_exit[:-1], atol=atol, rtol=0.0)
+        np.testing.assert_allclose(start_xyz[1:], end_xyz[:-1], atol=atol, rtol=0.0)
     np.testing.assert_allclose(
         np.cross(segment_xyz, direction[None, :]),
         0.0,
