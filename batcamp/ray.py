@@ -415,6 +415,49 @@ def _boundary_probe_direction_kernel(
 
 
 @njit(cache=True)
+def _wrapped_coord_delta(value: float, target: float, period: float, periodic: bool) -> float:
+    """Return one coordinate difference, wrapped onto the principal interval when periodic."""
+    delta = value - target
+    if not periodic or period <= 0.0:
+        return delta
+    half_period = 0.5 * period
+    while delta <= -half_period:
+        delta += period
+    while delta > half_period:
+        delta -= period
+    return delta
+
+
+@njit(cache=True)
+def _point_on_cell_face_kernel(
+    point_xyz: np.ndarray,
+    face_id: int,
+    cell_id: int,
+    tree_coord_code: int,
+    cell_bounds: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> bool:
+    """Return whether one boundary point lies on one face of one runtime cell."""
+    if tree_coord_code == _TREE_COORD_XYZ:
+        point_coord = point_xyz
+    else:
+        point_coord = np.array(xyz_to_rpa_components(point_xyz[0], point_xyz[1], point_xyz[2]), dtype=np.float64)
+    axis = int(_FACE_AXIS[face_id])
+    side = int(_FACE_SIDE[face_id])
+    face_start = float(cell_bounds[cell_id, axis, 0])
+    face_width = float(cell_bounds[cell_id, axis, 1])
+    face_stop = face_start + face_width
+    coord_value = float(point_coord[axis])
+    tol = _EXIT_TOL * max(1.0, abs(face_start), abs(face_stop), abs(face_width))
+    if axis == 2:
+        face_delta = _wrapped_coord_delta(coord_value, face_start if side == 0 else face_stop, axis2_period, axis2_periodic)
+    else:
+        face_delta = coord_value - (face_start if side == 0 else face_stop)
+    return abs(face_delta) <= tol
+
+
+@njit(cache=True)
 def _face_exit_subface_kernel(face_patch_center: np.ndarray, point_xyz: np.ndarray) -> int:
     """Return the nearest cached face patch for one boundary point."""
     best_subface = 0
@@ -455,7 +498,21 @@ def _resolve_boundary_owner_leaf_kernel(
     for face_id in range(6):
         if (active_face_mask & (1 << face_id)) == 0:
             continue
-        subface_id = _face_exit_subface_kernel(face_patch_center[current_leaf, face_id], point_xyz)
+        if tree_coord_code == _TREE_COORD_XYZ:
+            if not _point_on_cell_face_kernel(
+                point_xyz,
+                face_id,
+                candidate_cell,
+                tree_coord_code,
+                cell_bounds,
+                axis2_period,
+                axis2_periodic,
+            ):
+                continue
+        patch_owner = int(current_leaf)
+        if candidate_cell < leaf_valid.shape[0] and leaf_valid[candidate_cell]:
+            patch_owner = int(candidate_cell)
+        subface_id = _face_exit_subface_kernel(face_patch_center[patch_owner, face_id], point_xyz)
         candidate_cell = int(next_cell[candidate_cell, face_id, subface_id])
         if candidate_cell < 0:
             return -1
@@ -579,6 +636,7 @@ def _solve_cell_segment_kernel(
 
     hit_t = np.empty(6, dtype=np.float64)
     hit_face = np.empty(6, dtype=np.int64)
+    hit_denom = np.empty(6, dtype=np.float64)
     hit_count = 0
     for face_id in range(6):
         normal_xyz = face_normal[face_id]
@@ -590,6 +648,7 @@ def _solve_cell_segment_kernel(
         if _point_inside_face_kernel(face_xyz[face_id], face_edge_normal[face_id], face_edge_d[face_id], face_hit_xyz, point_tol):
             hit_t[hit_count] = t_hit
             hit_face[hit_count] = face_id
+            hit_denom[hit_count] = denom
             hit_count += 1
     if hit_count == 0:
         return False, np.nan, np.nan, -1, -1
@@ -606,6 +665,9 @@ def _solve_cell_segment_kernel(
             swap_face = hit_face[i]
             hit_face[i] = hit_face[best]
             hit_face[best] = swap_face
+            swap_denom = hit_denom[i]
+            hit_denom[i] = hit_denom[best]
+            hit_denom[best] = swap_denom
 
     enter_tol = _EXIT_TOL * max(1.0, abs(current_t))
     segment_enter = current_t if inside_now else np.nan
@@ -616,6 +678,10 @@ def _solve_cell_segment_kernel(
         if t_hit < (t_min - enter_tol):
             continue
         if not np.isfinite(segment_enter):
+            if t_hit <= (current_t + enter_tol):
+                if hit_denom[hit_id] < 0.0:
+                    segment_enter = current_t
+                continue
             segment_enter = t_hit
             continue
         if t_hit <= (segment_enter + enter_tol):
@@ -1282,6 +1348,7 @@ def _trace_one_ray_kernel(
     t_exit_list = []
     current_t = t_min
     max_steps = int(n_valid_leaf) + 1
+    direction_norm = math.sqrt(_dot3(direction_xyz, direction_xyz))
 
     for _ in range(max_steps):
         if current_t >= t_max:
@@ -1300,6 +1367,10 @@ def _trace_one_ray_kernel(
         )
         if not ok:
             break
+        if len(t_exit_list) > 0 and segment_enter > current_t and direction_norm > 0.0:
+            join_tol = (4.0 * _BOUNDARY_SHIFT_FACTOR * max(1.0, leaf_scales[current_leaf])) / direction_norm
+            if segment_enter <= (current_t + join_tol):
+                segment_enter = current_t
         zero_length_tol = _EXIT_TOL * max(1.0, abs(segment_enter), abs(exit_t))
         if segment_enter >= t_max:
             break
@@ -1615,11 +1686,22 @@ def _trace_rays_kernel(
             if tail_length <= tail_floor:
                 forward_count -= 1
         joined = False
-        if back_count > 0 and forward_count > 0 and back_leaf_ids_local[0] == forward_leaf_ids_local[0]:
+        if back_count > 0 and forward_count > 0:
             back_last_exit = t_seed - back_enter_local[0]
             forward_first_enter = t_seed + forward_enter_local[0]
-            join_tol = _EXIT_TOL * max(1.0, abs(back_last_exit), abs(forward_first_enter))
-            joined = abs(back_last_exit - forward_first_enter) <= join_tol
+            direction_norm = math.sqrt(direction_norm_sq)
+            seam_scale = max(
+                1.0,
+                leaf_scales[int(back_leaf_ids_local[0])],
+                leaf_scales[int(forward_leaf_ids_local[0])],
+            )
+            seam_tol = (4.0 * max(_BOUNDARY_SHIFT_FACTOR, _OWNERSHIP_SHIFT_FACTOR) * seam_scale) / direction_norm
+            if abs(back_last_exit - forward_first_enter) <= seam_tol:
+                forward_enter_local[0] = back_last_exit - t_seed
+                forward_first_enter = back_last_exit
+            if back_leaf_ids_local[0] == forward_leaf_ids_local[0]:
+                join_tol = _EXIT_TOL * max(1.0, abs(back_last_exit), abs(forward_first_enter))
+                joined = abs(back_last_exit - forward_first_enter) <= join_tol
 
         back_stop = 0 if joined else -1
         for local_idx in range(back_count - 1, back_stop, -1):
