@@ -81,6 +81,70 @@ def _stretched_regular_edges() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return x_edges, y_edges, z_edges
 
 
+_SPACE_DIAGONAL_DIRECTIONS = [
+    (-1.0, -1.0, -1.0),
+    (-1.0, -1.0, 1.0),
+    (-1.0, 1.0, -1.0),
+    (-1.0, 1.0, 1.0),
+    (1.0, -1.0, -1.0),
+    (1.0, -1.0, 1.0),
+    (1.0, 1.0, -1.0),
+    (1.0, 1.0, 1.0),
+]
+_SPACE_DIAGONAL_IDS = [
+    "---",
+    "--+",
+    "-+-",
+    "-++",
+    "+--",
+    "+-+",
+    "++-",
+    "+++",
+]
+_PLANE_DIAGONAL_DIRECTIONS = [
+    (-1.0, -1.0, 0.0),
+    (-1.0, 1.0, 0.0),
+    (1.0, -1.0, 0.0),
+    (1.0, 1.0, 0.0),
+    (-1.0, 0.0, -1.0),
+    (-1.0, 0.0, 1.0),
+    (1.0, 0.0, -1.0),
+    (1.0, 0.0, 1.0),
+    (0.0, -1.0, -1.0),
+    (0.0, -1.0, 1.0),
+    (0.0, 1.0, -1.0),
+    (0.0, 1.0, 1.0),
+]
+_PLANE_DIAGONAL_IDS = [
+    "xy--",
+    "xy-+",
+    "xy+-",
+    "xy++",
+    "xz--",
+    "xz-+",
+    "xz+-",
+    "xz++",
+    "yz--",
+    "yz-+",
+    "yz+-",
+    "yz++",
+]
+_REFINED_SKIP = pytest.mark.skip(reason="Enable refined two-level Cartesian traversal tests incrementally.")
+_REFINED_SCALE = np.array([1.25, 1.5, 1.75], dtype=float)
+_REFINED_CELL_CENTER = np.array([0.625, 0.125, 0.125], dtype=float)
+_REFINED_X_FACE_SEAM = np.array([0.5, 0.125, 0.125], dtype=float)
+_REFINED_XY_EDGE_SEAM = np.array([0.5, 0.25, 0.125], dtype=float)
+_REFINED_DOMAIN_BOUNDARY_POINTS = [
+    np.array([1.0, 0.125, 0.125], dtype=float),
+    np.array([0.125, 1.0, 0.125], dtype=float),
+    np.array([0.125, 0.125, 1.0], dtype=float),
+    np.array([1.0, 1.0, 0.125], dtype=float),
+    np.array([1.0, 0.125, 1.0], dtype=float),
+    np.array([0.125, 1.0, 1.0], dtype=float),
+    np.array([1.0, 1.0, 1.0], dtype=float),
+]
+
+
 def _build_rpa_tree() -> Octree:
     """Return one small spherical tree for unsupported-case coverage."""
     points, corners = build_spherical_hex_mesh(
@@ -143,6 +207,26 @@ def _build_xyz_coarse_fine_tree() -> Octree:
     )
     points = np.array(xyz_list, dtype=float)
     return Octree(points, corners, tree_coord="xyz")
+
+
+def _scale_coarse_fine_xyz(logical_xyz: np.ndarray) -> np.ndarray:
+    """Return one separably scaled version of the coarse/fine Cartesian coordinates."""
+    return np.asarray(logical_xyz, dtype=float) * _REFINED_SCALE
+
+
+def _build_xyz_scaled_coarse_fine_tree() -> Octree:
+    """Return one separably scaled version of the two-level coarse/fine Cartesian tree."""
+    coarse_fine_tree = _build_xyz_coarse_fine_tree()
+    scaled_tree = object.__new__(Octree)
+    scaled_tree._init_from_state(
+        root_shape=coarse_fine_tree.root_shape,
+        tree_coord=coarse_fine_tree.tree_coord,
+        cell_levels=coarse_fine_tree.cell_levels,
+        cell_ijk=coarse_fine_tree.cell_ijk[: coarse_fine_tree.corners.shape[0]],
+        points=_scale_coarse_fine_xyz(np.asarray(coarse_fine_tree._points, dtype=float)),
+        corners=np.asarray(coarse_fine_tree.corners, dtype=np.int64),
+    )
+    return scaled_tree
 
 
 def _analytic_visible_shell_length(impact_parameter: np.ndarray, r_min: float, r_max: float) -> np.ndarray:
@@ -240,6 +324,22 @@ def xyz_stretched_grid_case() -> tuple[OctreeRayTracer, np.ndarray, np.ndarray]:
     return OctreeRayTracer(tree), np.asarray(box_lo, dtype=float), np.asarray(box_hi, dtype=float)
 
 
+@pytest.fixture(scope="module")
+def xyz_refined_grid_case() -> tuple[OctreeRayTracer, np.ndarray, np.ndarray]:
+    """Return one reusable tracer plus outer box bounds for one aligned two-level refined grid."""
+    tree = _build_xyz_coarse_fine_tree()
+    box_lo, box_hi = tree.domain_bounds(coord="xyz")
+    return OctreeRayTracer(tree), np.asarray(box_lo, dtype=float), np.asarray(box_hi, dtype=float)
+
+
+@pytest.fixture(scope="module")
+def xyz_scaled_refined_grid_case() -> tuple[OctreeRayTracer, np.ndarray, np.ndarray]:
+    """Return one reusable tracer plus outer box bounds for one separably scaled two-level refined grid."""
+    tree = _build_xyz_scaled_coarse_fine_tree()
+    box_lo, box_hi = tree.domain_bounds(coord="xyz")
+    return OctreeRayTracer(tree), np.asarray(box_lo, dtype=float), np.asarray(box_hi, dtype=float)
+
+
 def _lookup_regular_start_leaf(tracer: OctreeRayTracer, origin: np.ndarray, direction: np.ndarray) -> int:
     """Return one seam-aware start leaf for one regular-grid ray."""
     start_xyz = np.array(origin, dtype=float, copy=True)
@@ -310,6 +410,17 @@ def _lookup_stretched_start_leaf(
     return int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
 
 
+def _lookup_mesh_start_leaf(tracer: OctreeRayTracer, origin: np.ndarray, direction: np.ndarray) -> int:
+    """Return one seam-aware start leaf using the actual Cartesian mesh coordinates."""
+    start_xyz = np.array(origin, dtype=float, copy=True)
+    mesh_points = np.asarray(tracer.tree._points, dtype=float)
+    for axis in range(3):
+        axis_coords = np.unique(mesh_points[:, axis])
+        if np.any(np.isclose(start_xyz[axis], axis_coords, atol=1.0e-12, rtol=0.0)) and direction[axis] != 0.0:
+            start_xyz[axis] += 1.0e-12 * np.sign(direction[axis])
+    return int(tracer.tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
+
+
 def _assert_stretched_corner_sweep(
     tracer: OctreeRayTracer,
     logical_origin: np.ndarray,
@@ -329,6 +440,28 @@ def _assert_stretched_corner_sweep(
             origin,
             direction,
             start_leaf=_lookup_stretched_start_leaf(tracer, logical_origin, logical_direction),
+            box_lo=box_lo,
+            box_hi=box_hi,
+        )
+
+
+def _assert_corner_sweep_to_tree_points(
+    tracer: OctreeRayTracer,
+    origin: np.ndarray,
+    *,
+    box_lo: np.ndarray,
+    box_hi: np.ndarray,
+) -> None:
+    """Assert that one Cartesian start point traces correctly toward every mesh corner of its tree."""
+    for target in np.asarray(tracer.tree._points, dtype=float):
+        direction = np.asarray(target - origin, dtype=float)
+        if np.allclose(direction, 0.0):
+            continue
+        _assert_regular_ray_matches_expected_path(
+            tracer,
+            origin,
+            direction,
+            start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction),
             box_lo=box_lo,
             box_hi=box_hi,
         )
@@ -1081,6 +1214,410 @@ def test_trace_one_ray_kernel_handles_random_stretched_grid_rays(
             )
         except AssertionError as exc:
             pytest.fail(f"{exc}\n{_stretched_random_failure_message(tracer, ray_id, logical_origins[ray_id], origin, direction, start_leaf)}")
+
+
+def test_trace_one_ray_kernel_walks_full_aligned_refined_cartesian_line_exactly(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """One aligned two-level refined Cartesian ray should walk coarse-to-fine exactly."""
+    tracer, _, _ = xyz_refined_grid_case
+    origin = np.array([-0.1, 0.1875, 0.1875], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    start_leaf = 0
+
+    leaf_ids, t_enter, t_exit = _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction,
+        start_leaf=start_leaf,
+        expected_first_t=0.1,
+        expected_exit_xyz=np.array([1.0, 0.1875, 0.1875], dtype=float),
+        expected_length=1.0,
+        box_lo=np.zeros(3, dtype=float),
+        box_hi=np.ones(3, dtype=float),
+    )
+
+    np.testing.assert_array_equal(leaf_ids, np.array([0, 7, 11], dtype=np.int64))
+    np.testing.assert_allclose(t_enter, np.array([0.1, 0.6, 0.85], dtype=float))
+    np.testing.assert_allclose(t_exit, np.array([0.6, 0.85, 1.1], dtype=float))
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize("direction", _SPACE_DIAGONAL_DIRECTIONS, ids=[f"aligned-refined{suffix}" for suffix in _SPACE_DIAGONAL_IDS])
+def test_trace_one_ray_kernel_handles_all_space_diagonal_aligned_refined_rays(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All local space diagonals from one refined-cell center should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    origin = np.array(_REFINED_CELL_CENTER, dtype=float)
+    direction_xyz = 0.125 * np.array(direction, dtype=float)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize("direction", _PLANE_DIAGONAL_DIRECTIONS, ids=[f"aligned-refined-{suffix}" for suffix in _PLANE_DIAGONAL_IDS])
+def test_trace_one_ray_kernel_handles_all_plane_diagonal_aligned_refined_rays(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All local plane diagonals from one refined-cell center should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    origin = np.array(_REFINED_CELL_CENTER, dtype=float)
+    direction_xyz = 0.125 * np.array(direction, dtype=float)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_aligned_refined_corner_directions_from_cell_center(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one refined-cell center toward aligned refined mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, np.array(_REFINED_CELL_CENTER, dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_aligned_refined_corner_directions_from_x_face_seam(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one coarse/fine face seam toward aligned refined mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, np.array(_REFINED_X_FACE_SEAM, dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_aligned_refined_corner_directions_from_xy_edge_seam(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one refined edge seam toward aligned refined mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, np.array(_REFINED_XY_EDGE_SEAM, dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize(
+    "direction",
+    _SPACE_DIAGONAL_DIRECTIONS,
+    ids=[f"aligned-refined-origin{suffix}" for suffix in _SPACE_DIAGONAL_IDS],
+)
+def test_trace_one_ray_kernel_handles_origin_space_diagonal_aligned_refined_rays(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All space diagonals from the true aligned refined domain corner should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    origin = np.zeros(3, dtype=float)
+    direction_xyz = np.array(direction, dtype=float)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize(
+    "direction",
+    _PLANE_DIAGONAL_DIRECTIONS,
+    ids=[f"aligned-refined-origin-{suffix}" for suffix in _PLANE_DIAGONAL_IDS],
+)
+def test_trace_one_ray_kernel_handles_origin_plane_diagonal_aligned_refined_rays(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All plane diagonals from the true aligned refined domain corner should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    origin = np.zeros(3, dtype=float)
+    direction_xyz = np.array(direction, dtype=float)
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_aligned_refined_corner_directions_from_origin(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from the true aligned refined domain corner toward mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, np.zeros(3, dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize(
+    "origin",
+    _REFINED_DOMAIN_BOUNDARY_POINTS,
+    ids=[
+        "aligned-refined-boundary-x",
+        "aligned-refined-boundary-y",
+        "aligned-refined-boundary-z",
+        "aligned-refined-boundary-xy",
+        "aligned-refined-boundary-xz",
+        "aligned-refined-boundary-yz",
+        "aligned-refined-boundary-xyz",
+    ],
+)
+def test_trace_one_ray_kernel_handles_all_aligned_refined_corner_directions_from_domain_boundary(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    origin: np.ndarray,
+) -> None:
+    """All rays from aligned refined domain-boundary points toward mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, np.asarray(origin, dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_random_aligned_refined_rays(
+    xyz_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """One fixed-seed batch of random aligned refined-grid rays should trace to the exact box exit."""
+    tracer, box_lo, box_hi = xyz_refined_grid_case
+    rng = np.random.default_rng(20260411)
+    origins = rng.uniform(0.05, 0.95, size=(64, 3))
+    directions = rng.normal(size=(64, 3))
+    for ray_id in range(directions.shape[0]):
+        if np.linalg.norm(directions[ray_id]) <= 1.0e-12:
+            directions[ray_id] = np.array([1.0, 0.0, 0.0], dtype=float)
+        origin = np.asarray(origins[ray_id], dtype=float)
+        direction = np.asarray(directions[ray_id], dtype=float)
+        _assert_regular_ray_matches_expected_path(
+            tracer,
+            origin,
+            direction,
+            start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction),
+            box_lo=box_lo,
+            box_hi=box_hi,
+        )
+
+
+def test_trace_one_ray_kernel_walks_full_scaled_refined_cartesian_line_exactly(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """One separably scaled two-level refined Cartesian ray should walk coarse-to-fine exactly."""
+    tracer, _, _ = xyz_scaled_refined_grid_case
+    logical_origin = np.array([-0.1, 0.1875, 0.1875], dtype=float)
+    origin = _scale_coarse_fine_xyz(logical_origin)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    x_edges = _scale_coarse_fine_xyz(np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=float))[:, 0]
+
+    leaf_ids, t_enter, t_exit = _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction,
+        start_leaf=0,
+        expected_first_t=float(x_edges[0] - origin[0]),
+        expected_exit_xyz=np.array([x_edges[-1], origin[1], origin[2]], dtype=float),
+        expected_length=float(x_edges[-1] - x_edges[0]),
+        box_lo=np.zeros(3, dtype=float),
+        box_hi=_scale_coarse_fine_xyz(np.ones(3, dtype=float)),
+    )
+
+    np.testing.assert_array_equal(leaf_ids, np.array([0, 7, 11], dtype=np.int64))
+    np.testing.assert_allclose(t_enter, x_edges[:-1] - origin[0], atol=1.0e-12, rtol=0.0)
+    np.testing.assert_allclose(t_exit, x_edges[1:] - origin[0], atol=1.0e-12, rtol=0.0)
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize("direction", _SPACE_DIAGONAL_DIRECTIONS, ids=[f"scaled-refined{suffix}" for suffix in _SPACE_DIAGONAL_IDS])
+def test_trace_one_ray_kernel_handles_all_space_diagonal_scaled_refined_rays(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All local space diagonals from one scaled refined-cell center should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    logical_origin = np.array(_REFINED_CELL_CENTER, dtype=float)
+    logical_target = logical_origin + 0.125 * np.array(direction, dtype=float)
+    origin = _scale_coarse_fine_xyz(logical_origin)
+    direction_xyz = _scale_coarse_fine_xyz(logical_target) - origin
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize("direction", _PLANE_DIAGONAL_DIRECTIONS, ids=[f"scaled-refined-{suffix}" for suffix in _PLANE_DIAGONAL_IDS])
+def test_trace_one_ray_kernel_handles_all_plane_diagonal_scaled_refined_rays(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All local plane diagonals from one scaled refined-cell center should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    logical_origin = np.array(_REFINED_CELL_CENTER, dtype=float)
+    logical_target = logical_origin + 0.125 * np.array(direction, dtype=float)
+    origin = _scale_coarse_fine_xyz(logical_origin)
+    direction_xyz = _scale_coarse_fine_xyz(logical_target) - origin
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_scaled_refined_corner_directions_from_cell_center(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one scaled refined-cell center toward scaled mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, _scale_coarse_fine_xyz(_REFINED_CELL_CENTER), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_scaled_refined_corner_directions_from_x_face_seam(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one scaled coarse/fine face seam toward mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, _scale_coarse_fine_xyz(_REFINED_X_FACE_SEAM), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_scaled_refined_corner_directions_from_xy_edge_seam(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from one scaled refined edge seam toward mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, _scale_coarse_fine_xyz(_REFINED_XY_EDGE_SEAM), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize(
+    "direction",
+    _SPACE_DIAGONAL_DIRECTIONS,
+    ids=[f"scaled-refined-origin{suffix}" for suffix in _SPACE_DIAGONAL_IDS],
+)
+def test_trace_one_ray_kernel_handles_origin_space_diagonal_scaled_refined_rays(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All space diagonals from the true scaled refined domain corner should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    logical_origin = np.zeros(3, dtype=float)
+    logical_target = np.array(direction, dtype=float)
+    origin = _scale_coarse_fine_xyz(logical_origin)
+    direction_xyz = _scale_coarse_fine_xyz(logical_target) - origin
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize(
+    "direction",
+    _PLANE_DIAGONAL_DIRECTIONS,
+    ids=[f"scaled-refined-origin-{suffix}" for suffix in _PLANE_DIAGONAL_IDS],
+)
+def test_trace_one_ray_kernel_handles_origin_plane_diagonal_scaled_refined_rays(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    direction: tuple[float, float, float],
+) -> None:
+    """All plane diagonals from the true scaled refined domain corner should trace contiguously."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    logical_origin = np.zeros(3, dtype=float)
+    logical_target = np.array(direction, dtype=float)
+    origin = _scale_coarse_fine_xyz(logical_origin)
+    direction_xyz = _scale_coarse_fine_xyz(logical_target) - origin
+    _assert_regular_ray_matches_expected_path(
+        tracer,
+        origin,
+        direction_xyz,
+        start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction_xyz),
+        box_lo=box_lo,
+        box_hi=box_hi,
+    )
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_all_scaled_refined_corner_directions_from_origin(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """All rays from the true scaled refined domain corner toward mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, np.zeros(3, dtype=float), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+@pytest.mark.parametrize(
+    "logical_origin",
+    _REFINED_DOMAIN_BOUNDARY_POINTS,
+    ids=[
+        "scaled-refined-boundary-x",
+        "scaled-refined-boundary-y",
+        "scaled-refined-boundary-z",
+        "scaled-refined-boundary-xy",
+        "scaled-refined-boundary-xz",
+        "scaled-refined-boundary-yz",
+        "scaled-refined-boundary-xyz",
+    ],
+)
+def test_trace_one_ray_kernel_handles_all_scaled_refined_corner_directions_from_domain_boundary(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+    logical_origin: np.ndarray,
+) -> None:
+    """All rays from scaled refined domain-boundary points toward mesh corners should trace correctly."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    _assert_corner_sweep_to_tree_points(tracer, _scale_coarse_fine_xyz(logical_origin), box_lo=box_lo, box_hi=box_hi)
+
+
+@_REFINED_SKIP
+def test_trace_one_ray_kernel_handles_random_scaled_refined_rays(
+    xyz_scaled_refined_grid_case: tuple[OctreeRayTracer, np.ndarray, np.ndarray],
+) -> None:
+    """One fixed-seed batch of random scaled refined-grid rays should trace to the exact box exit."""
+    tracer, box_lo, box_hi = xyz_scaled_refined_grid_case
+    rng = np.random.default_rng(20260411)
+    logical_origins = rng.uniform(0.05, 0.95, size=(64, 3))
+    origins = _scale_coarse_fine_xyz(logical_origins)
+    directions = rng.normal(size=(64, 3))
+    for ray_id in range(directions.shape[0]):
+        if np.linalg.norm(directions[ray_id]) <= 1.0e-12:
+            directions[ray_id] = np.array([1.0, 0.0, 0.0], dtype=float)
+        origin = np.asarray(origins[ray_id], dtype=float)
+        direction = np.asarray(directions[ray_id], dtype=float)
+        _assert_regular_ray_matches_expected_path(
+            tracer,
+            origin,
+            direction,
+            start_leaf=_lookup_mesh_start_leaf(tracer, origin, direction),
+            box_lo=box_lo,
+            box_hi=box_hi,
+        )
 
 
 def test_trace_one_ray_kernel_walks_coarse_to_fine_cells_exactly() -> None:
