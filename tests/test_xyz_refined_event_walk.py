@@ -39,8 +39,10 @@ _SIGN_CASES = tuple(
 )
 _MULTIFACE_SIGN_CASES = tuple(sign_triplet for sign_triplet in _SIGN_CASES if sum(int(value != 0) for value in sign_triplet) > 1)
 _REFINED_OCTANTS = tuple(itertools.product((0, 1), repeat=3))
+_INTERIOR_OCTANT_RELATIVE_ORIGINS = tuple(itertools.product((0.125, 0.875), repeat=3))
 _REGULAR_CELL_IDS = tuple(range(27))
 _REFINED_CELL_IDS = tuple(range(15))
+_LOOKUP_ORACLE_MAX_ULP = 16
 
 
 def _build_xyz_regular_tree_from_edges(
@@ -176,22 +178,8 @@ _REFINED_TREE_BUILDERS = (
     pytest.param(_build_xyz_coarse_fine_tree, id="dyadic"),
     pytest.param(_build_xyz_coarse_fine_tree_nondyadic, id="nondyadic"),
 )
-_REGULAR_WHOLE_TRACE_TREE_BUILDERS = (
-    pytest.param(_build_xyz_regular_tree, id="dyadic"),
-    pytest.param(
-        _build_xyz_regular_tree_nondyadic,
-        id="nondyadic",
-        marks=pytest.mark.skip(reason="nondyadic regular whole-trace oracle coverage is not exact yet"),
-    ),
-)
-_REFINED_WHOLE_TRACE_TREE_BUILDERS = (
-    pytest.param(_build_xyz_coarse_fine_tree, id="dyadic"),
-    pytest.param(
-        _build_xyz_coarse_fine_tree_nondyadic,
-        id="nondyadic",
-        marks=pytest.mark.skip(reason="nondyadic refined whole-trace oracle coverage is not exact yet"),
-    ),
-)
+_REGULAR_WHOLE_TRACE_TREE_BUILDERS = _REGULAR_TREE_BUILDERS
+_REFINED_WHOLE_TRACE_TREE_BUILDERS = _REFINED_TREE_BUILDERS
 _DYADIC_REGULAR_TREE_BUILDERS = (pytest.param(_build_xyz_regular_tree, id="dyadic"),)
 _DYADIC_REFINED_TREE_BUILDERS = (pytest.param(_build_xyz_coarse_fine_tree, id="dyadic"),)
 
@@ -243,6 +231,27 @@ def _center_origin_and_direction(
     """Return one center-origin toy ray for one leaf and one sign pattern."""
     origin = _leaf_center(tree, start_cell_id)
     direction = _center_direction(tree, start_cell_id, sign_triplet)
+    return origin, direction
+
+
+def _relative_origin_and_direction(
+    tree: Octree,
+    start_cell_id: int,
+    relative_origin_xyz: tuple[float, float, float],
+    sign_triplet: tuple[int, int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return one interior-origin toy ray with the requested first-event face set at `t=1`."""
+    bounds = np.asarray(tree.cell_bounds[int(start_cell_id)], dtype=float)
+    origin = bounds[:, 0] + np.asarray(relative_origin_xyz, dtype=float) * bounds[:, 1]
+    direction = np.zeros(3, dtype=float)
+    for axis, sign in enumerate(sign_triplet):
+        if sign > 0:
+            face_value = float(bounds[axis, 0] + bounds[axis, 1])
+        elif sign < 0:
+            face_value = float(bounds[axis, 0])
+        else:
+            continue
+        direction[axis] = face_value - float(origin[axis])
     return origin, direction
 
 
@@ -365,6 +374,347 @@ def _assert_face_patch_compatibility(tree: Octree) -> None:
                 assert any(_patch_is_contained_in(candidate, patch) for candidate in neighbor_subpatches)
 
 
+def _format_segments(cell_ids: np.ndarray, times: np.ndarray) -> str:
+    """Return one readable packed trace listing."""
+    if cell_ids.size == 0 and times.size == 0:
+        return "  <empty>"
+    if times.size != cell_ids.size + 1:
+        return f"  <invalid packed trace: {cell_ids.size=} {times.size=}>"
+    lines: list[str] = []
+    for segment_id, (cell_id, t_start, t_stop) in enumerate(zip(cell_ids, times[:-1], times[1:])):
+        lines.append(f"  {segment_id}: cell {int(cell_id)} [{float(t_start)!r}, {float(t_stop)!r}]")
+    return "\n".join(lines)
+
+
+def _trace_debug_report(
+    tree: Octree,
+    start_cell_id: int,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    *,
+    t_min: float,
+    t_max: float,
+    actual_cell_ids: np.ndarray,
+    actual_times: np.ndarray,
+    expected_cell_ids: np.ndarray | None = None,
+    expected_times: np.ndarray | None = None,
+    positive_cell_ids: np.ndarray | None = None,
+    positive_times: np.ndarray | None = None,
+    oracle_cell_ids: np.ndarray | None = None,
+    oracle_times: np.ndarray | None = None,
+    extra_lines: tuple[str, ...] = (),
+) -> str:
+    """Return one full ray report for assertion failures."""
+    domain_lo, domain_hi = tree.domain_bounds(coord="xyz")
+    lines = [
+        "ray trace failure",
+        f"start_cell_id={int(start_cell_id)}",
+        f"origin_xyz={tuple(float(value) for value in np.asarray(origin_xyz, dtype=float))}",
+        f"direction_xyz={tuple(float(value) for value in np.asarray(direction_xyz, dtype=float))}",
+        f"t_min={float(t_min)!r}",
+        f"t_max={float(t_max)!r}",
+        f"domain_lo={tuple(float(value) for value in np.asarray(domain_lo, dtype=float))}",
+        f"domain_hi={tuple(float(value) for value in np.asarray(domain_hi, dtype=float))}",
+    ]
+    lines.extend(extra_lines)
+    if expected_cell_ids is not None or expected_times is not None:
+        lines.append("expected raw trace:")
+        lines.append(
+            _format_segments(
+                np.asarray(expected_cell_ids if expected_cell_ids is not None else np.empty(0, dtype=np.int64), dtype=np.int64),
+                np.asarray(expected_times if expected_times is not None else np.empty(0, dtype=float), dtype=float),
+            )
+        )
+    lines.append("actual raw trace:")
+    lines.append(_format_segments(np.asarray(actual_cell_ids, dtype=np.int64), np.asarray(actual_times, dtype=float)))
+    if positive_cell_ids is not None or positive_times is not None:
+        lines.append("actual positive trace:")
+        lines.append(
+            _format_segments(
+                np.asarray(positive_cell_ids if positive_cell_ids is not None else np.empty(0, dtype=np.int64), dtype=np.int64),
+                np.asarray(positive_times if positive_times is not None else np.empty(0, dtype=float), dtype=float),
+            )
+        )
+    if oracle_cell_ids is not None or oracle_times is not None:
+        lines.append("oracle positive trace:")
+        lines.append(
+            _format_segments(
+                np.asarray(oracle_cell_ids if oracle_cell_ids is not None else np.empty(0, dtype=np.int64), dtype=np.int64),
+                np.asarray(oracle_times if oracle_times is not None else np.empty(0, dtype=float), dtype=float),
+            )
+        )
+    return "\n".join(lines)
+
+
+def _times_match_with_ulp_slack(actual_times: np.ndarray, expected_times: np.ndarray, *, max_ulp: int) -> bool:
+    """Return whether one nondecreasing time array matches within a fixed ULP count."""
+    actual = np.asarray(actual_times, dtype=np.float64)
+    expected = np.asarray(expected_times, dtype=np.float64)
+    if actual.shape != expected.shape:
+        return False
+    if np.array_equal(actual, expected):
+        return True
+    if np.any(~np.isfinite(actual)) or np.any(~np.isfinite(expected)):
+        return False
+    lower = np.minimum(actual, expected)
+    upper = np.maximum(actual, expected)
+    stepped = np.array(lower, copy=True)
+    for _ in range(int(max_ulp)):
+        stepped = np.nextafter(stepped, np.inf)
+    return bool(np.all(stepped >= upper))
+
+
+def _normalize_positive_trace_for_lookup_oracle(
+    cell_ids: np.ndarray,
+    times: np.ndarray,
+    *,
+    max_ulp: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Drop oracle-scale pseudo-segments and merge equal owners across ULP-sized gaps."""
+    cell_ids = np.asarray(cell_ids, dtype=np.int64)
+    times = np.asarray(times, dtype=np.float64)
+    if cell_ids.size == 0:
+        return cell_ids, times
+
+    normalized_cell_ids: list[int] = []
+    normalized_times: list[float] = [float(times[0])]
+    for cell_id, t_start, t_stop in zip(cell_ids, times[:-1], times[1:]):
+        t_start = float(t_start)
+        t_stop = float(t_stop)
+        if _times_match_with_ulp_slack(np.array([t_start]), np.array([t_stop]), max_ulp=max_ulp):
+            continue
+        cell_id = int(cell_id)
+        if (
+            normalized_cell_ids
+            and normalized_cell_ids[-1] == cell_id
+            and _times_match_with_ulp_slack(
+                np.array([normalized_times[-1]]),
+                np.array([t_start]),
+                max_ulp=max_ulp,
+            )
+        ):
+            normalized_times[-1] = t_stop
+            continue
+        if not normalized_cell_ids:
+            normalized_times[0] = t_start
+        normalized_cell_ids.append(cell_id)
+        normalized_times.append(t_stop)
+    return np.asarray(normalized_cell_ids, dtype=np.int64), np.asarray(normalized_times, dtype=np.float64)
+
+
+def _assert_positive_trace_interval_invariants(
+    tree: Octree,
+    start_cell_id: int,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    *,
+    t_min: float,
+    t_max: float,
+    actual_cell_ids: np.ndarray,
+    actual_times: np.ndarray,
+    positive_cell_ids: np.ndarray,
+    positive_times: np.ndarray,
+) -> None:
+    """Check that one positive trace covers the clipped domain interval without gaps."""
+    interval = _independent_domain_interval(tree, origin_xyz, direction_xyz)
+    if interval is None:
+        if positive_cell_ids.size == 0 and positive_times.size == 0:
+            return
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=("positive trace exists outside the analytical domain interval",),
+            )
+        )
+
+    domain_enter, domain_exit = interval
+    start_t = max(float(t_min), float(domain_enter))
+    stop_t = min(float(t_max), float(domain_exit))
+    if not start_t < stop_t:
+        if positive_cell_ids.size == 0 and positive_times.size == 0:
+            return
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=("positive trace exists outside the analytical clipped interval",),
+            )
+        )
+
+    if positive_times.size != positive_cell_ids.size + 1:
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=(f"invalid positive packed trace: {positive_cell_ids.size=} {positive_times.size=}",),
+            )
+        )
+    if positive_times.size == 0:
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=("analytical clipped interval is nonempty but the positive trace is empty",),
+            )
+        )
+    if not np.all(positive_times[1:] > positive_times[:-1]):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=("positive trace times are not strictly increasing",),
+            )
+        )
+    if not _times_match_with_ulp_slack(
+        np.array([positive_times[0]], dtype=np.float64),
+        np.array([start_t], dtype=np.float64),
+        max_ulp=_LOOKUP_ORACLE_MAX_ULP,
+    ):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=(
+                    f"positive trace start disagrees with analytical clipped start: {float(positive_times[0])!r} vs {float(start_t)!r}",
+                ),
+            )
+        )
+    if not _times_match_with_ulp_slack(
+        np.array([positive_times[-1]], dtype=np.float64),
+        np.array([stop_t], dtype=np.float64),
+        max_ulp=_LOOKUP_ORACLE_MAX_ULP,
+    ):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=(
+                    f"positive trace end disagrees with analytical clipped stop: {float(positive_times[-1])!r} vs {float(stop_t)!r}",
+                ),
+            )
+        )
+
+    positive_length = float(np.sum(np.diff(np.asarray(positive_times, dtype=np.float64)), dtype=np.float64))
+    expected_length = float(stop_t - start_t)
+    if not _times_match_with_ulp_slack(
+        np.array([positive_length], dtype=np.float64),
+        np.array([expected_length], dtype=np.float64),
+        max_ulp=_LOOKUP_ORACLE_MAX_ULP,
+    ):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin_xyz,
+                direction_xyz,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=actual_cell_ids,
+                actual_times=actual_times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                extra_lines=(
+                    f"positive trace length disagrees with analytical clipped length: {positive_length!r} vs {expected_length!r}",
+                ),
+            )
+        )
+
+
+def _assert_positive_trace_midpoints_match_owners(
+    tree: Octree,
+    start_cell_id: int,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    *,
+    t_min: float,
+    t_max: float,
+    actual_cell_ids: np.ndarray,
+    actual_times: np.ndarray,
+    positive_cell_ids: np.ndarray,
+    positive_times: np.ndarray,
+) -> None:
+    """Check that every positive segment owns its interior midpoint on the ray."""
+    for cell_id, t_start, t_stop in zip(positive_cell_ids, positive_times[:-1], positive_times[1:]):
+        midpoint_xyz = np.asarray(origin_xyz, dtype=float) + (0.5 * (float(t_start) + float(t_stop))) * np.asarray(direction_xyz, dtype=float)
+        owner = int(tree.lookup_points(midpoint_xyz[None, :], coord="xyz")[0])
+        if owner != int(cell_id):
+            raise AssertionError(
+                _trace_debug_report(
+                    tree,
+                    start_cell_id,
+                    origin_xyz,
+                    direction_xyz,
+                    t_min=float(t_min),
+                    t_max=float(t_max),
+                    actual_cell_ids=actual_cell_ids,
+                    actual_times=actual_times,
+                    positive_cell_ids=positive_cell_ids,
+                    positive_times=positive_times,
+                    extra_lines=(
+                        f"segment midpoint owner mismatch: cell {int(cell_id)} midpoint_owner={owner}",
+                        f"midpoint_xyz={tuple(float(value) for value in midpoint_xyz)}",
+                    ),
+                )
+            )
+
+
 def _assert_trace(
     tree: Octree,
     start_cell_id: int,
@@ -377,16 +727,33 @@ def _assert_trace(
     t_max: float = np.inf,
 ) -> None:
     """Trace one toy ray and match exact packed cells and times."""
+    origin = np.array(origin_xyz, dtype=float)
+    direction = np.array(direction_xyz, dtype=float)
     cell_ids, times = trace_xyz_refined_event_path(
         tree,
         start_cell_id,
-        np.array(origin_xyz, dtype=float),
-        np.array(direction_xyz, dtype=float),
+        origin,
+        direction,
         t_min=float(t_min),
         t_max=float(t_max),
     )
-    np.testing.assert_array_equal(cell_ids, np.array(expected_cell_ids, dtype=np.int64))
-    np.testing.assert_allclose(times, np.array(expected_times, dtype=float), atol=0.0, rtol=0.0)
+    expected_cell_ids_array = np.array(expected_cell_ids, dtype=np.int64)
+    expected_times_array = np.array(expected_times, dtype=float)
+    if not np.array_equal(cell_ids, expected_cell_ids_array) or not np.array_equal(times, expected_times_array):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin,
+                direction,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=cell_ids,
+                actual_times=times,
+                expected_cell_ids=expected_cell_ids_array,
+                expected_times=expected_times_array,
+            )
+        )
 
 
 def _positive_trace(cell_ids: np.ndarray, times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -496,28 +863,110 @@ def _assert_full_trace_matches_lookup_oracle(
     t_max: float = np.inf,
 ) -> None:
     """Check one whole toy trace against an independent positive-length lookup oracle."""
+    origin = np.asarray(origin_xyz, dtype=float)
+    direction = np.asarray(direction_xyz, dtype=float)
     cell_ids, times = trace_xyz_refined_event_path(
         tree,
         int(start_cell_id),
-        np.asarray(origin_xyz, dtype=float),
-        np.asarray(direction_xyz, dtype=float),
+        origin,
+        direction,
         t_min=float(t_min),
         t_max=float(t_max),
     )
-    assert times.size == cell_ids.size + 1 or (cell_ids.size == 0 and times.size == 0)
-    if times.size:
-        assert np.all(times[1:] >= times[:-1])
+    if not (times.size == cell_ids.size + 1 or (cell_ids.size == 0 and times.size == 0)):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin,
+                direction,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=cell_ids,
+                actual_times=times,
+                extra_lines=(f"invalid packed trace shape: {cell_ids.size=} {times.size=}",),
+            )
+        )
+    if times.size and not np.all(times[1:] >= times[:-1]):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin,
+                direction,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=cell_ids,
+                actual_times=times,
+                extra_lines=("times are not monotone nondecreasing",),
+            )
+        )
 
     positive_cell_ids, positive_times = _positive_trace(cell_ids, times)
     oracle_cell_ids, oracle_times = _independent_positive_trace(
         tree,
-        np.asarray(origin_xyz, dtype=float),
-        np.asarray(direction_xyz, dtype=float),
+        origin,
+        direction,
         t_min=float(t_min),
         t_max=float(t_max),
     )
-    np.testing.assert_array_equal(positive_cell_ids, oracle_cell_ids)
-    np.testing.assert_allclose(positive_times, oracle_times, atol=0.0, rtol=0.0)
+    positive_cell_ids, positive_times = _normalize_positive_trace_for_lookup_oracle(
+        positive_cell_ids,
+        positive_times,
+        max_ulp=_LOOKUP_ORACLE_MAX_ULP,
+    )
+    oracle_cell_ids, oracle_times = _normalize_positive_trace_for_lookup_oracle(
+        oracle_cell_ids,
+        oracle_times,
+        max_ulp=_LOOKUP_ORACLE_MAX_ULP,
+    )
+    _assert_positive_trace_interval_invariants(
+        tree,
+        start_cell_id,
+        origin,
+        direction,
+        t_min=float(t_min),
+        t_max=float(t_max),
+        actual_cell_ids=cell_ids,
+        actual_times=times,
+        positive_cell_ids=positive_cell_ids,
+        positive_times=positive_times,
+    )
+    _assert_positive_trace_midpoints_match_owners(
+        tree,
+        start_cell_id,
+        origin,
+        direction,
+        t_min=float(t_min),
+        t_max=float(t_max),
+        actual_cell_ids=cell_ids,
+        actual_times=times,
+        positive_cell_ids=positive_cell_ids,
+        positive_times=positive_times,
+    )
+    if not (
+        np.array_equal(positive_cell_ids, oracle_cell_ids)
+        and _times_match_with_ulp_slack(positive_times, oracle_times, max_ulp=_LOOKUP_ORACLE_MAX_ULP)
+    ):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin,
+                direction,
+                t_min=float(t_min),
+                t_max=float(t_max),
+                actual_cell_ids=cell_ids,
+                actual_times=times,
+                positive_cell_ids=positive_cell_ids,
+                positive_times=positive_times,
+                oracle_cell_ids=oracle_cell_ids,
+                oracle_times=oracle_times,
+                extra_lines=(
+                    f"whole-trace comparison uses oracle-side positive-trace normalization and {_LOOKUP_ORACLE_MAX_ULP}-ULP time slack",
+                ),
+            )
+        )
 
 
 def _assert_first_event_matches_lookup(
@@ -533,13 +982,40 @@ def _assert_first_event_matches_lookup(
     t_exit, active_faces = _cell_exit_event_xyz(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     event_xyz = origin + t_exit * direction
     path = walk_event_faces_xyz(tree, start_cell_id, active_faces, event_xyz, direction)
+    full_cell_ids, full_times = trace_xyz_refined_event_path(tree, start_cell_id, origin, direction)
+    expected_faces = _active_faces_from_signs(sign_triplet)
+    expected_owner = _lookup_after_first_event(tree, origin, direction)
 
     if max_path_length is None:
         max_path_length = len(active_faces)
-    assert t_exit == 1.0
-    assert active_faces == _active_faces_from_signs(sign_triplet)
-    assert min_path_length <= len(path) <= max_path_length
-    assert path[-1] == _lookup_after_first_event(tree, origin, direction)
+    if not (
+        t_exit == 1.0
+        and active_faces == expected_faces
+        and min_path_length <= len(path) <= max_path_length
+        and path[-1] == expected_owner
+    ):
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin,
+                direction,
+                t_min=0.0,
+                t_max=np.inf,
+                actual_cell_ids=full_cell_ids,
+                actual_times=full_times,
+                extra_lines=(
+                    f"sign_triplet={sign_triplet}",
+                    f"t_exit={float(t_exit)!r}",
+                    f"active_faces={active_faces}",
+                    f"expected_active_faces={expected_faces}",
+                    f"path={path}",
+                    f"expected_post_event_owner={expected_owner}",
+                    f"min_path_length={int(min_path_length)}",
+                    f"max_path_length={int(max_path_length)}",
+                ),
+            )
+        )
 
 
 def _assert_multiface_event_is_order_invariant(
@@ -551,11 +1027,32 @@ def _assert_multiface_event_is_order_invariant(
     origin, direction = _center_origin_and_direction(tree, start_cell_id, sign_triplet)
     t_exit, active_faces = _cell_exit_event_xyz(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     event_xyz = origin + t_exit * direction
+    full_cell_ids, full_times = trace_xyz_refined_event_path(tree, start_cell_id, origin, direction)
     finals = {
         int(walk_event_faces_xyz(tree, start_cell_id, permutation, event_xyz, direction)[-1])
         for permutation in itertools.permutations(active_faces)
     }
-    assert finals == {_lookup_after_first_event(tree, origin, direction)}
+    expected_owner = _lookup_after_first_event(tree, origin, direction)
+    if finals != {expected_owner}:
+        raise AssertionError(
+            _trace_debug_report(
+                tree,
+                start_cell_id,
+                origin,
+                direction,
+                t_min=0.0,
+                t_max=np.inf,
+                actual_cell_ids=full_cell_ids,
+                actual_times=full_times,
+                extra_lines=(
+                    f"sign_triplet={sign_triplet}",
+                    f"t_exit={float(t_exit)!r}",
+                    f"active_faces={active_faces}",
+                    f"permutation_final_owners={tuple(sorted(finals))}",
+                    f"expected_post_event_owner={expected_owner}",
+                ),
+            )
+        )
 
 
 def _assert_center_trace_matches_lookup_oracle(
@@ -568,6 +1065,20 @@ def _assert_center_trace_matches_lookup_oracle(
 ) -> None:
     """Check one center-origin whole trace against the independent interval-ownership oracle."""
     origin, direction = _center_origin_and_direction(tree, start_cell_id, sign_triplet)
+    _assert_full_trace_matches_lookup_oracle(tree, start_cell_id, origin, direction, t_min=t_min, t_max=t_max)
+
+
+def _assert_relative_origin_trace_matches_lookup_oracle(
+    tree: Octree,
+    start_cell_id: int,
+    relative_origin_xyz: tuple[float, float, float],
+    sign_triplet: tuple[int, int, int],
+    *,
+    t_min: float = 0.0,
+    t_max: float = np.inf,
+) -> None:
+    """Check one off-center whole trace against the normalized independent oracle."""
+    origin, direction = _relative_origin_and_direction(tree, start_cell_id, relative_origin_xyz, sign_triplet)
     _assert_full_trace_matches_lookup_oracle(tree, start_cell_id, origin, direction, t_min=t_min, t_max=t_max)
 
 
@@ -635,6 +1146,21 @@ def test_regular_clipped_center_traces_match_lookup_oracle(
     _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet, t_min=0.5, t_max=2.5)
 
 
+@pytest.mark.parametrize("tree_builder", _REGULAR_TREE_BUILDERS)
+def test_regular_off_center_whole_traces_match_lookup_oracle(tree_builder) -> None:
+    """Regular off-center rays from all eight interior octants should match the oracle."""
+    tree = tree_builder()
+    for start_cell_id in _REGULAR_CELL_IDS:
+        for relative_origin_xyz in _INTERIOR_OCTANT_RELATIVE_ORIGINS:
+            for sign_triplet in _SIGN_CASES:
+                _assert_relative_origin_trace_matches_lookup_oracle(
+                    tree,
+                    start_cell_id,
+                    relative_origin_xyz,
+                    sign_triplet,
+                )
+
+
 @pytest.mark.parametrize("tree_builder", _REFINED_TREE_BUILDERS)
 @pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
 def test_refined_neighbor_table_invariants_hold(tree_builder, refined_half: tuple[int, int, int]) -> None:
@@ -676,9 +1202,6 @@ def test_refined_multiface_events_are_order_invariant(
     _assert_multiface_event_is_order_invariant(tree, start_cell_id, sign_triplet)
 
 
-# The refined nondyadic midpoint-probe oracle splits some multiface events into
-# one-ULP pseudo-intervals, so the exhaustive whole-trace oracle sweep is explicit
-# about the missing nondyadic coverage instead of pretending it does not exist.
 @pytest.mark.parametrize("tree_builder", _REFINED_WHOLE_TRACE_TREE_BUILDERS)
 @pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
 @pytest.mark.parametrize("start_cell_id", _REFINED_CELL_IDS)
@@ -689,7 +1212,7 @@ def test_refined_whole_center_traces_match_lookup_oracle(
     start_cell_id: int,
     sign_triplet: tuple[int, int, int],
 ) -> None:
-    """Dyadic refined whole traces should match independent interval ownership exactly."""
+    """Refined whole traces should match normalized independent interval ownership."""
     tree = tree_builder(refined_half)
     _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet)
 
@@ -704,9 +1227,28 @@ def test_refined_clipped_center_traces_match_lookup_oracle(
     start_cell_id: int,
     sign_triplet: tuple[int, int, int],
 ) -> None:
-    """Dyadic refined traces should still match the midpoint-probe oracle after clipping."""
+    """Refined traces should still match normalized midpoint-probe ownership after clipping."""
     tree = tree_builder(refined_half)
     _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet, t_min=0.5, t_max=2.5)
+
+
+@pytest.mark.parametrize("tree_builder", _REFINED_TREE_BUILDERS)
+@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
+def test_refined_off_center_whole_traces_match_lookup_oracle(
+    tree_builder,
+    refined_half: tuple[int, int, int],
+) -> None:
+    """Refined off-center rays from all eight interior octants should match the oracle."""
+    tree = tree_builder(refined_half)
+    for start_cell_id in _REFINED_CELL_IDS:
+        for relative_origin_xyz in _INTERIOR_OCTANT_RELATIVE_ORIGINS:
+            for sign_triplet in _SIGN_CASES:
+                _assert_relative_origin_trace_matches_lookup_oracle(
+                    tree,
+                    start_cell_id,
+                    relative_origin_xyz,
+                    sign_triplet,
+                )
 
 
 @pytest.mark.parametrize(
