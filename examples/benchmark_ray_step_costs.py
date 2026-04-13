@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile one warmed ray trace by per-cell step category."""
+"""Profile one warmed xyz ray trace through public event-trace statistics."""
 
 from __future__ import annotations
 
@@ -13,10 +13,6 @@ from batread.dataset import Dataset
 
 from batcamp import OctreeRayTracer
 from batcamp.constants import XYZ_VARS
-from batcamp.ray import _cell_segment_trace_kernel
-from batcamp.ray import _launch_leaf_kernel
-from batcamp.ray import _lookup_xyz_leaf_kernel
-from batcamp.ray import _resolve_boundary_owner_leaf_kernel
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -58,319 +54,111 @@ def _ray_setup(
     return origins, directions, float(xmax - xmin)
 
 
-def _profile_trace_branch(
-    start_leaf_id: int,
-    origin_xyz: np.ndarray,
-    direction_xyz: np.ndarray,
-    t_min: float,
-    t_max: float,
-    profile: dict[str, float | int],
-    leaf_valid: np.ndarray,
-    face_xyz: np.ndarray,
-    face_normal: np.ndarray,
-    face_plane_d: np.ndarray,
-    face_edge_normal: np.ndarray,
-    face_edge_d: np.ndarray,
-    leaf_scales: np.ndarray,
-    face_patch_center: np.ndarray,
-    next_cell: np.ndarray,
-    tree_coord_code: int,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_parent: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    axis2_period: float,
-    axis2_periodic: bool,
-    n_valid_leaf: int,
-) -> None:
-    """Accumulate one branch cost breakdown with the live step logic."""
-    current_leaf = int(start_leaf_id)
-    current_t = float(t_min)
-    max_steps = int(n_valid_leaf) + 1
-
-    for _ in range(max_steps):
-        if current_t >= float(t_max):
-            break
-
-        profile["steps"] += 1
-
-        t0 = time.perf_counter()
-        ok, segment_enter, exit_t, _, active_face_mask = _cell_segment_trace_kernel(
-            face_xyz[current_leaf],
-            face_normal[current_leaf],
-            face_plane_d[current_leaf],
-            face_edge_normal[current_leaf],
-            face_edge_d[current_leaf],
-            leaf_scales[current_leaf],
-            origin_xyz,
-            direction_xyz,
-            current_t,
-            t_min,
-        )
-        profile["cell_segment_s"] += float(time.perf_counter() - t0)
-
-        if not ok or segment_enter >= float(t_max) or exit_t >= float(t_max):
-            break
-
-        exit_xyz = origin_xyz + exit_t * direction_xyz
-        profile["ownership_calls"] += 1
-        t0 = time.perf_counter()
-        next_leaf_id = _resolve_boundary_owner_leaf_kernel(
-            current_leaf,
-            exit_xyz,
-            direction_xyz,
-            face_normal,
-            face_patch_center,
-            int(active_face_mask),
-            leaf_valid,
-            next_cell,
-            leaf_scales,
-            tree_coord_code,
-            cell_child,
-            root_cell_ids,
-            cell_parent,
-            cell_bounds,
-            domain_bounds,
-            axis2_period,
-            axis2_periodic,
-        )
-        if next_leaf_id >= 0 and next_leaf_id != current_leaf:
-            profile["ownership_success"] += 1
-        profile["ownership_s"] += float(time.perf_counter() - t0)
-
-        if next_leaf_id < 0 or next_leaf_id == current_leaf:
-            break
-
-        current_leaf = int(next_leaf_id)
-        current_t = float(exit_t)
-
-
-def _ray_step_cost_report(
+def _trace_report(
     tracer: OctreeRayTracer,
     *,
     n_plane: int,
     bounds: tuple[float, float, float, float, float, float],
 ) -> dict[str, float | int]:
-    """Return one per-cell step cost report for one warmed ray plane."""
+    """Return one public-event-trace timing and segment-statistics report."""
     origins, directions, t_end = _ray_setup(n_plane=int(n_plane), bounds=bounds)
+
     tracer.trace(origins, directions, t_min=0.0, t_max=float(t_end))
+    t0 = time.perf_counter()
+    segments = tracer.trace(origins, directions, t_min=0.0, t_max=float(t_end))
+    trace_s = float(time.perf_counter() - t0)
 
-    seed_xyz = tracer.seed_domain(origins, directions, t_min=0.0, t_max=float(t_end)).reshape(-1, 3)
-    origins_flat = np.asarray(origins, dtype=np.float64).reshape(-1, 3)
-    directions_flat = np.asarray(directions, dtype=np.float64).reshape(-1, 3)
-    (
-        leaf_valid,
-        face_xyz,
-        face_normal,
-        face_plane_d,
-        face_edge_normal,
-        face_edge_d,
-        leaf_scales,
-        face_patch_center,
-        next_cell,
-        n_polar,
-        n_azimuth,
-        tree_coord_code,
-        cell_child,
-        root_cell_ids,
-        cell_parent,
-        cell_bounds,
-        domain_bounds,
-        axis2_period,
-        axis2_periodic,
-        n_valid_leaf,
-    ) = tracer.trace_kernel_state()
+    ray_counts = np.diff(segments.ray_offsets)
+    time_counts = np.diff(segments.time_offsets)
+    if not np.array_equal(time_counts, np.where(ray_counts == 0, 0, ray_counts + 1)):
+        raise ValueError("RaySegments has inconsistent packed counts.")
 
-    profile: dict[str, float | int] = {
+    n_rays = int(ray_counts.size)
+    nonempty_mask = ray_counts > 0
+    nonempty_rays = int(np.count_nonzero(nonempty_mask))
+    raw_segments = int(segments.cell_ids.size)
+    positive_segments = 0
+    zero_length_hops = 0
+    total_length = 0.0
+    positive_counts = np.zeros(n_rays, dtype=np.int64)
+
+    for ray_id in range(n_rays):
+        time_lo = int(segments.time_offsets[ray_id])
+        time_hi = int(segments.time_offsets[ray_id + 1])
+        ray_times = segments.times[time_lo:time_hi]
+        if ray_times.size == 0:
+            continue
+        ray_lengths = np.diff(ray_times)
+        positive_mask = ray_lengths > 0.0
+        positive_count = int(np.count_nonzero(positive_mask))
+        zero_count = int(ray_lengths.size - positive_count)
+        positive_counts[ray_id] = positive_count
+        positive_segments += positive_count
+        zero_length_hops += zero_count
+        total_length += float(np.sum(ray_lengths[positive_mask], dtype=np.float64))
+
+    rays_per_s = float(n_rays) / trace_s if trace_s > 0.0 else np.nan
+    positive_segments_per_s = float(positive_segments) / trace_s if trace_s > 0.0 else np.nan
+    mean_positive_segments = float(np.mean(positive_counts[nonempty_mask])) if nonempty_rays else 0.0
+    max_positive_segments = int(np.max(positive_counts)) if positive_counts.size else 0
+    mean_length = total_length / float(nonempty_rays) if nonempty_rays else 0.0
+
+    return {
         "sample_resolution": int(n_plane),
-        "sample_rays": int(origins_flat.shape[0]),
-        "steps": 0,
-        "ownership_calls": 0,
-        "ownership_success": 0,
-        "cell_segment_s": 0.0,
-        "ownership_s": 0.0,
+        "sample_rays": n_rays,
+        "nonempty_rays": nonempty_rays,
+        "raw_segments": raw_segments,
+        "positive_segments": int(positive_segments),
+        "zero_length_hops": int(zero_length_hops),
+        "trace_s": trace_s,
+        "rays_per_s": rays_per_s,
+        "positive_segments_per_s": positive_segments_per_s,
+        "mean_positive_segments_per_ray": mean_positive_segments,
+        "max_positive_segments_per_ray": max_positive_segments,
+        "total_length": total_length,
+        "mean_length_per_nonempty_ray": mean_length,
     }
-
-    for ray_id in range(int(origins_flat.shape[0])):
-        seed = seed_xyz[ray_id]
-        if not np.all(np.isfinite(seed)):
-            continue
-
-        seed_leaf_id = _lookup_xyz_leaf_kernel(
-            seed,
-            -1,
-            tree_coord_code,
-            cell_child,
-            root_cell_ids,
-            cell_parent,
-            cell_bounds,
-            domain_bounds,
-            axis2_period,
-            axis2_periodic,
-        )
-        if seed_leaf_id < 0:
-            continue
-
-        origin_xyz = origins_flat[ray_id]
-        direction_xyz = directions_flat[ray_id]
-        direction_norm_sq = float(np.dot(direction_xyz, direction_xyz))
-        t_seed = float(np.dot(seed - origin_xyz, direction_xyz) / direction_norm_sq)
-
-        backward_leaf = _launch_leaf_kernel(
-            int(seed_leaf_id),
-            seed,
-            -direction_xyz,
-            leaf_valid,
-            face_normal,
-            face_patch_center,
-            face_xyz,
-            face_plane_d,
-            face_edge_normal,
-            face_edge_d,
-            leaf_scales,
-            next_cell,
-            n_polar,
-            n_azimuth,
-            tree_coord_code,
-            cell_child,
-            root_cell_ids,
-            cell_parent,
-            cell_bounds,
-            domain_bounds,
-            axis2_period,
-            axis2_periodic,
-        )
-        forward_leaf = _launch_leaf_kernel(
-            int(seed_leaf_id),
-            seed,
-            direction_xyz,
-            leaf_valid,
-            face_normal,
-            face_patch_center,
-            face_xyz,
-            face_plane_d,
-            face_edge_normal,
-            face_edge_d,
-            leaf_scales,
-            next_cell,
-            n_polar,
-            n_azimuth,
-            tree_coord_code,
-            cell_child,
-            root_cell_ids,
-            cell_parent,
-            cell_bounds,
-            domain_bounds,
-            axis2_period,
-            axis2_periodic,
-        )
-
-        backward_limit = max(0.0, t_seed)
-        if backward_limit > 0.0 and backward_leaf >= 0:
-            _profile_trace_branch(
-                int(backward_leaf),
-                seed,
-                -direction_xyz,
-                0.0,
-                float(backward_limit),
-                profile,
-                leaf_valid,
-                face_xyz,
-                face_normal,
-                face_plane_d,
-                face_edge_normal,
-                face_edge_d,
-                leaf_scales,
-                face_patch_center,
-                next_cell,
-                tree_coord_code,
-                cell_child,
-                root_cell_ids,
-                cell_parent,
-                cell_bounds,
-                domain_bounds,
-                axis2_period,
-                axis2_periodic,
-                n_valid_leaf,
-            )
-
-        forward_limit = max(0.0, float(t_end) - t_seed)
-        if forward_limit > 0.0 and forward_leaf >= 0:
-            _profile_trace_branch(
-                int(forward_leaf),
-                seed,
-                direction_xyz,
-                0.0,
-                float(forward_limit),
-                profile,
-                leaf_valid,
-                face_xyz,
-                face_normal,
-                face_plane_d,
-                face_edge_normal,
-                face_edge_d,
-                leaf_scales,
-                face_patch_center,
-                next_cell,
-                tree_coord_code,
-                cell_child,
-                root_cell_ids,
-                cell_parent,
-                cell_bounds,
-                domain_bounds,
-                axis2_period,
-                axis2_periodic,
-                n_valid_leaf,
-            )
-
-    total_step_s = (
-        float(profile["cell_segment_s"])
-        + float(profile["ownership_s"])
-    )
-    profile["total_profiled_s"] = total_step_s
-    profile["cell_segment_frac"] = float(profile["cell_segment_s"]) / total_step_s if total_step_s > 0.0 else np.nan
-    profile["ownership_frac"] = float(profile["ownership_s"]) / total_step_s if total_step_s > 0.0 else np.nan
-    return profile
 
 
 def _write_report(report: dict[str, float | int], out_path: Path) -> None:
-    """Write one markdown report with the aggregated step-cost breakdown."""
+    """Write one markdown report with the public event-trace benchmark summary."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Ray Step Cost Report",
+        "# Ray Trace Cost Report",
         "",
+        "- scope: `xyz` public event tracer only",
         f"- sampled ray plane: `{int(report['sample_resolution'])}x{int(report['sample_resolution'])}`",
-        f"- profiled rays: `{int(report['sample_rays'])}`",
-        f"- profiled cell steps: `{int(report['steps'])}`",
-        f"- ownership success: `{int(report['ownership_success'])}/{int(report['ownership_calls'])}`",
+        f"- sampled rays: `{int(report['sample_rays'])}`",
+        f"- nonempty rays: `{int(report['nonempty_rays'])}`",
         "",
-        "| step piece | share | seconds | calls |",
-        "|---|---:|---:|---:|",
-        (
-            f"| current cell segment solve | {100.0 * float(report['cell_segment_frac']):.1f}% | "
-            f"{float(report['cell_segment_s']):.6f} | {int(report['steps'])} |"
-        ),
-        (
-            f"| ownership continuation | {100.0 * float(report['ownership_frac']):.1f}% | "
-            f"{float(report['ownership_s']):.6f} | {int(report['ownership_calls'])} |"
-        ),
+        "| quantity | value |",
+        "|---|---:|",
+        f"| trace wall time (s) | {float(report['trace_s']):.6f} |",
+        f"| rays / s | {float(report['rays_per_s']):.1f} |",
+        f"| positive segments / s | {float(report['positive_segments_per_s']):.1f} |",
+        f"| raw packed segments | {int(report['raw_segments'])} |",
+        f"| positive segments | {int(report['positive_segments'])} |",
+        f"| zero-length hops | {int(report['zero_length_hops'])} |",
+        f"| mean positive segments / nonempty ray | {float(report['mean_positive_segments_per_ray']):.3f} |",
+        f"| max positive segments / ray | {int(report['max_positive_segments_per_ray'])} |",
+        f"| total traced length | {float(report['total_length']):.6f} |",
+        f"| mean traced length / nonempty ray | {float(report['mean_length_per_nonempty_ray']):.6f} |",
     ]
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Profile one warmed ray trace by per-cell step category.")
+    parser = argparse.ArgumentParser(description="Profile one warmed xyz ray trace through public event-trace statistics.")
     parser.add_argument(
         "--dataset",
-        default="3d__var_1_n00000000.plt",
-        help="Dataset basename to resolve from sample_data or pooch.",
+        default="3d__var_2_n00006003.plt",
+        help="XYZ dataset basename to resolve from sample_data or pooch.",
     )
     parser.add_argument(
         "--resolution",
         type=int,
         default=31,
-        help="Square ray-plane resolution used for the step profile.",
+        help="Square ray-plane resolution used for the trace profile.",
     )
     parser.add_argument(
         "--output-dir",
@@ -401,6 +189,9 @@ def main() -> None:
     progress.start("prepare octree")
     tree, tree_s = _time_call(_build_octree, ds)
     progress.complete("prepare octree", tree_s, detail=f"coord={tree.tree_coord}")
+    if str(tree.tree_coord) != "xyz":
+        raise NotImplementedError("benchmark_ray_step_costs currently supports only tree_coord='xyz'.")
+
     progress.start("build ray tracer")
     tracer, tracer_s = _time_call(OctreeRayTracer, tree)
     progress.complete("build ray tracer", tracer_s)
@@ -417,23 +208,21 @@ def main() -> None:
         float(dmax[2]),
     )
 
-    progress.start(f"profile ray step costs at {int(args.resolution)}x{int(args.resolution)}")
+    progress.start(f"profile event trace at {int(args.resolution)}x{int(args.resolution)}")
     report, profile_s = _time_call(
-        _ray_step_cost_report,
+        _trace_report,
         tracer,
         n_plane=int(args.resolution),
         bounds=bounds,
     )
     progress.complete(
-        f"profile ray step costs at {int(args.resolution)}x{int(args.resolution)}",
+        f"profile event trace at {int(args.resolution)}x{int(args.resolution)}",
         profile_s,
         detail=(
-            f"segment={100.0 * float(report['cell_segment_frac']):.1f}% "
-            f"ownership={100.0 * float(report['ownership_frac']):.1f}%"
+            f"trace_s={float(report['trace_s']):.6f} "
+            f"positive_segments={int(report['positive_segments'])} "
+            f"zero_hops={int(report['zero_length_hops'])}"
         ),
-    )
-    progress.note(
-        f"steps={int(report['steps'])} ownership={int(report['ownership_success'])}/{int(report['ownership_calls'])}"
     )
 
     out_path = out_root / f"benchmark_ray_step_costs_{Path(str(args.dataset)).stem}_{int(args.resolution)}x{int(args.resolution)}.md"

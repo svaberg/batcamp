@@ -78,26 +78,109 @@ def _cell_exit_event_xyz(
 
 
 def _event_subface_id(
+    cell_neighbor: np.ndarray,
+    domain_bounds: np.ndarray,
     cell_bounds: np.ndarray,
     cell_id: int,
     face_id: int,
+    active_faces: tuple[int, ...],
     event_xyz: np.ndarray,
     direction_xyz: np.ndarray,
 ) -> int:
-    """Return the refined face patch selected by one event point."""
-    bounds = cell_bounds[int(cell_id)]
+    """Return the neighbor-table face patch whose destination tangential slabs own one event point."""
     tangential_axes = _FACE_TANGENTIAL_AXES[int(face_id)]
-    subface_id = 0
-    for bit_shift, axis in zip((1, 0), tangential_axes):
-        axis = int(axis)
-        start = float(bounds[axis, START])
-        stop = start + float(bounds[axis, WIDTH])
-        middle = 0.5 * (start + stop)
-        value = float(event_xyz[axis])
-        direction_value = float(direction_xyz[axis])
-        if value > middle or (value == middle and direction_value > 0.0):
-            subface_id |= 1 << bit_shift
-    return int(subface_id)
+    active_face_by_axis = {
+        int(_FACE_AXIS[int(active_face_id)]): int(active_face_id)
+        for active_face_id in active_faces
+    }
+    active_face_order = {
+        int(active_face_id): order
+        for order, active_face_id in enumerate(active_faces)
+    }
+    row = np.asarray(cell_neighbor[int(cell_id), int(face_id)], dtype=np.int64)
+    nonnegative = row[row >= 0]
+    if nonnegative.size == 0:
+        return 0
+    if np.unique(nonnegative).size == 1:
+        return int(np.flatnonzero(row >= 0)[0])
+    matched_subface = -1
+    matched_neighbor = -1
+    negative_only = True
+    current_bounds = cell_bounds[int(cell_id)]
+    for subface_id in range(4):
+        neighbor_id = int(cell_neighbor[int(cell_id), int(face_id), subface_id])
+        if neighbor_id < 0:
+            continue
+        negative_only = False
+        contains = True
+        neighbor_bounds = cell_bounds[neighbor_id]
+        for axis in tangential_axes:
+            axis = int(axis)
+            value = float(event_xyz[axis])
+            current_start = float(current_bounds[axis, START])
+            current_stop = current_start + float(current_bounds[axis, WIDTH])
+            active_face_id = active_face_by_axis.get(axis)
+            direction_value = float(direction_xyz[axis])
+            implicit_active_side = None
+            if value == current_start and direction_value < 0.0:
+                implicit_active_side = 0
+            elif value == current_stop and direction_value > 0.0:
+                implicit_active_side = 1
+            if active_face_id is not None or implicit_active_side is not None:
+                neighbor_start = float(neighbor_bounds[axis, START])
+                neighbor_stop = neighbor_start + float(neighbor_bounds[axis, WIDTH])
+                if active_face_id is not None:
+                    active_side = int(_FACE_SIDE[active_face_id])
+                    if active_face_order[active_face_id] < active_face_order[int(face_id)]:
+                        active_side = 1 - active_side
+                else:
+                    active_side = int(implicit_active_side)
+                contains_current_interval = neighbor_start <= current_start and current_stop <= neighbor_stop
+                if not contains_current_interval:
+                    if active_side == 0:
+                        if neighbor_start != current_start:
+                            contains = False
+                            break
+                    else:
+                        if neighbor_stop != current_stop:
+                            contains = False
+                            break
+                if value < current_start or value > current_stop:
+                    contains = False
+                    break
+                continue
+            start = float(neighbor_bounds[axis, START])
+            stop = start + float(neighbor_bounds[axis, WIDTH])
+            if direction_value > 0.0:
+                if value < start or value >= stop:
+                    contains = False
+                    break
+            elif direction_value < 0.0:
+                if value <= start or value > stop:
+                    contains = False
+                    break
+            else:
+                if start == float(domain_bounds[axis, START]):
+                    if value < start or value > stop:
+                        contains = False
+                        break
+                else:
+                    if value <= start or value > stop:
+                        contains = False
+                        break
+        if not contains:
+            continue
+        if matched_neighbor < 0:
+            matched_subface = int(subface_id)
+            matched_neighbor = int(neighbor_id)
+            continue
+        if neighbor_id != matched_neighbor:
+            raise ValueError("Event face patch is ambiguous under destination-side ownership.")
+    if negative_only:
+        return 0
+    if matched_subface < 0:
+        raise ValueError("Event face patch has no destination-side owner.")
+    return int(matched_subface)
 
 
 def _event_on_face(
@@ -137,12 +220,22 @@ def walk_event_faces_xyz(
     path: list[int] = []
     cell_bounds = tree.cell_bounds
     cell_neighbor = tree.cell_neighbor
+    domain_bounds = tree._domain_bounds
     for face_id in active_faces:
         if current_cell < 0:
             break
         if not _event_on_face(cell_bounds, current_cell, int(face_id), event_xyz):
             continue
-        subface_id = _event_subface_id(cell_bounds, current_cell, int(face_id), event_xyz, direction_xyz)
+        subface_id = _event_subface_id(
+            cell_neighbor,
+            domain_bounds,
+            cell_bounds,
+            current_cell,
+            int(face_id),
+            active_faces,
+            event_xyz,
+            direction_xyz,
+        )
         current_cell = int(cell_neighbor[current_cell, int(face_id), subface_id])
         path.append(current_cell)
     return tuple(path)

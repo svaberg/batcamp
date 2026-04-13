@@ -314,25 +314,17 @@ def _save_four_panel_figure(
     cmap = plt.colormaps["viridis"].copy()
     cmap.set_bad(color="#dddddd")
 
-    fig = plt.figure(figsize=(14, 10.5))
+    fig = plt.figure(figsize=(10.4, 10.8))
 
-    left = 0.06
-    right = 0.97
-    bottom = 0.07
-    top = 0.97
+    panel_size = 0.34
     col_gap = 0.055
-    row_gap = 0.09
-    cbar_gap = 0.038
-    cbar_height = 0.028
-
-    usable_width = (right - left) - col_gap
-    usable_height = (top - bottom) - cbar_height - cbar_gap - row_gap
-    panel_size = min(usable_width / 2.0, usable_height / 2.0)
-
+    row_gap = 0.060
+    cbar_height = 0.018
+    cbar_gap = 0.042
     grid_width = 2.0 * panel_size + col_gap
     grid_height = 2.0 * panel_size + row_gap
-    x0 = left + 0.5 * ((right - left) - grid_width)
-    y0 = bottom + 0.5 * ((top - bottom) - (grid_height + cbar_gap + cbar_height))
+    x0 = 0.5 - 0.5 * grid_width
+    y0 = 0.11
 
     cax = fig.add_axes([x0, y0 + grid_height + cbar_gap, grid_width, cbar_height])
     axes = np.array(
@@ -350,9 +342,9 @@ def _save_four_panel_figure(
     )
 
     im0 = axes[0, 0].imshow(img0_disp, origin="lower", cmap=cmap, norm=norm, aspect="equal")
-    axes[0, 0].set_title("Plot 0: 3D grid-sum")
+    axes[0, 0].set_title("Grid")
     axes[0, 0].set_xlabel("y index")
-    axes[0, 0].set_ylabel("z index")
+    axes[0, 0].set_ylabel("z index", labelpad=1)
     axes[0, 0].text(
         0.02,
         0.98,
@@ -361,13 +353,13 @@ def _save_four_panel_figure(
         va="top",
         ha="left",
         bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
-        fontsize=9,
+        fontsize=7,
     )
 
     axes[0, 1].imshow(img1_disp, origin="lower", cmap=cmap, norm=norm, aspect="equal")
-    axes[0, 1].set_title("Plot 1: Ray integration")
+    axes[0, 1].set_title("Ray")
     axes[0, 1].set_xlabel("y index")
-    axes[0, 1].set_ylabel("z index")
+    axes[0, 1].set_ylabel("")
     axes[0, 1].text(
         0.02,
         0.98,
@@ -376,15 +368,14 @@ def _save_four_panel_figure(
         va="top",
         ha="left",
         bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
-        fontsize=9,
+        fontsize=7,
     )
 
     cbar = fig.colorbar(im0, cax=cax, orientation="horizontal")
     cbar.set_label(cbar_label)
-    cbar.ax.xaxis.set_ticks_position("top")
-    cbar.ax.xaxis.set_label_position("top")
+    cbar.ax.tick_params(labelsize=8, pad=1)
 
-    axes[1, 0].set_title("Comparison: plot0 vs plot1")
+    axes[1, 0].set_title("Comparison: grid vs ray")
     if pos_vals.size > 0:
         lo_data = float(np.min(pos_vals))
         hi_data = float(np.max(pos_vals))
@@ -479,8 +470,8 @@ def _save_four_panel_figure(
         axes[1, 0].set_xlim(1.0, 10.0)
         axes[1, 0].set_ylim(1.0, 10.0)
         axes[1, 0].text(0.5, 0.5, "no positive overlap", transform=axes[1, 0].transAxes, ha="center", va="center")
-    axes[1, 0].set_xlabel("plot0 values")
-    axes[1, 0].set_ylabel("plot1 values")
+    axes[1, 0].set_xlabel("grid values")
+    axes[1, 0].set_ylabel("ray values", labelpad=1)
     axes[1, 0].grid(True, which="both", alpha=0.25)
     log_l1_text = "n/a" if not np.isfinite(eq_log_l1) else f"{eq_log_l1:.3e}"
     log_rmse_text = "n/a" if not np.isfinite(eq_log_rmse) else f"{eq_log_rmse:.3e}"
@@ -493,15 +484,15 @@ def _save_four_panel_figure(
         f"log10 L1={log_l1_text}\n"
         f"log10 RMSE={log_rmse_text}\n"
         f"positive overlap={eq_pos_overlap}\n"
-        f"plot0>0, plot1=0: {int(np.count_nonzero(plot0_only))}\n"
-        f"plot1>0, plot0=0: {int(np.count_nonzero(plot1_only))}\n"
-        f"plot0>0, plot1=nan: {int(np.count_nonzero(plot0_nan))}\n"
-        f"plot1>0, plot0=nan: {int(np.count_nonzero(plot1_nan))}",
+        f"grid>0, ray=0: {int(np.count_nonzero(plot0_only))}\n"
+        f"ray>0, grid=0: {int(np.count_nonzero(plot1_only))}\n"
+        f"grid>0, ray=nan: {int(np.count_nonzero(plot0_nan))}\n"
+        f"ray>0, grid=nan: {int(np.count_nonzero(plot1_nan))}",
         transform=axes[1, 0].transAxes,
         va="top",
         ha="left",
         bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
-        fontsize=9,
+        fontsize=7,
     )
 
     axes[1, 1].set_title("Ray Segment Count Histogram")
@@ -529,10 +520,10 @@ def _save_four_panel_figure(
     else:
         axes[1, 1].text(0.5, 0.5, "no rays", transform=axes[1, 1].transAxes, ha="center", va="center")
     axes[1, 1].set_xlabel("segments per ray")
-    axes[1, 1].set_ylabel("pixel count")
+    axes[1, 1].set_ylabel("")
     axes[1, 1].grid(True, alpha=0.25)
 
-    fig.suptitle(f"{dataset_label} | plane={n_plane}x{n_plane} | nx_sum={nx_sum}", fontsize=12, y=0.995)
+    fig.suptitle(f"{dataset_label} | plane={n_plane}x{n_plane} | nx_sum={nx_sum}", fontsize=11, y=0.94)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
@@ -682,6 +673,9 @@ def _run_case(
         tree_s,
         detail=f"coord={tree.tree_coord}",
     )
+    if str(tree.tree_coord) != "xyz":
+        progress.note(f"[{case.label}] skip: ray benchmark currently supports only tree_coord='xyz'")
+        return
     progress.start(f"[{case.label}] build interpolator")
     interp, interp_s = _time_call(OctreeInterpolator, tree, np.asarray(ds[variable], dtype=float))
     progress.complete(f"[{case.label}] build interpolator", interp_s)

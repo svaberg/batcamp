@@ -7,6 +7,7 @@ import pytest
 
 from batcamp import Octree
 from batcamp._xyz_refined_event_walk import _cell_exit_event_xyz
+from batcamp._xyz_refined_event_walk import _event_subface_id
 from batcamp._xyz_refined_event_walk import trace_xyz_refined_event_path
 from batcamp._xyz_refined_event_walk import walk_event_faces_xyz
 from batcamp.octree import _FACE_AXIS
@@ -1310,6 +1311,62 @@ def test_refined_fine_to_coarse_face_subpatch_paths_are_exact(
     """Each refined face subpatch should choose the correct fine-to-coarse x-chain."""
     tree = _build_xyz_coarse_fine_tree()
     _assert_trace(tree, start_cell_id, origin_xyz, (-0.125, 0.0, 0.0), expected_cell_ids, (0.0, 1.0, 3.0, 7.0))
+
+
+def test_event_subface_id_uses_destination_slabs_not_source_midpoints() -> None:
+    """A crossed refined face must be classified by destination child slabs, not source-face arithmetic midpoints."""
+    domain_bounds = np.array(
+        (
+            (0.0, 1.0),
+            (0.0, 2.0),
+            (0.0, 1.0),
+        ),
+        dtype=float,
+    )
+    cell_bounds = np.array(
+        (
+            (
+                (0.0, 0.5),
+                (0.0, 1.0),
+                (0.0, 0.5),
+            ),
+            (
+                (0.5, 0.25),
+                (0.0, 0.49),
+                (0.0, 0.25),
+            ),
+            (
+                (0.5, 0.25),
+                (0.0, 0.49),
+                (0.25, 0.25),
+            ),
+            (
+                (0.5, 0.25),
+                (0.49, 0.51),
+                (0.0, 0.25),
+            ),
+            (
+                (0.5, 0.25),
+                (0.49, 0.51),
+                (0.25, 0.25),
+            ),
+        ),
+        dtype=float,
+    )
+    cell_neighbor = -np.ones((5, 6, 4), dtype=np.int64)
+    cell_neighbor[0, 1] = np.array((1, 2, 3, 4), dtype=np.int64)
+    event_xyz = np.array((0.5, 0.5, 0.25), dtype=float)
+    subface_id = _event_subface_id(
+        cell_neighbor,
+        domain_bounds,
+        cell_bounds,
+        0,
+        1,
+        (1,),
+        event_xyz,
+        np.array((1.0, 0.0, 0.0), dtype=float),
+    )
+    assert subface_id == 2
 
 
 @pytest.mark.parametrize(
