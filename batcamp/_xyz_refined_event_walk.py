@@ -14,6 +14,8 @@ from .octree import _FACE_AXIS
 from .octree import _FACE_SIDE
 from .octree import _FACE_TANGENTIAL_AXES
 
+_MAX_RAY_TRACE_EVENTS = 1000
+
 
 def _domain_interval_xyz(
     origin_xyz: np.ndarray,
@@ -217,7 +219,8 @@ def walk_event_faces_xyz(
     if str(tree.tree_coord) != "xyz":
         raise ValueError("walk_event_faces_xyz supports only tree_coord='xyz'.")
     current_cell = int(start_cell_id)
-    path: list[int] = []
+    path = np.empty(len(active_faces), dtype=np.int64)
+    path_count = 0
     cell_bounds = tree.cell_bounds
     cell_neighbor = tree.cell_neighbor
     domain_bounds = tree._domain_bounds
@@ -237,8 +240,9 @@ def walk_event_faces_xyz(
             direction_xyz,
         )
         current_cell = int(cell_neighbor[current_cell, int(face_id), subface_id])
-        path.append(current_cell)
-    return tuple(path)
+        path[path_count] = current_cell
+        path_count += 1
+    return tuple(int(cell_id) for cell_id in path[:path_count])
 
 
 def _event_xyz_on_active_faces(
@@ -300,18 +304,29 @@ def trace_xyz_refined_event_path(
     current_cell = int(tree.lookup_points(start_xyz[None, :], coord="xyz")[0])
     if current_cell < 0:
         current_cell = int(start_cell_id)
-    cell_ids: list[int] = []
-    times: list[float] = [float(start_t)]
+    cell_ids = np.empty(_MAX_RAY_TRACE_EVENTS, dtype=np.int64)
+    times = np.empty(_MAX_RAY_TRACE_EVENTS + 1, dtype=np.float64)
+    n_cell = 0
+    n_time = 1
+    times[0] = float(start_t)
     t_current = float(start_t)
     current_xyz = np.array(start_xyz, dtype=float)
     while current_cell >= 0 and t_current < stop_t:
         t_exit, active_faces = _cell_exit_event_xyz(tree.cell_bounds, current_cell, current_xyz, direction, t_current)
         if t_exit > stop_t:
-            cell_ids.append(current_cell)
-            times.append(float(stop_t))
+            if n_cell >= _MAX_RAY_TRACE_EVENTS:
+                raise ValueError(f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={_MAX_RAY_TRACE_EVENTS}.")
+            cell_ids[n_cell] = int(current_cell)
+            times[n_time] = float(stop_t)
+            n_cell += 1
+            n_time += 1
             break
-        cell_ids.append(current_cell)
-        times.append(float(t_exit))
+        if n_cell >= _MAX_RAY_TRACE_EVENTS:
+            raise ValueError(f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={_MAX_RAY_TRACE_EVENTS}.")
+        cell_ids[n_cell] = int(current_cell)
+        times[n_time] = float(t_exit)
+        n_cell += 1
+        n_time += 1
         event_xyz = _event_xyz_on_active_faces(
             tree.cell_bounds,
             current_cell,
@@ -324,9 +339,13 @@ def trace_xyz_refined_event_path(
         for intermediate_cell in path[:-1]:
             if intermediate_cell < 0:
                 break
-            cell_ids.append(intermediate_cell)
-            times.append(float(t_exit))
+            if n_cell >= _MAX_RAY_TRACE_EVENTS:
+                raise ValueError(f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={_MAX_RAY_TRACE_EVENTS}.")
+            cell_ids[n_cell] = int(intermediate_cell)
+            times[n_time] = float(t_exit)
+            n_cell += 1
+            n_time += 1
         current_cell = path[-1] if path else -1
         t_current = float(t_exit)
         current_xyz = np.array(event_xyz, dtype=float)
-    return np.asarray(cell_ids, dtype=np.int64), np.asarray(times, dtype=np.float64)
+    return cell_ids[:n_cell].copy(), times[:n_time].copy()
