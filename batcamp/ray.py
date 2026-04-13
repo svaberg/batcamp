@@ -8,7 +8,7 @@ import math
 
 import numpy as np
 
-from ._xyz_refined_event_walk import trace_xyz_refined_event_path
+from . import _xyz_refined_event_walk
 from .octree import Octree
 
 __all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image"]
@@ -46,35 +46,72 @@ def _trace_xyz_ray_batch(
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
     n_rays = int(o_flat.shape[0])
+    max_events = int(_xyz_refined_event_walk._MAX_RAY_TRACE_EVENTS)
     ray_offsets = np.empty(n_rays + 1, dtype=np.int64)
     time_offsets = np.empty(n_rays + 1, dtype=np.int64)
     ray_offsets[0] = 0
     time_offsets[0] = 0
-    cell_rows: list[np.ndarray] = []
-    time_rows: list[np.ndarray] = []
+    chunk_size = 256
+    cell_chunks: list[np.ndarray] = []
+    time_chunks: list[np.ndarray] = []
     n_cell = 0
     n_time = 0
-
-    for ray_id in range(n_rays):
-        cell_ids, times = trace_xyz_refined_event_path(
-            tree,
-            -1,
-            o_flat[ray_id],
-            d_flat[ray_id],
-            t_min=t_min,
-            t_max=t_max,
+    for chunk_lo in range(0, n_rays, chunk_size):
+        chunk_hi = min(chunk_lo + chunk_size, n_rays)
+        chunk_origins = o_flat[chunk_lo:chunk_hi]
+        chunk_directions = d_flat[chunk_lo:chunk_hi]
+        chunk_n_rays = int(chunk_hi - chunk_lo)
+        cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
+        time_counts = np.empty(chunk_n_rays, dtype=np.int64)
+        cell_buffer = np.empty((chunk_n_rays, max_events), dtype=np.int64)
+        time_buffer = np.empty((chunk_n_rays, max_events + 1), dtype=np.float64)
+        _xyz_refined_event_walk.trace_xyz_ray_batch_scratch_raw(
+            tree._root_cell_ids,
+            tree.cell_child,
+            tree.cell_bounds,
+            tree._domain_bounds,
+            tree.cell_neighbor,
+            chunk_origins,
+            chunk_directions,
+            float(t_min),
+            float(t_max),
+            cell_counts,
+            time_counts,
+            cell_buffer,
+            time_buffer,
         )
-        cell_ids = np.asarray(cell_ids, dtype=np.int64)
-        times = np.asarray(times, dtype=np.float64)
-        cell_rows.append(cell_ids)
-        time_rows.append(times)
-        n_cell += int(cell_ids.size)
-        n_time += int(times.size)
-        ray_offsets[ray_id + 1] = n_cell
-        time_offsets[ray_id + 1] = n_time
-
-    cell_ids_out = np.concatenate(cell_rows).astype(np.int64, copy=False) if n_cell else np.empty(0, dtype=np.int64)
-    times_out = np.concatenate(time_rows).astype(np.float64, copy=False) if n_time else np.empty(0, dtype=np.float64)
+        if np.any(cell_counts < 0) or np.any(time_counts < 0):
+            raise ValueError(
+                f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={max_events} or encountered an invalid event."
+            )
+        chunk_cell_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
+        chunk_time_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
+        chunk_cell_offsets[0] = 0
+        chunk_time_offsets[0] = 0
+        np.cumsum(cell_counts, out=chunk_cell_offsets[1:])
+        np.cumsum(time_counts, out=chunk_time_offsets[1:])
+        chunk_cell_total = int(chunk_cell_offsets[-1])
+        chunk_time_total = int(chunk_time_offsets[-1])
+        chunk_cells = np.empty(chunk_cell_total, dtype=np.int64)
+        chunk_times = np.empty(chunk_time_total, dtype=np.float64)
+        _xyz_refined_event_walk.pack_xyz_ray_batch_raw(
+            cell_counts,
+            time_counts,
+            cell_buffer,
+            time_buffer,
+            chunk_cell_offsets,
+            chunk_time_offsets,
+            chunk_cells,
+            chunk_times,
+        )
+        cell_chunks.append(chunk_cells)
+        time_chunks.append(chunk_times)
+        n_cell += chunk_cell_total
+        n_time += chunk_time_total
+        ray_offsets[chunk_lo + 1 : chunk_hi + 1] = n_cell - chunk_cell_total + chunk_cell_offsets[1:]
+        time_offsets[chunk_lo + 1 : chunk_hi + 1] = n_time - chunk_time_total + chunk_time_offsets[1:]
+    cell_ids_out = np.concatenate(cell_chunks).astype(np.int64, copy=False) if n_cell else np.empty(0, dtype=np.int64)
+    times_out = np.concatenate(time_chunks).astype(np.float64, copy=False) if n_time else np.empty(0, dtype=np.float64)
     return RaySegments(
         ray_offsets=ray_offsets,
         time_offsets=time_offsets,
@@ -202,7 +239,7 @@ def render_midpoint_image(
 
     n_rays = int(o_flat.shape[0])
     n_components = int(interpolator.n_components)
-    accum = np.zeros((n_rays, n_components), dtype=np.float64)
+    active_counts = np.zeros(n_rays, dtype=np.int64)
     for ray_id in range(n_rays):
         cell_lo = int(segments.ray_offsets[ray_id])
         cell_hi = int(segments.ray_offsets[ray_id + 1])
@@ -214,13 +251,47 @@ def render_midpoint_image(
         ray_times = segments.times[time_lo:time_hi]
         segment_lengths = np.diff(ray_times)
         active = (segment_lengths > 0) & (ray_cell_ids >= 0)
-        if not np.any(active):
+        active_counts[ray_id] = int(np.count_nonzero(active))
+    n_active = int(np.sum(active_counts))
+    accum = np.zeros((n_rays, n_components), dtype=np.float64)
+    if n_active == 0:
+        out = accum.reshape(tuple(ray_shape) + interpolator.value_shape)
+        if interpolator.value_shape:
+            return out
+        return out.reshape(tuple(ray_shape))
+
+    mid_xyz = np.empty((n_active, 3), dtype=np.float64)
+    segment_weights = np.empty(n_active, dtype=np.float64)
+    sample_ray_ids = np.empty(n_active, dtype=np.int64)
+    out_pos = 0
+    for ray_id in range(n_rays):
+        active_count = int(active_counts[ray_id])
+        if active_count == 0:
             continue
+        cell_lo = int(segments.ray_offsets[ray_id])
+        cell_hi = int(segments.ray_offsets[ray_id + 1])
+        time_lo = int(segments.time_offsets[ray_id])
+        time_hi = int(segments.time_offsets[ray_id + 1])
+        ray_cell_ids = segments.cell_ids[cell_lo:cell_hi]
+        ray_times = segments.times[time_lo:time_hi]
+        segment_lengths = np.diff(ray_times)
+        active = (segment_lengths > 0) & (ray_cell_ids >= 0)
+        active_segment_lengths = segment_lengths[active]
         mid_t = ((ray_times[:-1] + ray_times[1:]) / 2)[active]
-        mid_xyz = o_flat[ray_id] + mid_t[:, None] * d_flat[ray_id]
-        samples = np.asarray(interpolator(mid_xyz, query_coord="xyz", log_outside_domain=False), dtype=np.float64)
-        samples_2d = samples.reshape(samples.shape[0], -1)
-        accum[ray_id] = np.sum(samples_2d * segment_lengths[active, None], axis=0)
+        out_hi = out_pos + active_count
+        mid_xyz[out_pos:out_hi] = o_flat[ray_id] + mid_t[:, None] * d_flat[ray_id]
+        segment_weights[out_pos:out_hi] = active_segment_lengths
+        sample_ray_ids[out_pos:out_hi] = int(ray_id)
+        out_pos = out_hi
+
+    samples = np.asarray(interpolator(mid_xyz, query_coord="xyz", log_outside_domain=False), dtype=np.float64)
+    samples_2d = samples.reshape(n_active, -1)
+    for component_id in range(n_components):
+        accum[:, component_id] = np.bincount(
+            sample_ray_ids,
+            weights=samples_2d[:, component_id] * segment_weights,
+            minlength=n_rays,
+        )
 
     out = accum.reshape(tuple(ray_shape) + interpolator.value_shape)
     if interpolator.value_shape:
