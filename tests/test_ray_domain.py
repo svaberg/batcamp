@@ -321,6 +321,24 @@ def test_render_midpoint_image_integrates_constant_density_along_one_ray() -> No
     np.testing.assert_allclose(image, np.array([[2.0]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
+def test_render_midpoint_image_uses_segment_cell_ids(monkeypatch) -> None:
+    tree = _build_xyz_tree()
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
+    origins = np.array([[[-2.0, -0.3, -0.2]]], dtype=float)
+    directions = np.array([[[1.0, 0.0, 0.0]]], dtype=float)
+    segments = tracer.trace(origins, directions)
+
+    def _fail_lookup_points(*_args, **_kwargs):
+        raise AssertionError("render_midpoint_image should not call lookup_points when segment cell ids are known.")
+
+    monkeypatch.setattr(interp.tree, "lookup_points", _fail_lookup_points)
+
+    image = render_midpoint_image(interp, origins, directions, segments)
+
+    np.testing.assert_allclose(image, np.array([[2.0]], dtype=float), atol=1.0e-12, rtol=0.0)
+
+
 def test_render_midpoint_image_matches_cartesian_linear_reference_grid() -> None:
     tree = _build_reference_tree()
     tracer = OctreeRayTracer(tree)

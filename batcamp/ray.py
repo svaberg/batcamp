@@ -14,7 +14,9 @@ from .octree import Octree
 __all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image"]
 
 _TRACE_RAY_CHUNK_SIZE = 256
-_TRACE_RAY_INITIAL_EVENTS = 1000
+_TRACE_RAY_INITIAL_EVENTS = 256
+_ZERO = 0
+_TWO = 2
 
 
 def _normalize_ray_arrays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
@@ -244,56 +246,38 @@ def render_midpoint_image(
 
     n_rays = int(o_flat.shape[0])
     n_components = int(interpolator.n_components)
-    active_counts = np.zeros(n_rays, dtype=np.int64)
-    for ray_id in range(n_rays):
-        cell_lo = int(segments.ray_offsets[ray_id])
-        cell_hi = int(segments.ray_offsets[ray_id + 1])
-        if cell_lo == cell_hi:
-            continue
-        time_lo = int(segments.time_offsets[ray_id])
-        time_hi = int(segments.time_offsets[ray_id + 1])
-        ray_cell_ids = segments.cell_ids[cell_lo:cell_hi]
-        ray_times = segments.times[time_lo:time_hi]
-        segment_lengths = np.diff(ray_times)
-        active = (segment_lengths > 0) & (ray_cell_ids >= 0)
-        active_counts[ray_id] = int(np.count_nonzero(active))
-    n_active = int(np.sum(active_counts))
     accum = np.zeros((n_rays, n_components), dtype=np.float64)
-    if n_active == 0:
+    if segments.cell_ids.size == 0:
         out = accum.reshape(tuple(ray_shape) + interpolator.value_shape)
         if interpolator.value_shape:
             return out
         return out.reshape(tuple(ray_shape))
 
-    mid_xyz = np.empty((n_active, 3), dtype=np.float64)
-    segment_weights = np.empty(n_active, dtype=np.float64)
-    sample_ray_ids = np.empty(n_active, dtype=np.int64)
-    out_pos = 0
-    for ray_id in range(n_rays):
-        active_count = int(active_counts[ray_id])
-        if active_count == 0:
-            continue
-        cell_lo = int(segments.ray_offsets[ray_id])
-        cell_hi = int(segments.ray_offsets[ray_id + 1])
-        time_lo = int(segments.time_offsets[ray_id])
-        time_hi = int(segments.time_offsets[ray_id + 1])
-        ray_cell_ids = segments.cell_ids[cell_lo:cell_hi]
-        ray_times = segments.times[time_lo:time_hi]
-        segment_lengths = np.diff(ray_times)
-        active = (segment_lengths > 0) & (ray_cell_ids >= 0)
-        active_segment_lengths = segment_lengths[active]
-        mid_t = ((ray_times[:-1] + ray_times[1:]) / 2)[active]
-        out_hi = out_pos + active_count
-        mid_xyz[out_pos:out_hi] = o_flat[ray_id] + mid_t[:, None] * d_flat[ray_id]
-        segment_weights[out_pos:out_hi] = active_segment_lengths
-        sample_ray_ids[out_pos:out_hi] = int(ray_id)
-        out_pos = out_hi
+    cell_counts = segments.ray_offsets[1:] - segments.ray_offsets[:-1]
+    ray_ids = np.repeat(np.arange(n_rays, dtype=np.int64), cell_counts)
+    segment_ord = np.arange(segments.cell_ids.size, dtype=np.int64) - segments.ray_offsets[ray_ids]
+    time_lo = segments.time_offsets[ray_ids] + segment_ord
+    t0 = segments.times[time_lo]
+    t1 = segments.times[time_lo + 1]
+    segment_lengths = t1 - t0
+    active = (segment_lengths > _ZERO) & (segments.cell_ids >= 0)
+    if not np.any(active):
+        out = accum.reshape(tuple(ray_shape) + interpolator.value_shape)
+        if interpolator.value_shape:
+            return out
+        return out.reshape(tuple(ray_shape))
 
-    samples = np.asarray(interpolator(mid_xyz, query_coord="xyz", log_outside_domain=False), dtype=np.float64)
-    samples_2d = samples.reshape(n_active, -1)
+    active_ray_ids = ray_ids[active]
+    active_cell_ids = segments.cell_ids[active]
+    segment_weights = segment_lengths[active]
+    mid_t = (t0[active] + t1[active]) / _TWO
+    mid_xyz = o_flat[active_ray_ids] + mid_t[:, None] * d_flat[active_ray_ids]
+
+    samples = np.asarray(interpolator.interp_cells_xyz(mid_xyz, active_cell_ids), dtype=np.float64)
+    samples_2d = samples.reshape(mid_xyz.shape[0], -1)
     for component_id in range(n_components):
         accum[:, component_id] = np.bincount(
-            sample_ray_ids,
+            active_ray_ids,
             weights=samples_2d[:, component_id] * segment_weights,
             minlength=n_rays,
         )

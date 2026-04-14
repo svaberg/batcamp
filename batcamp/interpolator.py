@@ -362,6 +362,35 @@ class OctreeInterpolator:
         kernel_queries = np.column_stack(xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
         return kernel_queries, _interp_cells_rpa
 
+    def interp_cells_xyz(self, queries_xyz: np.ndarray, cell_ids: np.ndarray) -> np.ndarray:
+        """Evaluate Cartesian queries in already-known leaf cells.
+
+        This skips octree ownership lookup for callers that already carry the
+        exact Cartesian owner cell ids, such as midpoint rendering over traced
+        segments. A final directly accumulative renderer should evaluate or
+        integrate segment contributions in place instead of routing through this
+        point-sampling helper.
+        """
+        if self.tree.tree_coord != "xyz":
+            raise NotImplementedError("interp_cells_xyz requires tree_coord='xyz'.")
+
+        q, shape = self._normalize_queries(queries_xyz)
+        q_array = np.array(q, dtype=np.float64, order="C")
+        cell_id_array = np.array(cell_ids, dtype=np.int64, order="C").reshape(-1)
+        n = int(q_array.shape[0])
+        if int(cell_id_array.size) != n:
+            raise ValueError("cell_ids must match the query count.")
+
+        out2d = _interp_cells_xyz(
+            q_array,
+            cell_id_array,
+            self._normalize_fill_value(int(self._point_values_2d.shape[1])),
+            self.tree.cell_bounds,
+            self.tree.corners,
+            self._point_values_2d,
+        )
+        return out2d.reshape(shape + self._value_shape_tail)
+
     def __call__(
         self,
         *args,
