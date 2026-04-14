@@ -209,7 +209,22 @@ def accumulate_midpoints(
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
     if str(tree.tree_coord) != "xyz":
-        raise NotImplementedError("accumulate_midpoint_image currently supports only tree_coord='xyz'.")
+        segments = trace_segments(
+            tree,
+            origins,
+            directions,
+            t_min=t_min,
+            t_max=t_max,
+            ray_shape=ray_shape,
+        )
+        image = render_midpoint_image(
+            interpolator,
+            np.asarray(origins, dtype=np.float64).reshape(tuple(ray_shape) + (3,)),
+            np.asarray(directions, dtype=np.float64).reshape(tuple(ray_shape) + (3,)),
+            segments,
+        )
+        counts = (segments.ray_offsets[1:] - segments.ray_offsets[:-1]).reshape(tuple(ray_shape))
+        return image, counts
 
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
@@ -463,9 +478,6 @@ def render_midpoint_image(
 
     if not isinstance(interpolator, OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
-    if str(interpolator.tree.tree_coord) != "xyz":
-        raise NotImplementedError("render_midpoint_image currently supports only tree_coord='xyz'.")
-
     o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
     if tuple(ray_shape) != tuple(segments.ray_shape):
         raise ValueError("segments.ray_shape must match the ray origin/direction shape.")
@@ -498,8 +510,13 @@ def render_midpoint_image(
     segment_weights = segment_lengths[active]
     mid_t = (t0[active] + t1[active]) / 2
     mid_xyz = o_flat[active_ray_ids] + mid_t[:, None] * d_flat[active_ray_ids]
-
-    samples = np.asarray(interpolator.interp_cells_xyz(mid_xyz, active_cell_ids), dtype=np.float64)
+    if str(interpolator.tree.tree_coord) == "xyz":
+        samples = np.asarray(interpolator.interp_cells_xyz(mid_xyz, active_cell_ids), dtype=np.float64)
+    else:
+        samples = np.asarray(
+            interpolator(mid_xyz, query_coord="xyz", log_outside_domain=False),
+            dtype=np.float64,
+        )
     samples_2d = samples.reshape(mid_xyz.shape[0], -1)
     for component_id in range(n_components):
         accum[:, component_id] = np.bincount(

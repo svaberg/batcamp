@@ -738,7 +738,7 @@ def _run_case(
     variable: str,
 ) -> None:
     """Run one dataset case through the grid-vs-ray benchmark."""
-    ray_methods = _ray_methods(ray_method)
+    requested_ray_methods = _ray_methods(ray_method)
     progress.note(f"[{case.label}] file={case.file_name}")
     progress.note(f"[{case.label}] artifact_prefix=benchmark_grid_vs_ray_{case.label}_<method>_*")
     progress.start(f"[{case.label}] resolve data file")
@@ -754,9 +754,12 @@ def _run_case(
         tree_s,
         detail=f"coord={tree.tree_coord}",
     )
-    if str(tree.tree_coord) != "xyz":
-        progress.note(f"[{case.label}] skip: ray benchmark currently supports only tree_coord='xyz'")
-        return
+    if str(tree.tree_coord) == "rpa":
+        ray_methods = ["midpoint"]
+        if requested_ray_methods != ray_methods:
+            progress.note(f"[{case.label}] note: spherical ray benchmark uses midpoint accumulation")
+    else:
+        ray_methods = requested_ray_methods
     progress.start(f"[{case.label}] build interpolator")
     interp, interp_s = _time_call(OctreeInterpolator, tree, np.asarray(ds[variable], dtype=float))
     progress.complete(f"[{case.label}] build interpolator", interp_s)

@@ -874,13 +874,12 @@ def test_rpa_multiface_first_events_are_order_invariant(
     _assert_multiface_event_is_order_invariant_rpa(origin_rpa, target_rpa, expected_active_faces)
 
 
-def test_trace_rpa_test_path_rejects_one_unowned_entry_start() -> None:
+def test_trace_rpa_test_path_handles_one_outside_entry_start() -> None:
     tree = _build_uniform_rpa_tree()
     origin = np.array((-4.5, 0.25, -0.55), dtype=float)
     direction = _normalize_direction((1.0, 0.0, 0.0))
 
-    with pytest.raises(ValueError, match="must start inside one occupied RPA leaf"):
-        trace_rpa_test_path(tree, origin, direction)
+    _assert_trace_matches_lookup_oracle(tree, origin, direction)
 
 
 def test_trace_rpa_test_path_handles_one_miss() -> None:
@@ -976,7 +975,36 @@ def test_trace_rpa_test_rays_drive_constant_shell_integral() -> None:
     np.testing.assert_allclose(image, np.array([[expected]], dtype=float), atol=1.0e-10, rtol=0.0)
 
 
-def test_rpa_accumulate_midpoint_image_is_not_yet_supported() -> None:
+def test_rpa_accumulate_midpoint_image_matches_standalone_midpoint_render() -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    interpolator = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
+    origins = np.array([[[2.0, 0.5, 0.25]]], dtype=float)
+    directions = np.array([[[-1.0, 0.0, 0.0]]], dtype=float)
+
+    image, counts = tracer.accumulate_midpoint_image(interpolator, origins, directions)
+    segments = tracer.trace(origins, directions)
+    expected = _render_standalone_midpoint_image(interpolator, origins, directions, segments)
+
+    np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
+    np.testing.assert_allclose(image, expected, atol=1.0e-10, rtol=0.0)
+
+
+def test_rpa_render_midpoint_image_matches_standalone_midpoint_render() -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    interpolator = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
+    origins = np.array([[[2.0, 0.5, 0.25]]], dtype=float)
+    directions = np.array([[[-1.0, 0.0, 0.0]]], dtype=float)
+    segments = tracer.trace(origins, directions)
+
+    image = render_midpoint_image(interpolator, origins, directions, segments)
+    expected = _render_standalone_midpoint_image(interpolator, origins, directions, segments)
+
+    np.testing.assert_allclose(image, expected, atol=1.0e-10, rtol=0.0)
+
+
+def test_rpa_accumulate_exact_image_is_not_yet_supported() -> None:
     tree = _build_uniform_rpa_tree()
     tracer = OctreeRayTracer(tree)
     interpolator = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
@@ -984,16 +1012,4 @@ def test_rpa_accumulate_midpoint_image_is_not_yet_supported() -> None:
     direction = np.array((1.0, 0.0, 0.0), dtype=float)
 
     with pytest.raises(NotImplementedError, match="tree_coord='xyz'"):
-        tracer.accumulate_midpoint_image(interpolator, origin, direction)
-
-
-def test_rpa_render_midpoint_image_is_not_yet_supported() -> None:
-    tree = _build_uniform_rpa_tree()
-    tracer = OctreeRayTracer(tree)
-    interpolator = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
-    origin = np.array((1.5, 0.0, 0.0), dtype=float)
-    direction = np.array((1.0, 0.0, 0.0), dtype=float)
-    segments = tracer.trace(origin, direction)
-
-    with pytest.raises(NotImplementedError, match="tree_coord='xyz'"):
-        render_midpoint_image(interpolator, origin, direction, segments)
+        tracer.accumulate_exact_image(interpolator, origin, direction)

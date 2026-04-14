@@ -867,8 +867,6 @@ def trace_ray(
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
     start_t = max(float(t_min), float(domain_enter))
     stop_t = min(float(t_max), float(domain_exit))
-    if float(domain_enter) > float(t_min) and not _times_close(float(domain_enter), float(t_min)):
-        raise ValueError("The clipped spherical trace must start inside one occupied RPA leaf.")
     if not (start_t < stop_t):
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
 
@@ -919,8 +917,6 @@ def _trace_ray(
         return 0, 0
     start_t = max(float(t_min), float(domain_enter))
     stop_t = min(float(t_max), float(domain_exit))
-    if float(domain_enter) > float(t_min) and not _times_close(float(domain_enter), float(t_min)):
-        return -2, -2
     if not (start_t < stop_t):
         return 0, 0
 
