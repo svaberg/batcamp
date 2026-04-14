@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cartesian octree ray tracing."""
+"""Octree ray tracing."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import math
 import numpy as np
 
 from . import cartesian_crossing_trace
+from . import rpa_crossing_trace
 from .octree import Octree
 
 TRACE_CHUNK_SIZE = 256
@@ -49,6 +50,7 @@ def trace_segments(
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
     n_rays = int(o_flat.shape[0])
+    tree_coord = str(tree.tree_coord)
     ray_offsets = np.empty(n_rays + 1, dtype=np.int64)
     time_offsets = np.empty(n_rays + 1, dtype=np.int64)
     ray_offsets[0] = 0
@@ -79,16 +81,30 @@ def trace_segments(
         chunk_time_total = int(chunk_time_offsets[-1])
         chunk_cells = np.empty(chunk_cell_total, dtype=np.int64)
         chunk_times = np.empty(chunk_time_total, dtype=np.float64)
-        cartesian_crossing_trace.pack_buffer(
-            cell_counts,
-            time_counts,
-            cell_buffer,
-            time_buffer,
-            chunk_cell_offsets,
-            chunk_time_offsets,
-            chunk_cells,
-            chunk_times,
-        )
+        if tree_coord == "xyz":
+            cartesian_crossing_trace.pack_buffer(
+                cell_counts,
+                time_counts,
+                cell_buffer,
+                time_buffer,
+                chunk_cell_offsets,
+                chunk_time_offsets,
+                chunk_cells,
+                chunk_times,
+            )
+        elif tree_coord == "rpa":
+            rpa_crossing_trace.pack_buffer(
+                cell_counts,
+                time_counts,
+                cell_buffer,
+                time_buffer,
+                chunk_cell_offsets,
+                chunk_time_offsets,
+                chunk_cells,
+                chunk_times,
+            )
+        else:
+            raise NotImplementedError(f"trace_segments supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}.")
         cell_chunks.append(chunk_cells)
         time_chunks.append(chunk_times)
         n_cell += chunk_cell_total
@@ -116,27 +132,48 @@ def fill_chunk(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Trace one chunk into reusable crossing buffers."""
     chunk_n_rays = int(origins.shape[0])
+    tree_coord = str(tree.tree_coord)
     crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
     while True:
         cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
         time_counts = np.empty(chunk_n_rays, dtype=np.int64)
         cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
         time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-        cartesian_crossing_trace.trace_buffer(
-            tree._root_cell_ids,
-            tree.cell_child,
-            tree.cell_bounds,
-            tree._domain_bounds,
-            tree.cell_neighbor,
-            origins,
-            directions,
-            float(t_min),
-            float(t_max),
-            cell_counts,
-            time_counts,
-            cell_buffer,
-            time_buffer,
-        )
+        if tree_coord == "xyz":
+            cartesian_crossing_trace.trace_buffer(
+                tree._root_cell_ids,
+                tree.cell_child,
+                tree.cell_bounds,
+                tree._domain_bounds,
+                tree.cell_neighbor,
+                origins,
+                directions,
+                float(t_min),
+                float(t_max),
+                cell_counts,
+                time_counts,
+                cell_buffer,
+                time_buffer,
+            )
+        elif tree_coord == "rpa":
+            rpa_crossing_trace.trace_buffer(
+                tree._root_cell_ids,
+                tree.cell_child,
+                tree.cell_bounds,
+                tree._domain_bounds,
+                tree.cell_neighbor,
+                tree.cell_depth,
+                origins,
+                directions,
+                float(t_min),
+                float(t_max),
+                cell_counts,
+                time_counts,
+                cell_buffer,
+                time_buffer,
+            )
+        else:
+            raise NotImplementedError(f"fill_chunk supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}.")
         if np.any(cell_counts == -1) or np.any(time_counts == -1):
             crossing_capacity *= 2
             continue
@@ -171,6 +208,8 @@ def accumulate_midpoints(
         raise TypeError("accumulate_midpoint_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
+    if str(tree.tree_coord) != "xyz":
+        raise NotImplementedError("accumulate_midpoint_image currently supports only tree_coord='xyz'.")
 
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
@@ -221,6 +260,8 @@ def accumulate_exact(
         raise TypeError("accumulate_exact_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
+    if str(tree.tree_coord) != "xyz":
+        raise NotImplementedError("accumulate_exact_image currently supports only tree_coord='xyz'.")
 
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
@@ -311,14 +352,14 @@ class RaySegments:
 
 
 class OctreeRayTracer:
-    """Trace Cartesian rays through one octree."""
+    """Trace rays through one octree."""
 
     def __init__(self, tree: Octree) -> None:
-        """Bind one tracer to one built Cartesian octree."""
+        """Bind one tracer to one built octree."""
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
-        if str(tree.tree_coord) != "xyz":
-            raise NotImplementedError("OctreeRayTracer currently supports only tree_coord='xyz'.")
+        if str(tree.tree_coord) not in {"xyz", "rpa"}:
+            raise NotImplementedError("OctreeRayTracer currently supports only tree_coord='xyz' or 'rpa'.")
         self.tree = tree
 
     def trace(
@@ -329,7 +370,7 @@ class OctreeRayTracer:
         t_min: float = 0,
         t_max: float = np.inf,
     ) -> RaySegments:
-        """Trace Cartesian rays and return packed crossing segments."""
+        """Trace rays and return packed crossing segments."""
         t_lo = float(t_min)
         t_hi = float(t_max)
         if not math.isfinite(t_lo):
@@ -422,6 +463,8 @@ def render_midpoint_image(
 
     if not isinstance(interpolator, OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
+    if str(interpolator.tree.tree_coord) != "xyz":
+        raise NotImplementedError("render_midpoint_image currently supports only tree_coord='xyz'.")
 
     o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
     if tuple(ray_shape) != tuple(segments.ray_shape):
