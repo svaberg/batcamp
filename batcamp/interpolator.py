@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Literal
 
 from numba import njit
@@ -171,6 +172,57 @@ def _interp_cell_xyz(
     )
 
 
+@njit(cache=True)
+def _integrate_cell_xyz(
+    out_row: np.ndarray,
+    cell_id: int,
+    segment_span: float,
+    x_start: float,
+    y_start: float,
+    z_start: float,
+    x_stop: float,
+    y_stop: float,
+    z_stop: float,
+    cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    point_values: np.ndarray,
+) -> None:
+    """Write one exact Cartesian trilinear segment integral row for one leaf cell."""
+    cell_id = int(cell_id)
+    frac_x0 = _axis_fraction(x_start, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
+    frac_y0 = _axis_fraction(y_start, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
+    frac_z0 = _axis_fraction(z_start, cell_bounds[cell_id, AXIS2, START], cell_bounds[cell_id, AXIS2, WIDTH])
+    frac_x1 = _axis_fraction(x_stop, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
+    frac_y1 = _axis_fraction(y_stop, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
+    frac_z1 = _axis_fraction(z_stop, cell_bounds[cell_id, AXIS2, START], cell_bounds[cell_id, AXIS2, WIDTH])
+    d_frac_x = frac_x1 - frac_x0
+    d_frac_y = frac_y1 - frac_y0
+    d_frac_z = frac_z1 - frac_z0
+
+    cell_corner_ids = corners[cell_id]
+    out_row[:] = 0.0
+    for corner_ord in range(8):
+        bit_x = _XYZ_TRILINEAR_BITS[corner_ord, AXIS0]
+        bit_y = _XYZ_TRILINEAR_BITS[corner_ord, AXIS1]
+        bit_z = _XYZ_TRILINEAR_BITS[corner_ord, AXIS2]
+
+        c_x = frac_x0 if bit_x else (1.0 - frac_x0)
+        c_y = frac_y0 if bit_y else (1.0 - frac_y0)
+        c_z = frac_z0 if bit_z else (1.0 - frac_z0)
+        d_x = d_frac_x if bit_x else -d_frac_x
+        d_y = d_frac_y if bit_y else -d_frac_y
+        d_z = d_frac_z if bit_z else -d_frac_z
+
+        w0 = c_x * c_y * c_z
+        w1 = d_x * c_y * c_z + c_x * d_y * c_z + c_x * c_y * d_z
+        w2 = d_x * d_y * c_z + d_x * c_y * d_z + c_x * d_y * d_z
+        w3 = d_x * d_y * d_z
+        weight = segment_span * (w0 + 0.5 * w1 + (w2 / 3.0) + 0.25 * w3)
+
+        corner_point_id = int(cell_corner_ids[corner_ord])
+        out_row[:] += weight * point_values[corner_point_id]
+
+
 @njit(cache=True, parallel=True)
 def _interp_cells_rpa(
     queries_rpa: np.ndarray,
@@ -232,7 +284,106 @@ def _interp_cells_xyz(
             cell_bounds,
             corners,
             point_values,
-        )
+    )
+    return out
+
+
+@njit(cache=True, parallel=True)
+def accumulate_midpoint_cells_xyz(
+    origins_xyz: np.ndarray,
+    directions_xyz: np.ndarray,
+    cell_counts: np.ndarray,
+    cell_ids_scratch: np.ndarray,
+    times_scratch: np.ndarray,
+    cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    point_values: np.ndarray,
+) -> np.ndarray:
+    """Accumulate midpoint-sampled known-cell Cartesian segments into one `(n_rays, n_components)` array."""
+    n_rays = int(origins_xyz.shape[0])
+    n_components = int(point_values.shape[1])
+    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
+    for ray_id in prange(n_rays):
+        sample = np.empty(n_components, dtype=point_values.dtype)
+        origin_x = float(origins_xyz[ray_id, 0])
+        origin_y = float(origins_xyz[ray_id, 1])
+        origin_z = float(origins_xyz[ray_id, 2])
+        direction_x = float(directions_xyz[ray_id, 0])
+        direction_y = float(directions_xyz[ray_id, 1])
+        direction_z = float(directions_xyz[ray_id, 2])
+        n_cell = int(cell_counts[ray_id])
+        for cell_pos in range(n_cell):
+            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
+            if cell_id < 0:
+                continue
+            t_start = float(times_scratch[ray_id, cell_pos])
+            t_stop = float(times_scratch[ray_id, cell_pos + 1])
+            segment_length = t_stop - t_start
+            if segment_length <= 0.0:
+                continue
+            midpoint_t = 0.5 * (t_start + t_stop)
+            _interp_cell_xyz(
+                sample,
+                cell_id,
+                origin_x + midpoint_t * direction_x,
+                origin_y + midpoint_t * direction_y,
+                origin_z + midpoint_t * direction_z,
+                cell_bounds,
+                corners,
+                point_values,
+            )
+            for component_id in range(n_components):
+                out[ray_id, component_id] += segment_length * sample[component_id]
+    return out
+
+
+@njit(cache=True, parallel=True)
+def accumulate_exact_cells_xyz(
+    origins_xyz: np.ndarray,
+    directions_xyz: np.ndarray,
+    cell_counts: np.ndarray,
+    cell_ids_scratch: np.ndarray,
+    times_scratch: np.ndarray,
+    cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    point_values: np.ndarray,
+) -> np.ndarray:
+    """Accumulate exact known-cell Cartesian segment integrals into one `(n_rays, n_components)` array."""
+    n_rays = int(origins_xyz.shape[0])
+    n_components = int(point_values.shape[1])
+    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
+    for ray_id in prange(n_rays):
+        integral = np.empty(n_components, dtype=point_values.dtype)
+        origin_x = float(origins_xyz[ray_id, 0])
+        origin_y = float(origins_xyz[ray_id, 1])
+        origin_z = float(origins_xyz[ray_id, 2])
+        direction_x = float(directions_xyz[ray_id, 0])
+        direction_y = float(directions_xyz[ray_id, 1])
+        direction_z = float(directions_xyz[ray_id, 2])
+        n_cell = int(cell_counts[ray_id])
+        for cell_pos in range(n_cell):
+            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
+            if cell_id < 0:
+                continue
+            t_start = float(times_scratch[ray_id, cell_pos])
+            t_stop = float(times_scratch[ray_id, cell_pos + 1])
+            if t_stop <= t_start:
+                continue
+            _integrate_cell_xyz(
+                integral,
+                cell_id,
+                t_stop - t_start,
+                origin_x + t_start * direction_x,
+                origin_y + t_start * direction_y,
+                origin_z + t_start * direction_z,
+                origin_x + t_stop * direction_x,
+                origin_y + t_stop * direction_y,
+                origin_z + t_stop * direction_z,
+                cell_bounds,
+                corners,
+                point_values,
+            )
+            out[ray_id, :] += integral
     return out
 
 
@@ -261,11 +412,27 @@ class OctreeInterpolator:
         """Create an interpolator from one built tree and point values."""
         if not isinstance(tree, Octree):
             raise TypeError("OctreeInterpolator requires a built Octree as its first argument.")
+        logger.info("OctreeInterpolator.__init__: coord=%s", tree.tree_coord)
+        t0 = time.perf_counter()
         self.tree = tree
         self.fill_value = fill_value
+        logger.info("_flatten_point_values...")
+        t_flat = time.perf_counter()
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
+        logger.info("_flatten_point_values complete in %.2fs", float(time.perf_counter() - t_flat))
         if self.tree.tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
+        logger.info("OctreeInterpolator.__init__ complete in %.2fs", float(time.perf_counter() - t0))
+
+    @property
+    def n_components(self) -> int:
+        """Return the flat component count carried by each interpolation value."""
+        return int(self._point_values_2d.shape[1])
+
+    @property
+    def value_shape(self) -> tuple[int, ...]:
+        """Return the trailing shape of one interpolated value."""
+        return self._value_shape_tail
 
     def _flatten_point_values(self, values: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
         """Flatten one `(n_points, ...)` value array for interpolation kernels."""
@@ -344,6 +511,35 @@ class OctreeInterpolator:
 
         kernel_queries = np.column_stack(xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
         return kernel_queries, _interp_cells_rpa
+
+    def interp_cells_xyz(self, queries_xyz: np.ndarray, cell_ids: np.ndarray) -> np.ndarray:
+        """Evaluate Cartesian queries in already-known leaf cells.
+
+        This skips octree ownership lookup for callers that already carry the
+        exact Cartesian owner cell ids, such as midpoint rendering over traced
+        segments. A final directly accumulative renderer should evaluate or
+        integrate segment contributions in place instead of routing through this
+        point-sampling helper.
+        """
+        if self.tree.tree_coord != "xyz":
+            raise NotImplementedError("interp_cells_xyz requires tree_coord='xyz'.")
+
+        q, shape = self._normalize_queries(queries_xyz)
+        q_array = np.array(q, dtype=np.float64, order="C")
+        cell_id_array = np.array(cell_ids, dtype=np.int64, order="C").reshape(-1)
+        n = int(q_array.shape[0])
+        if int(cell_id_array.size) != n:
+            raise ValueError("cell_ids must match the query count.")
+
+        out2d = _interp_cells_xyz(
+            q_array,
+            cell_id_array,
+            self._normalize_fill_value(int(self._point_values_2d.shape[1])),
+            self.tree.cell_bounds,
+            self.tree.corners,
+            self._point_values_2d,
+        )
+        return out2d.reshape(shape + self._value_shape_tail)
 
     def __call__(
         self,

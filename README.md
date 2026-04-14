@@ -55,3 +55,25 @@ plt.show()
 ```
 
 See [examples/quick_start.ipynb](examples/quick_start.ipynb) for a larger example.
+
+## Synthetic images
+For cartesian data, you can create a synthetic image from a set of rays.
+
+```python
+ds = Dataset.from_file("sample_data/3d__var_2_n00006003.plt")
+tree = Octree.from_ds(ds, tree_coord="xyz")
+interp = OctreeInterpolator(tree, ds["Rho [g/cm^3]"])
+tracer = OctreeRayTracer(tree)
+
+y, z = np.meshgrid(
+    np.linspace(-24, 24, 512),
+    np.linspace(-24, 24, 512),
+    indexing="xy",
+)
+origins = np.stack((np.full_like(y, -24), y, z), axis=-1)
+image, _ = tracer.accumulate_exact_image(interp, origins, np.array([1.0, 0.0, 0.0]))
+
+plt.pcolormesh(y, z, image, shading="auto", norm="log")
+plt.colorbar(label="line integral")
+plt.show()
+```

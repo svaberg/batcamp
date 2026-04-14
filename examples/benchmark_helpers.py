@@ -69,7 +69,7 @@ def _configure_progress_logging(*, log_path: Path) -> None:
 def _configure_builder_logging(*, log_path: Path) -> None:
     """Route batcamp build/materialize logs to stdout and the per-run progress log."""
     formatter = logging.Formatter("  [%(filename)s:%(funcName)s:%(lineno)d] %(message)s")
-    for logger_name in ("batcamp.builder", "batcamp.octree"):
+    for logger_name in ("batcamp.builder", "batcamp.octree", "batcamp.interpolator", "batcamp.ray"):
         logger_obj = logging.getLogger(logger_name)
         for handler in list(logger_obj.handlers):
             logger_obj.removeHandler(handler)
