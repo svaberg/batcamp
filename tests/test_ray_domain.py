@@ -249,6 +249,26 @@ def test_trace_preserves_batch_shape() -> None:
     np.testing.assert_array_equal(_ray_slice(segments, 2)[1], np.empty(0, dtype=float))
 
 
+def test_trace_broadcasts_one_direction_vector_over_batched_origins() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    directions = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    segments = tracer.trace(origins, directions)
+
+    assert segments.ray_shape == (2, 2)
+    np.testing.assert_array_equal(segments.ray_offsets, np.array([0, 2, 4, 4, 6], dtype=np.int64))
+    np.testing.assert_array_equal(segments.time_offsets, np.array([0, 3, 6, 6, 9], dtype=np.int64))
+    np.testing.assert_array_equal(_ray_slice(segments, 2)[0], np.empty(0, dtype=np.int64))
+    np.testing.assert_array_equal(_ray_slice(segments, 2)[1], np.empty(0, dtype=float))
+
+
 def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch) -> None:
     tree = _build_long_x_tree()
     tracer = OctreeRayTracer(tree)
