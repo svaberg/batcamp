@@ -18,7 +18,6 @@ from batread.dataset import Dataset
 
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
-from batcamp import render_midpoint_image
 from batcamp.constants import XYZ_VARS
 
 if __package__ in {None, ""}:
@@ -104,9 +103,15 @@ def _ray_image_and_segment_counts(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Trace one plane of parallel rays and return midpoint-rendered image and segment counts."""
     origins, directions, t_end = _ray_setup(n_plane=int(n_plane), bounds=bounds)
-    segments = tracer.trace(origins, directions, t_min=0.0, t_max=float(t_end))
-    image = np.asarray(render_midpoint_image(interp, origins, directions, segments), dtype=float)
-    counts = np.diff(segments.ray_offsets).reshape(int(n_plane), int(n_plane))
+    image, counts = tracer.accumulate_midpoint_image(
+        interp,
+        origins,
+        directions,
+        t_min=0.0,
+        t_max=float(t_end),
+    )
+    image = np.asarray(image, dtype=float)
+    counts = np.asarray(counts, dtype=np.int64)
     return image, counts
 
 

@@ -233,7 +233,56 @@ def _interp_cells_xyz(
             cell_bounds,
             corners,
             point_values,
-        )
+    )
+    return out
+
+
+@njit(cache=True, parallel=True)
+def accumulate_midpoint_cells_xyz(
+    origins_xyz: np.ndarray,
+    directions_xyz: np.ndarray,
+    cell_counts: np.ndarray,
+    cell_ids_scratch: np.ndarray,
+    times_scratch: np.ndarray,
+    cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    point_values: np.ndarray,
+) -> np.ndarray:
+    """Accumulate midpoint-sampled known-cell Cartesian segments into one `(n_rays, n_components)` array."""
+    n_rays = int(origins_xyz.shape[0])
+    n_components = int(point_values.shape[1])
+    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
+    for ray_id in prange(n_rays):
+        sample = np.empty(n_components, dtype=point_values.dtype)
+        origin_x = float(origins_xyz[ray_id, 0])
+        origin_y = float(origins_xyz[ray_id, 1])
+        origin_z = float(origins_xyz[ray_id, 2])
+        direction_x = float(directions_xyz[ray_id, 0])
+        direction_y = float(directions_xyz[ray_id, 1])
+        direction_z = float(directions_xyz[ray_id, 2])
+        n_cell = int(cell_counts[ray_id])
+        for cell_pos in range(n_cell):
+            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
+            if cell_id < 0:
+                continue
+            t_start = float(times_scratch[ray_id, cell_pos])
+            t_stop = float(times_scratch[ray_id, cell_pos + 1])
+            segment_length = t_stop - t_start
+            if segment_length <= 0.0:
+                continue
+            midpoint_t = 0.5 * (t_start + t_stop)
+            _interp_cell_xyz(
+                sample,
+                cell_id,
+                origin_x + midpoint_t * direction_x,
+                origin_y + midpoint_t * direction_y,
+                origin_z + midpoint_t * direction_z,
+                cell_bounds,
+                corners,
+                point_values,
+            )
+            for component_id in range(n_components):
+                out[ray_id, component_id] += segment_length * sample[component_id]
     return out
 
 

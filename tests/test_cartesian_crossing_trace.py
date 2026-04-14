@@ -6,10 +6,11 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
-from batcamp._xyz_refined_event_walk import _cell_exit_event_xyz
-from batcamp._xyz_refined_event_walk import _event_subface_id
-from batcamp._xyz_refined_event_walk import trace_xyz_refined_event_path
-from batcamp._xyz_refined_event_walk import walk_event_faces_xyz
+from batcamp.cartesian_crossing_trace import find_exit
+from batcamp.cartesian_crossing_trace import _fill_active_face_state
+from batcamp.cartesian_crossing_trace import find_subface
+from batcamp.cartesian_crossing_trace import walk_faces
+from batcamp.cartesian_crossing_trace import trace_ray
 from batcamp.octree import _FACE_AXIS
 from batcamp.octree import _FACE_SIDE
 from batcamp.octree import _FACE_TANGENTIAL_AXES
@@ -44,6 +45,100 @@ _INTERIOR_OCTANT_RELATIVE_ORIGINS = tuple(itertools.product((0.125, 0.875), repe
 _REGULAR_CELL_IDS = tuple(range(27))
 _REFINED_CELL_IDS = tuple(range(15))
 _LOOKUP_ORACLE_MAX_ULP = 16
+
+
+def _exit_result(
+    cell_bounds: np.ndarray,
+    cell_id: int,
+    current_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    t_current: float,
+) -> tuple[float, tuple[int, ...]]:
+    """Return the next exit time and active face ids for one Cartesian leaf."""
+    active_faces = np.empty(3, dtype=np.int64)
+    t_exit, n_active_face = find_exit(
+        cell_bounds,
+        int(cell_id),
+        np.asarray(current_xyz, dtype=np.float64),
+        np.asarray(direction_xyz, dtype=np.float64),
+        float(t_current),
+        active_faces,
+    )
+    if n_active_face < 0:
+        raise ValueError("direction must leave the current leaf along at least one axis.")
+    return float(t_exit), tuple(int(active_faces[pos]) for pos in range(n_active_face))
+
+
+def _subface_for_test(
+    cell_neighbor: np.ndarray,
+    domain_bounds: np.ndarray,
+    cell_bounds: np.ndarray,
+    cell_id: int,
+    face_id: int,
+    active_faces: tuple[int, ...],
+    event_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+) -> int:
+    """Return the neighbor-table face patch whose destination tangential slabs own one event point."""
+    active_faces_arr = np.asarray(active_faces, dtype=np.int64)
+    active_face_by_axis = np.empty(3, dtype=np.int64)
+    active_face_order = np.empty(6, dtype=np.int64)
+    current_face_order = _fill_active_face_state(
+        active_faces_arr,
+        int(active_faces_arr.size),
+        int(face_id),
+        active_face_by_axis,
+        active_face_order,
+    )
+    subface_id = find_subface(
+        cell_neighbor,
+        domain_bounds,
+        cell_bounds,
+        int(cell_id),
+        int(face_id),
+        active_face_by_axis,
+        active_face_order,
+        int(current_face_order),
+        np.asarray(event_xyz, dtype=np.float64),
+        np.asarray(direction_xyz, dtype=np.float64),
+    )
+    if subface_id == -2:
+        raise ValueError("Event face patch is ambiguous under destination-side ownership.")
+    if subface_id < 0:
+        raise ValueError("Event face patch has no destination-side owner.")
+    return int(subface_id)
+
+
+def _walk_faces_result(
+    tree: Octree,
+    start_cell_id: int,
+    active_faces: tuple[int, ...],
+    event_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+) -> tuple[int, ...]:
+    """Walk one Cartesian face event through the face/subface neighbor graph."""
+    if str(tree.tree_coord) != "xyz":
+        raise ValueError("walk_event_faces_xyz supports only tree_coord='xyz'.")
+    active_faces_arr = np.asarray(active_faces, dtype=np.int64)
+    path = np.empty(max(1, int(active_faces_arr.size)), dtype=np.int64)
+    active_face_by_axis = np.empty(3, dtype=np.int64)
+    active_face_order = np.empty(6, dtype=np.int64)
+    path_count = walk_faces(
+        tree.cell_neighbor,
+        tree._domain_bounds,
+        tree.cell_bounds,
+        int(start_cell_id),
+        active_faces_arr,
+        int(active_faces_arr.size),
+        np.asarray(event_xyz, dtype=np.float64),
+        np.asarray(direction_xyz, dtype=np.float64),
+        path,
+        active_face_by_axis,
+        active_face_order,
+    )
+    if path_count < 0:
+        raise ValueError("Event face patch is ambiguous under destination-side ownership.")
+    return tuple(int(path[pos]) for pos in range(path_count))
 
 
 def _build_xyz_regular_tree_from_edges(
@@ -730,7 +825,7 @@ def _assert_trace(
     """Trace one toy ray and match exact packed cells and times."""
     origin = np.array(origin_xyz, dtype=float)
     direction = np.array(direction_xyz, dtype=float)
-    cell_ids, times = trace_xyz_refined_event_path(
+    cell_ids, times = trace_ray(
         tree,
         start_cell_id,
         origin,
@@ -866,7 +961,7 @@ def _assert_full_trace_matches_lookup_oracle(
     """Check one whole toy trace against an independent positive-length lookup oracle."""
     origin = np.asarray(origin_xyz, dtype=float)
     direction = np.asarray(direction_xyz, dtype=float)
-    cell_ids, times = trace_xyz_refined_event_path(
+    cell_ids, times = trace_ray(
         tree,
         int(start_cell_id),
         origin,
@@ -980,10 +1075,10 @@ def _assert_first_event_matches_lookup(
 ) -> None:
     """Check one first face/edge/corner event against independent post-event ownership."""
     origin, direction = _center_origin_and_direction(tree, start_cell_id, sign_triplet)
-    t_exit, active_faces = _cell_exit_event_xyz(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
+    t_exit, active_faces = _exit_result(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     event_xyz = origin + t_exit * direction
-    path = walk_event_faces_xyz(tree, start_cell_id, active_faces, event_xyz, direction)
-    full_cell_ids, full_times = trace_xyz_refined_event_path(tree, start_cell_id, origin, direction)
+    path = _walk_faces_result(tree, start_cell_id, active_faces, event_xyz, direction)
+    full_cell_ids, full_times = trace_ray(tree, start_cell_id, origin, direction)
     expected_faces = _active_faces_from_signs(sign_triplet)
     expected_owner = _lookup_after_first_event(tree, origin, direction)
 
@@ -1026,11 +1121,11 @@ def _assert_multiface_event_is_order_invariant(
 ) -> None:
     """Check that one edge/corner event reaches the same final owner for every face order."""
     origin, direction = _center_origin_and_direction(tree, start_cell_id, sign_triplet)
-    t_exit, active_faces = _cell_exit_event_xyz(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
+    t_exit, active_faces = _exit_result(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     event_xyz = origin + t_exit * direction
-    full_cell_ids, full_times = trace_xyz_refined_event_path(tree, start_cell_id, origin, direction)
+    full_cell_ids, full_times = trace_ray(tree, start_cell_id, origin, direction)
     finals = {
-        int(walk_event_faces_xyz(tree, start_cell_id, permutation, event_xyz, direction)[-1])
+        int(_walk_faces_result(tree, start_cell_id, permutation, event_xyz, direction)[-1])
         for permutation in itertools.permutations(active_faces)
     }
     expected_owner = _lookup_after_first_event(tree, origin, direction)
@@ -1356,7 +1451,7 @@ def test_event_subface_id_uses_destination_slabs_not_source_midpoints() -> None:
     cell_neighbor = -np.ones((5, 6, 4), dtype=np.int64)
     cell_neighbor[0, 1] = np.array((1, 2, 3, 4), dtype=np.int64)
     event_xyz = np.array((0.5, 0.5, 0.25), dtype=float)
-    subface_id = _event_subface_id(
+    subface_id = _subface_for_test(
         cell_neighbor,
         domain_bounds,
         cell_bounds,
@@ -1396,7 +1491,7 @@ def test_refined_multiface_representative_paths_are_exact(
 def test_refined_toy_returns_empty_on_cartesian_miss(tree_builder) -> None:
     """A Cartesian miss should return empty packed arrays."""
     tree = tree_builder()
-    cell_ids, times = trace_xyz_refined_event_path(
+    cell_ids, times = trace_ray(
         tree,
         0,
         np.array((-0.25, 1.25, 0.125), dtype=float),
@@ -1410,7 +1505,7 @@ def test_refined_toy_returns_empty_on_cartesian_miss(tree_builder) -> None:
 def test_refined_toy_returns_empty_when_clipping_removes_the_interval(tree_builder) -> None:
     """A fully clipped interval should return no traced cells."""
     tree = tree_builder()
-    cell_ids, times = trace_xyz_refined_event_path(
+    cell_ids, times = trace_ray(
         tree,
         0,
         np.array((0.25, 0.125, 0.125), dtype=float),

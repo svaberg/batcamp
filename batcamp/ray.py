@@ -8,19 +8,15 @@ import math
 
 import numpy as np
 
-from . import _xyz_refined_event_walk
+from . import cartesian_crossing_trace
 from .octree import Octree
 
-__all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image"]
-
-_TRACE_RAY_CHUNK_SIZE = 256
-_TRACE_RAY_INITIAL_EVENTS = 256
-_ZERO = 0
-_TWO = 2
+TRACE_CHUNK_SIZE = 256
+DEFAULT_CROSSING_BUFFER_SIZE = 256
 
 
-def _normalize_ray_arrays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
-    """Return flat finite ray arrays plus the leading broadcast shape."""
+def normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
+    """Return flat finite ray arrays plus the broadcast shape."""
     o = np.array(origins, dtype=np.float64, order="C")
     d = np.array(directions, dtype=np.float64, order="C")
     if o.ndim == 0 or o.shape[-1] != 3:
@@ -38,7 +34,7 @@ def _normalize_ray_arrays(origins: np.ndarray, directions: np.ndarray) -> tuple[
     return o.reshape(-1, 3), d_flat, shape
 
 
-def _trace_xyz_ray_batch(
+def trace_segments(
     tree: Octree,
     origins: np.ndarray,
     directions: np.ndarray,
@@ -47,7 +43,7 @@ def _trace_xyz_ray_batch(
     t_max: float,
     ray_shape: tuple[int, ...],
 ) -> "RaySegments":
-    """Trace one flat Cartesian ray batch with the refined event walker."""
+    """Trace rays and return packed crossing segments."""
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
     n_rays = int(o_flat.shape[0])
@@ -59,38 +55,18 @@ def _trace_xyz_ray_batch(
     time_chunks: list[np.ndarray] = []
     n_cell = 0
     n_time = 0
-    for chunk_lo in range(0, n_rays, _TRACE_RAY_CHUNK_SIZE):
-        chunk_hi = min(chunk_lo + _TRACE_RAY_CHUNK_SIZE, n_rays)
+    for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
+        chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         chunk_n_rays = int(chunk_hi - chunk_lo)
-        event_capacity = _TRACE_RAY_INITIAL_EVENTS
-        while True:
-            cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
-            time_counts = np.empty(chunk_n_rays, dtype=np.int64)
-            cell_buffer = np.empty((chunk_n_rays, event_capacity), dtype=np.int64)
-            time_buffer = np.empty((chunk_n_rays, event_capacity + 1), dtype=np.float64)
-            _xyz_refined_event_walk.trace_xyz_ray_batch_scratch_raw(
-                tree._root_cell_ids,
-                tree.cell_child,
-                tree.cell_bounds,
-                tree._domain_bounds,
-                tree.cell_neighbor,
-                chunk_origins,
-                chunk_directions,
-                float(t_min),
-                float(t_max),
-                cell_counts,
-                time_counts,
-                cell_buffer,
-                time_buffer,
-            )
-            if np.any(cell_counts == -1) or np.any(time_counts == -1):
-                event_capacity *= 2
-                continue
-            if np.any(cell_counts < 0) or np.any(time_counts < 0):
-                raise ValueError("xyz ray trace encountered an invalid event.")
-            break
+        cell_counts, time_counts, cell_buffer, time_buffer = fill_chunk(
+            tree,
+            chunk_origins,
+            chunk_directions,
+            t_min=t_min,
+            t_max=t_max,
+        )
         chunk_cell_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
         chunk_time_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
         chunk_cell_offsets[0] = 0
@@ -101,7 +77,7 @@ def _trace_xyz_ray_batch(
         chunk_time_total = int(chunk_time_offsets[-1])
         chunk_cells = np.empty(chunk_cell_total, dtype=np.int64)
         chunk_times = np.empty(chunk_time_total, dtype=np.float64)
-        _xyz_refined_event_walk.pack_xyz_ray_batch_raw(
+        cartesian_crossing_trace.pack_buffer(
             cell_counts,
             time_counts,
             cell_buffer,
@@ -128,9 +104,106 @@ def _trace_xyz_ray_batch(
     )
 
 
+def fill_chunk(
+    tree: Octree,
+    origins: np.ndarray,
+    directions: np.ndarray,
+    *,
+    t_min: float,
+    t_max: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Trace one chunk into reusable crossing buffers."""
+    chunk_n_rays = int(origins.shape[0])
+    crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
+    while True:
+        cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
+        time_counts = np.empty(chunk_n_rays, dtype=np.int64)
+        cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
+        time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
+        cartesian_crossing_trace.trace_buffer(
+            tree._root_cell_ids,
+            tree.cell_child,
+            tree.cell_bounds,
+            tree._domain_bounds,
+            tree.cell_neighbor,
+            origins,
+            directions,
+            float(t_min),
+            float(t_max),
+            cell_counts,
+            time_counts,
+            cell_buffer,
+            time_buffer,
+        )
+        if np.any(cell_counts == -1) or np.any(time_counts == -1):
+            crossing_capacity *= 2
+            continue
+        if np.any(cell_counts < 0) or np.any(time_counts < 0):
+            raise ValueError("Cartesian ray trace encountered an invalid crossing.")
+        return cell_counts, time_counts, cell_buffer, time_buffer
+
+
+def reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_shape: tuple[int, ...]) -> np.ndarray:
+    """Reshape one flat image onto the requested ray/value shape."""
+    out = image_flat.reshape(tuple(ray_shape) + tuple(value_shape))
+    if value_shape:
+        return out
+    return out.reshape(tuple(ray_shape))
+
+
+def accumulate_midpoints(
+    tree: Octree,
+    interpolator,
+    origins: np.ndarray,
+    directions: np.ndarray,
+    *,
+    t_min: float,
+    t_max: float,
+    ray_shape: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trace rays and accumulate midpoint samples without packing segments."""
+    from .interpolator import OctreeInterpolator
+    from . import interpolator as interpolator_module
+
+    if not isinstance(interpolator, OctreeInterpolator):
+        raise TypeError("accumulate_midpoint_image requires one OctreeInterpolator.")
+    if interpolator.tree is not tree:
+        raise ValueError("interpolator.tree must match the tracer octree.")
+
+    o_flat = np.asarray(origins, dtype=np.float64)
+    d_flat = np.asarray(directions, dtype=np.float64)
+    n_rays = int(o_flat.shape[0])
+    n_components = int(interpolator.n_components)
+    accum = np.zeros((n_rays, n_components), dtype=np.float64)
+    cell_counts_out = np.zeros(n_rays, dtype=np.int64)
+    for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
+        chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
+        chunk_origins = o_flat[chunk_lo:chunk_hi]
+        chunk_directions = d_flat[chunk_lo:chunk_hi]
+        cell_counts, _time_counts, cell_buffer, time_buffer = fill_chunk(
+            tree,
+            chunk_origins,
+            chunk_directions,
+            t_min=t_min,
+            t_max=t_max,
+        )
+        cell_counts_out[chunk_lo:chunk_hi] = cell_counts
+        accum[chunk_lo:chunk_hi] = interpolator_module.accumulate_midpoint_cells_xyz(
+            chunk_origins,
+            chunk_directions,
+            cell_counts,
+            cell_buffer,
+            time_buffer,
+            tree.cell_bounds,
+            tree.corners,
+            interpolator._point_values_2d,
+        )
+    return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
+
+
 @dataclass(frozen=True)
 class RaySegments:
-    """Packed per-ray event trace with one boundary-time list per ray."""
+    """Packed per-ray crossing segments with one time list per ray."""
 
     ray_offsets: np.ndarray
     time_offsets: np.ndarray
@@ -171,7 +244,7 @@ class RaySegments:
             time_hi = int(time_offsets[ray_id + 1])
             ray_times = times[time_lo:time_hi]
             if np.any(ray_times[1:] < ray_times[:-1]):
-                raise ValueError("Each ray must have nondecreasing boundary times.")
+                raise ValueError("Each ray must have nondecreasing crossing times.")
 
         object.__setattr__(self, "ray_offsets", ray_offsets)
         object.__setattr__(self, "time_offsets", time_offsets)
@@ -204,7 +277,7 @@ class OctreeRayTracer:
         t_min: float = 0,
         t_max: float = np.inf,
     ) -> RaySegments:
-        """Trace one Cartesian ray batch and return packed event segments."""
+        """Trace Cartesian rays and return packed crossing segments."""
         t_lo = float(t_min)
         t_hi = float(t_max)
         if not math.isfinite(t_lo):
@@ -213,9 +286,38 @@ class OctreeRayTracer:
             raise ValueError("t_max must not be NaN.")
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
-        o_flat, d_flat, ray_shape = _normalize_ray_arrays(origins, directions)
-        return _trace_xyz_ray_batch(
+        o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
+        return trace_segments(
             self.tree,
+            o_flat,
+            d_flat,
+            t_min=t_lo,
+            t_max=t_hi,
+            ray_shape=ray_shape,
+        )
+
+    def accumulate_midpoint_image(
+        self,
+        interpolator,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        *,
+        t_min: float = 0,
+        t_max: float = np.inf,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Trace rays and accumulate one midpoint-sampled image plus per-ray segment counts."""
+        t_lo = float(t_min)
+        t_hi = float(t_max)
+        if not math.isfinite(t_lo):
+            raise ValueError("t_min must be finite.")
+        if math.isnan(t_hi):
+            raise ValueError("t_max must not be NaN.")
+        if t_hi < t_lo:
+            raise ValueError("t_max must be greater than or equal to t_min.")
+        o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
+        return accumulate_midpoints(
+            self.tree,
+            interpolator,
             o_flat,
             d_flat,
             t_min=t_lo,
@@ -234,13 +336,13 @@ def render_midpoint_image(
     directions: np.ndarray,
     segments: RaySegments,
 ) -> np.ndarray:
-    """Render one midpoint-sampled line integral over packed traced segments."""
+    """Render one midpoint-sampled line integral from packed crossing segments."""
     from .interpolator import OctreeInterpolator
 
     if not isinstance(interpolator, OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
 
-    o_flat, d_flat, ray_shape = _normalize_ray_arrays(origins, directions)
+    o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
     if tuple(ray_shape) != tuple(segments.ray_shape):
         raise ValueError("segments.ray_shape must match the ray origin/direction shape.")
 
@@ -260,7 +362,7 @@ def render_midpoint_image(
     t0 = segments.times[time_lo]
     t1 = segments.times[time_lo + 1]
     segment_lengths = t1 - t0
-    active = (segment_lengths > _ZERO) & (segments.cell_ids >= 0)
+    active = (segment_lengths > 0) & (segments.cell_ids >= 0)
     if not np.any(active):
         out = accum.reshape(tuple(ray_shape) + interpolator.value_shape)
         if interpolator.value_shape:
@@ -270,7 +372,7 @@ def render_midpoint_image(
     active_ray_ids = ray_ids[active]
     active_cell_ids = segments.cell_ids[active]
     segment_weights = segment_lengths[active]
-    mid_t = (t0[active] + t1[active]) / _TWO
+    mid_t = (t0[active] + t1[active]) / 2
     mid_xyz = o_flat[active_ray_ids] + mid_t[:, None] * d_flat[active_ray_ids]
 
     samples = np.asarray(interpolator.interp_cells_xyz(mid_xyz, active_cell_ids), dtype=np.float64)

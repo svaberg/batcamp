@@ -92,7 +92,7 @@ def _build_reference_tree() -> Octree:
 
 
 def _ray_slice(segments, ray_id: int) -> tuple[np.ndarray, np.ndarray]:
-    """Return one packed event trace slice."""
+    """Return one packed crossing-trace slice."""
     cell_lo = int(segments.ray_offsets[ray_id])
     cell_hi = int(segments.ray_offsets[ray_id + 1])
     time_lo = int(segments.time_offsets[ray_id])
@@ -159,7 +159,7 @@ def _assert_positive_trace_forms_one_ray(
     t_max: float = np.inf,
     atol: float = 1.0e-12,
 ) -> None:
-    """Check one public event trace against the clipped analytical ray interval."""
+    """Check one public crossing trace against the clipped analytical ray interval."""
     positive_cell_ids, positive_times = _positive_trace(cell_ids, times)
     interval = _domain_interval_xyz(origin, direction, *tree.domain_bounds(coord="xyz"))
     if interval is None:
@@ -356,3 +356,26 @@ def test_render_midpoint_image_matches_cartesian_linear_reference_grid() -> None
     image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
 
     np.testing.assert_allclose(image, 4.0 * origins[..., 1], atol=1.0e-12, rtol=0.0)
+
+
+def test_accumulate_midpoint_image_matches_trace_then_render() -> None:
+    tree = _build_reference_tree()
+    tracer = OctreeRayTracer(tree)
+    interp = OctreeInterpolator(tree, np.asarray(tree._points, dtype=float)[:, 0] + 2.0 * np.asarray(tree._points, dtype=float)[:, 1])
+
+    ys = np.array([-0.5, 0.0, 0.5], dtype=float)
+    zs = np.array([-0.25, 0.25], dtype=float)
+    origins = np.zeros((zs.size, ys.size, 3), dtype=float)
+    origins[..., 0] = -2.0
+    origins[..., 1] = ys[None, :]
+    origins[..., 2] = zs[:, None]
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+
+    image_accum, counts_accum = tracer.accumulate_midpoint_image(interp, origins, directions)
+    segments = tracer.trace(origins, directions)
+    image_segments = render_midpoint_image(interp, origins, directions, segments)
+    counts_segments = np.diff(segments.ray_offsets).reshape(origins.shape[:-1])
+
+    np.testing.assert_allclose(image_accum, image_segments, atol=1.0e-12, rtol=0.0)
+    np.testing.assert_array_equal(counts_accum, counts_segments)

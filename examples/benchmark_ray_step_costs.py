@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile one warmed xyz ray trace through public event-trace statistics."""
+"""Profile one warmed xyz ray trace through public crossing-trace statistics."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def _trace_report(
     n_plane: int,
     bounds: tuple[float, float, float, float, float, float],
 ) -> dict[str, float | int]:
-    """Return one public-event-trace timing and segment-statistics report."""
+    """Return one public crossing-trace timing and segment-statistics report."""
     origins, directions, t_end = _ray_setup(n_plane=int(n_plane), bounds=bounds)
 
     tracer.trace(origins, directions, t_min=0.0, t_max=float(t_end))
@@ -121,12 +121,12 @@ def _trace_report(
 
 
 def _write_report(report: dict[str, float | int], out_path: Path) -> None:
-    """Write one markdown report with the public event-trace benchmark summary."""
+    """Write one markdown report with the public crossing-trace benchmark summary."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Ray Trace Cost Report",
         "",
-        "- scope: `xyz` public event tracer only",
+        "- scope: `xyz` public crossing tracer only",
         f"- sampled ray plane: `{int(report['sample_resolution'])}x{int(report['sample_resolution'])}`",
         f"- sampled rays: `{int(report['sample_rays'])}`",
         f"- nonempty rays: `{int(report['nonempty_rays'])}`",
@@ -148,7 +148,7 @@ def _write_report(report: dict[str, float | int], out_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Profile one warmed xyz ray trace through public event-trace statistics.")
+    parser = argparse.ArgumentParser(description="Profile one warmed xyz ray trace through public crossing-trace statistics.")
     parser.add_argument(
         "--dataset",
         default="3d__var_2_n00006003.plt",
@@ -208,7 +208,7 @@ def main() -> None:
         float(dmax[2]),
     )
 
-    progress.start(f"profile event trace at {int(args.resolution)}x{int(args.resolution)}")
+    progress.start(f"profile crossing trace at {int(args.resolution)}x{int(args.resolution)}")
     report, profile_s = _time_call(
         _trace_report,
         tracer,
@@ -216,7 +216,7 @@ def main() -> None:
         bounds=bounds,
     )
     progress.complete(
-        f"profile event trace at {int(args.resolution)}x{int(args.resolution)}",
+        f"profile crossing trace at {int(args.resolution)}x{int(args.resolution)}",
         profile_s,
         detail=(
             f"trace_s={float(report['trace_s']):.6f} "
