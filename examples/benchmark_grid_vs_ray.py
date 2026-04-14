@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare 3D grid-sum resampling with midpoint ray integration."""
+"""Compare 3D grid-sum resampling with octree ray accumulation."""
 
 from __future__ import annotations
 
@@ -100,19 +100,40 @@ def _ray_image_and_segment_counts(
     *,
     n_plane: int,
     bounds: tuple[float, float, float, float, float, float],
+    ray_method: str,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Trace one plane of parallel rays and return midpoint-rendered image and segment counts."""
+    """Trace one plane of parallel rays and return one accumulated image and segment counts."""
     origins, directions, t_end = _ray_setup(n_plane=int(n_plane), bounds=bounds)
-    image, counts = tracer.accumulate_midpoint_image(
-        interp,
-        origins,
-        directions,
-        t_min=0.0,
-        t_max=float(t_end),
-    )
+    if str(ray_method) == "midpoint":
+        image, counts = tracer.accumulate_midpoint_image(
+            interp,
+            origins,
+            directions,
+            t_min=0.0,
+            t_max=float(t_end),
+        )
+    elif str(ray_method) == "exact":
+        image, counts = tracer.accumulate_exact_image(
+            interp,
+            origins,
+            directions,
+            t_min=0.0,
+            t_max=float(t_end),
+        )
+    else:
+        raise ValueError(f"Unsupported ray_method '{ray_method}'.")
     image = np.asarray(image, dtype=float)
     counts = np.asarray(counts, dtype=np.int64)
     return image, counts
+
+
+def _ray_methods(ray_method: str) -> list[str]:
+    """Return the concrete ray methods to run for one benchmark invocation."""
+    if str(ray_method) == "both":
+        return ["midpoint", "exact"]
+    if str(ray_method) in {"midpoint", "exact"}:
+        return [str(ray_method)]
+    raise ValueError(f"Unsupported ray_method '{ray_method}'.")
 
 
 def _pixel_plane_coordinates(
@@ -273,6 +294,7 @@ def _save_four_panel_figure(
     out_path: Path,
     *,
     dataset_label: str,
+    ray_label: str,
     n_plane: int,
     img0: np.ndarray,
     img1: np.ndarray,
@@ -362,7 +384,7 @@ def _save_four_panel_figure(
     )
 
     axes[0, 1].imshow(img1_disp, origin="lower", cmap=cmap, norm=norm, aspect="equal")
-    axes[0, 1].set_title("Ray")
+    axes[0, 1].set_title(ray_label)
     axes[0, 1].set_xlabel("y index")
     axes[0, 1].set_ylabel("")
     axes[0, 1].text(
@@ -380,7 +402,7 @@ def _save_four_panel_figure(
     cbar.set_label(cbar_label)
     cbar.ax.tick_params(labelsize=8, pad=1)
 
-    axes[1, 0].set_title("Comparison: grid vs ray")
+    axes[1, 0].set_title(f"Comparison: grid vs {ray_label.lower()}")
     if pos_vals.size > 0:
         lo_data = float(np.min(pos_vals))
         hi_data = float(np.max(pos_vals))
@@ -476,7 +498,7 @@ def _save_four_panel_figure(
         axes[1, 0].set_ylim(1.0, 10.0)
         axes[1, 0].text(0.5, 0.5, "no positive overlap", transform=axes[1, 0].transAxes, ha="center", va="center")
     axes[1, 0].set_xlabel("grid values")
-    axes[1, 0].set_ylabel("ray values", labelpad=1)
+    axes[1, 0].set_ylabel(f"{ray_label.lower()} values", labelpad=1)
     axes[1, 0].grid(True, which="both", alpha=0.25)
     log_l1_text = "n/a" if not np.isfinite(eq_log_l1) else f"{eq_log_l1:.3e}"
     log_rmse_text = "n/a" if not np.isfinite(eq_log_rmse) else f"{eq_log_rmse:.3e}"
@@ -489,10 +511,10 @@ def _save_four_panel_figure(
         f"log10 L1={log_l1_text}\n"
         f"log10 RMSE={log_rmse_text}\n"
         f"positive overlap={eq_pos_overlap}\n"
-        f"grid>0, ray=0: {int(np.count_nonzero(plot0_only))}\n"
-        f"ray>0, grid=0: {int(np.count_nonzero(plot1_only))}\n"
-        f"grid>0, ray=nan: {int(np.count_nonzero(plot0_nan))}\n"
-        f"ray>0, grid=nan: {int(np.count_nonzero(plot1_nan))}",
+        f"grid>0, {ray_label.lower()}=0: {int(np.count_nonzero(plot0_only))}\n"
+        f"{ray_label.lower()}>0, grid=0: {int(np.count_nonzero(plot1_only))}\n"
+        f"grid>0, {ray_label.lower()}=nan: {int(np.count_nonzero(plot0_nan))}\n"
+        f"{ray_label.lower()}>0, grid=nan: {int(np.count_nonzero(plot1_nan))}",
         transform=axes[1, 0].transAxes,
         va="top",
         ha="left",
@@ -500,7 +522,7 @@ def _save_four_panel_figure(
         fontsize=7,
     )
 
-    axes[1, 1].set_title("Ray Segment Count Histogram")
+    axes[1, 1].set_title(f"{ray_label} Segment Count Histogram")
     seg = np.asarray(ray_segment_counts, dtype=np.int64).reshape(-1)
     if seg.size > 0:
         max_seg = int(np.max(seg))
@@ -555,6 +577,7 @@ def _write_timing_table(
     rows: list[dict[str, float | int]],
     out_path: Path,
     *,
+    ray_label: str,
     octree_tree_s: float,
     octree_interp_s: float,
     ray_tracer_s: float,
@@ -571,14 +594,14 @@ def _write_timing_table(
         "|---|---:|",
         f"| octree tree | {float(octree_tree_s):.6f} |",
         f"| octree interpolator | {float(octree_interp_s):.6f} |",
-        f"| ray tracer | {float(ray_tracer_s):.6f} |",
+        f"| {ray_label.lower()} tracer | {float(ray_tracer_s):.6f} |",
         f"| total | {float(octree_tree_s + octree_interp_s + ray_tracer_s):.6f} |",
         "",
         "## Cold Start",
         "",
         f"- first image pair after build: `{int(cold_resolution)}x{int(cold_resolution)}`",
         "",
-        "| resolution | grid_s | ray_s | ray/grid |",
+        f"| resolution | grid_s | {ray_label.lower()}_s | {ray_label.lower()}/grid |",
         "|---:|---:|---:|---:|",
         (
             f"| {int(cold_resolution)}x{int(cold_resolution)} | "
@@ -589,7 +612,7 @@ def _write_timing_table(
         "",
         "## Steady-State Runtime",
         "",
-        "| resolution | pixels | grid_s | ray_s | ray/grid | grid_nan | grid_zero | ray_nan | ray_zero | finite_overlap | positive_overlap | eq_abs_l1 | eq_abs_rmse | eq_log10_l1 | eq_log10_rmse |",
+        f"| resolution | pixels | grid_s | {ray_label.lower()}_s | {ray_label.lower()}/grid | grid_nan | grid_zero | {ray_label.lower()}_nan | {ray_label.lower()}_zero | finite_overlap | positive_overlap | eq_abs_l1 | eq_abs_rmse | eq_log10_l1 | eq_log10_rmse |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
@@ -619,11 +642,45 @@ def _write_timing_table(
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_method_comparison_table(
+    rows_by_method: dict[str, list[dict[str, float | int]]],
+    out_path: Path,
+) -> None:
+    """Write one direct midpoint-versus-exact timing comparison table."""
+    midpoint_rows = rows_by_method.get("midpoint", [])
+    exact_rows = rows_by_method.get("exact", [])
+    if not midpoint_rows or not exact_rows:
+        return
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "## Ray Method Comparison",
+        "",
+        "| resolution | pixels | midpoint_s | exact_s | exact/midpoint |",
+        "|---:|---:|---:|---:|---:|",
+    ]
+    for midpoint_row, exact_row in zip(midpoint_rows, exact_rows, strict=True):
+        resolution = int(midpoint_row["resolution"])
+        if resolution != int(exact_row["resolution"]):
+            raise ValueError("midpoint/exact comparison rows must share the same resolutions.")
+        midpoint_s = float(midpoint_row["ray_s"])
+        exact_s = float(exact_row["ray_s"])
+        lines.append(
+            f"| {resolution}x{resolution} | "
+            f"{int(midpoint_row['pixels'])} | "
+            f"{midpoint_s:.6f} | "
+            f"{exact_s:.6f} | "
+            f"{(exact_s / max(midpoint_s, 1.0e-15)):.3f} |"
+        )
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _save_runtime_plot(
     rows: list[dict[str, float | int]],
     out_path: Path,
     *,
     title: str,
+    ray_label: str,
     cold_resolution: int,
     cold_grid_s: float,
     cold_ray_s: float,
@@ -643,14 +700,14 @@ def _save_runtime_plot(
     )
     ax_cold.bar([0.0, 1.0], [float(cold_grid_s), float(cold_ray_s)], color=["C0", "C1"])
     ax_cold.set_xticks([0.0, 1.0])
-    ax_cold.set_xticklabels(["plot0: 3D grid-sum", "plot1: ray integration"], rotation=15, ha="right")
+    ax_cold.set_xticklabels(["plot0: 3D grid-sum", f"plot1: {ray_label.lower()}"], rotation=15, ha="right")
     ax_cold.set_yscale("log")
     ax_cold.set_ylabel("Runtime [s]")
     ax_cold.set_title(f"Cold start ({int(cold_resolution)}x{int(cold_resolution)})")
     ax_cold.grid(True, axis="y", which="both", alpha=0.25)
 
     ax_steady.plot(pixels, grid_t, "o-", label="plot0: 3D grid-sum")
-    ax_steady.plot(pixels, ray_t, "o-", label="plot1: ray integration")
+    ax_steady.plot(pixels, ray_t, "o-", label=f"plot1: {ray_label.lower()}")
     ax_steady.set_xscale("log")
     ax_steady.set_yscale("log")
     ax_steady.set_xlabel("Pixel count (N x N)")
@@ -663,9 +720,9 @@ def _save_runtime_plot(
     plt.close(fig)
 
 
-def _artifact_path(out_root: Path, *, case_label: str, name: str) -> Path:
+def _artifact_path(out_root: Path, *, case_label: str, ray_method: str, name: str) -> Path:
     """Return one flat artifact path under the benchmark output root."""
-    return out_root / f"benchmark_grid_vs_ray_{case_label}_{name}"
+    return out_root / f"benchmark_grid_vs_ray_{case_label}_{ray_method}_{name}"
 
 
 def _run_case(
@@ -677,11 +734,13 @@ def _run_case(
     resolutions: list[int],
     max_seconds_per_image: float,
     nx_sum: int,
+    ray_method: str,
     variable: str,
 ) -> None:
     """Run one dataset case through the grid-vs-ray benchmark."""
+    ray_methods = _ray_methods(ray_method)
     progress.note(f"[{case.label}] file={case.file_name}")
-    progress.note(f"[{case.label}] artifact_prefix=benchmark_grid_vs_ray_{case.label}_*")
+    progress.note(f"[{case.label}] artifact_prefix=benchmark_grid_vs_ray_{case.label}_<method>_*")
     progress.start(f"[{case.label}] resolve data file")
     data_path, resolve_s = _time_call(resolve_data_file, repo_root, case.file_name)
     progress.complete(f"[{case.label}] resolve data file", resolve_s, detail=f"-> {data_path}")
@@ -721,23 +780,29 @@ def _run_case(
     progress.start(f"[{case.label}] cold start check")
     t0 = time.perf_counter()
     _, cold_grid_s = _time_call(_grid_sum_image, interp, n_plane=warm_n, nx_sum=int(nx_sum), bounds=bounds)
-    try:
-        (_cold_ray_img, _cold_counts), cold_ray_s = _time_call(
-            _ray_image_and_segment_counts,
-            interp,
-            tracer,
-            n_plane=warm_n,
-            bounds=bounds,
-        )
-    except ValueError as exc:
-        cold_ray_s = float("nan")
-        progress.note(f"[{case.label}] cold-start ray trace failed at {warm_n}x{warm_n}: {exc}")
+    cold_ray_s_by_method: dict[str, float] = {}
+    for method in ray_methods:
+        try:
+            (_cold_ray_img, _cold_counts), cold_ray_s = _time_call(
+                _ray_image_and_segment_counts,
+                interp,
+                tracer,
+                n_plane=warm_n,
+                bounds=bounds,
+                ray_method=method,
+            )
+        except ValueError as exc:
+            cold_ray_s = float("nan")
+            progress.note(f"[{case.label}] cold-start {method} ray trace failed at {warm_n}x{warm_n}: {exc}")
+        cold_ray_s_by_method[method] = float(cold_ray_s)
     progress.complete(
         f"[{case.label}] cold start check",
         float(time.perf_counter() - t0),
-        detail=f"grid={cold_grid_s:.2f}s ray={cold_ray_s:.2f}s",
+        detail=" ".join(
+            [f"grid={cold_grid_s:.2f}s"] + [f"{method}={cold_ray_s_by_method[method]:.2f}s" for method in ray_methods]
+        ),
     )
-    rows: list[dict[str, float | int]] = []
+    rows_by_method: dict[str, list[dict[str, float | int]]] = {method: [] for method in ray_methods}
     for n in resolutions:
         progress.start(f"[{case.label}] run {n}x{n}")
         t_step = time.perf_counter()
@@ -749,106 +814,124 @@ def _run_case(
             nx_sum=int(nx_sum),
             bounds=bounds,
         )
-        try:
-            (img1, ray_seg_counts), ray_s = _time_call(
-                _ray_image_and_segment_counts,
-                interp,
-                tracer,
-                n_plane=int(n),
-                bounds=bounds,
-            )
-        except ValueError as exc:
-            progress.note(f"[{case.label}] ray trace failed at {n}x{n}: {exc}")
-            break
-
-        grid_nan, grid_zero = _array_stats(img0)
-        ray_nan, ray_zero = _array_stats(img1)
-        finite_overlap, pos_overlap, eq_abs_l1, eq_abs_rmse, eq_log_l1, eq_log_rmse = _equality_deviation(img0, img1)
-        pixels = int(n * n)
-        row = {
-            "resolution": int(n),
-            "pixels": pixels,
-            "grid_s": float(grid_s),
-            "ray_s": float(ray_s),
-            "grid_nan": int(grid_nan),
-            "grid_zero": int(grid_zero),
-            "ray_nan": int(ray_nan),
-            "ray_zero": int(ray_zero),
-            "finite_overlap": int(finite_overlap),
-            "positive_overlap": int(pos_overlap),
-            "eq_abs_l1": float(eq_abs_l1),
-            "eq_abs_rmse": float(eq_abs_rmse),
-            "eq_log10_l1": float(eq_log_l1),
-            "eq_log10_rmse": float(eq_log_rmse),
-        }
-        rows.append(row)
-
         pixel_y, pixel_z, pixel_r = _pixel_plane_coordinates(n_plane=int(n), bounds=bounds)
-        _save_four_panel_figure(
-            _artifact_path(out_root, case_label=case.label, name=f"resample_grid_vs_ray_{n}x{n}.png"),
-            dataset_label=f"{case.label}:{case.file_name}",
-            n_plane=int(n),
-            img0=img0,
-            img1=img1,
-            pixel_r=pixel_r,
-            ray_segment_counts=ray_seg_counts,
-            grid_segment_count=max(int(nx_sum) - 1, 1),
-            time0=float(grid_s),
-            time1=float(ray_s),
-            nx_sum=int(nx_sum),
-            eq_abs_l1=float(eq_abs_l1),
-            eq_abs_rmse=float(eq_abs_rmse),
-            eq_log_l1=float(eq_log_l1),
-            eq_log_rmse=float(eq_log_rmse),
-            eq_pos_overlap=int(pos_overlap),
-        )
-        _write_discrepancy_csv(
-            _discrepancy_rows(
-                img0,
-                img1,
-                pixel_y=pixel_y,
-                pixel_z=pixel_z,
+        grid_nan, grid_zero = _array_stats(img0)
+        pixels = int(n * n)
+        stop_after_resolution = False
+        method_details: list[str] = [f"grid={grid_s:.2f}s"]
+        for method in ray_methods:
+            ray_label = f"Ray {method}"
+            try:
+                (img1, ray_seg_counts), ray_s = _time_call(
+                    _ray_image_and_segment_counts,
+                    interp,
+                    tracer,
+                    n_plane=int(n),
+                    bounds=bounds,
+                    ray_method=method,
+                )
+            except ValueError as exc:
+                progress.note(f"[{case.label}] {method} ray trace failed at {n}x{n}: {exc}")
+                stop_after_resolution = True
+                continue
+
+            ray_nan, ray_zero = _array_stats(img1)
+            finite_overlap, pos_overlap, eq_abs_l1, eq_abs_rmse, eq_log_l1, eq_log_rmse = _equality_deviation(img0, img1)
+            row = {
+                "resolution": int(n),
+                "pixels": pixels,
+                "grid_s": float(grid_s),
+                "ray_s": float(ray_s),
+                "grid_nan": int(grid_nan),
+                "grid_zero": int(grid_zero),
+                "ray_nan": int(ray_nan),
+                "ray_zero": int(ray_zero),
+                "finite_overlap": int(finite_overlap),
+                "positive_overlap": int(pos_overlap),
+                "eq_abs_l1": float(eq_abs_l1),
+                "eq_abs_rmse": float(eq_abs_rmse),
+                "eq_log10_l1": float(eq_log_l1),
+                "eq_log10_rmse": float(eq_log_rmse),
+            }
+            rows_by_method[method].append(row)
+
+            _save_four_panel_figure(
+                _artifact_path(out_root, case_label=case.label, ray_method=method, name=f"resample_grid_vs_ray_{n}x{n}.png"),
+                dataset_label=f"{case.label}:{case.file_name}",
+                ray_label=ray_label,
+                n_plane=int(n),
+                img0=img0,
+                img1=img1,
                 pixel_r=pixel_r,
-            ),
-            _artifact_path(out_root, case_label=case.label, name=f"discrepancies_{n}x{n}.csv"),
-        )
-        _write_timing_table(
-            rows,
-            _artifact_path(out_root, case_label=case.label, name="timing_report.md"),
-            octree_tree_s=float(tree_s),
-            octree_interp_s=float(interp_s),
-            ray_tracer_s=float(tracer_s),
-            cold_resolution=warm_n,
-            cold_grid_s=float(cold_grid_s),
-            cold_ray_s=float(cold_ray_s),
-        )
-        _save_runtime_plot(
-            rows,
-            _artifact_path(out_root, case_label=case.label, name="runtime_vs_pixels.png"),
-            title=f"{case.label}: grid vs ray runtime",
-            cold_resolution=warm_n,
-            cold_grid_s=float(cold_grid_s),
-            cold_ray_s=float(cold_ray_s),
-        )
+                ray_segment_counts=ray_seg_counts,
+                grid_segment_count=max(int(nx_sum) - 1, 1),
+                time0=float(grid_s),
+                time1=float(ray_s),
+                nx_sum=int(nx_sum),
+                eq_abs_l1=float(eq_abs_l1),
+                eq_abs_rmse=float(eq_abs_rmse),
+                eq_log_l1=float(eq_log_l1),
+                eq_log_rmse=float(eq_log_rmse),
+                eq_pos_overlap=int(pos_overlap),
+            )
+            _write_discrepancy_csv(
+                _discrepancy_rows(
+                    img0,
+                    img1,
+                    pixel_y=pixel_y,
+                    pixel_z=pixel_z,
+                    pixel_r=pixel_r,
+                ),
+                _artifact_path(out_root, case_label=case.label, ray_method=method, name=f"discrepancies_{n}x{n}.csv"),
+            )
+            _write_timing_table(
+                rows_by_method[method],
+                _artifact_path(out_root, case_label=case.label, ray_method=method, name="timing_report.md"),
+                ray_label=ray_label,
+                octree_tree_s=float(tree_s),
+                octree_interp_s=float(interp_s),
+                ray_tracer_s=float(tracer_s),
+                cold_resolution=warm_n,
+                cold_grid_s=float(cold_grid_s),
+                cold_ray_s=float(cold_ray_s_by_method[method]),
+            )
+            _save_runtime_plot(
+                rows_by_method[method],
+                _artifact_path(out_root, case_label=case.label, ray_method=method, name="runtime_vs_pixels.png"),
+                title=f"{case.label}: grid vs {ray_label.lower()} runtime",
+                ray_label=ray_label,
+                cold_resolution=warm_n,
+                cold_grid_s=float(cold_grid_s),
+                cold_ray_s=float(cold_ray_s_by_method[method]),
+            )
+            method_details.append(f"{method}={ray_s:.2f}s")
+            progress.note(
+                f"{case.label},{method},{n}x{n},{pixels},{grid_s:.6f},{ray_s:.6f},"
+                f"{grid_nan},{grid_zero},{ray_nan},{ray_zero},{finite_overlap},"
+                f"{pos_overlap},{eq_abs_l1:.6e},{eq_abs_rmse:.6e},{eq_log_l1:.6e},{eq_log_rmse:.6e}"
+            )
+            if max(float(grid_s), float(ray_s)) > max_seconds_per_image:
+                stop_after_resolution = True
+
+        if len(ray_methods) > 1:
+            _write_method_comparison_table(
+                rows_by_method,
+                _artifact_path(out_root, case_label=case.label, ray_method="compare", name="ray_method_compare.md"),
+            )
 
         progress.complete(
             f"[{case.label}] run {n}x{n}",
             float(time.perf_counter() - t_step),
-            detail=f"grid={grid_s:.2f}s ray={ray_s:.2f}s",
+            detail=" ".join(method_details),
         )
-        progress.note(
-            f"{case.label},{n}x{n},{pixels},{grid_s:.6f},{ray_s:.6f},"
-            f"{grid_nan},{grid_zero},{ray_nan},{ray_zero},{finite_overlap},"
-            f"{pos_overlap},{eq_abs_l1:.6e},{eq_abs_rmse:.6e},{eq_log_l1:.6e},{eq_log_rmse:.6e}"
-        )
-        if max(float(grid_s), float(ray_s)) > max_seconds_per_image:
+        if stop_after_resolution:
             progress.note(f"[{case.label}] stop at {n}x{n}: reached {max_seconds_per_image:.2f}s limit")
             break
-    progress.note(f"[{case.label}] done -> benchmark_grid_vs_ray_{case.label}_*")
+    progress.note(f"[{case.label}] done -> benchmark_grid_vs_ray_{case.label}_<method>_*")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare 3D grid-sum resampling with midpoint ray integration.")
+    parser = argparse.ArgumentParser(description="Compare 3D grid-sum resampling with octree ray accumulation.")
     parser.add_argument(
         "--min-resolution",
         type=int,
@@ -879,6 +962,12 @@ def main() -> None:
         help="Dataset variable to resample.",
     )
     parser.add_argument(
+        "--ray-method",
+        choices=("midpoint", "exact", "both"),
+        default="exact",
+        help="Ray accumulation method to benchmark (default: exact). Use 'both' for one-process midpoint/exact comparison.",
+    )
+    parser.add_argument(
         "--output-dir",
         default="artifacts",
         help="Output directory for PNGs and tables.",
@@ -907,7 +996,7 @@ def main() -> None:
 
     progress.note(f"output_dir={out_root}")
     progress.note(
-        "dataset,resolution,pixels,grid_s,ray_s,grid_nan,grid_zero,ray_nan,ray_zero,"
+        "dataset,method,resolution,pixels,grid_s,ray_s,grid_nan,grid_zero,ray_nan,ray_zero,"
         "finite_overlap,positive_overlap,eq_abs_l1,eq_abs_rmse,eq_log10_l1,eq_log10_rmse"
     )
     for case in cases:
@@ -919,6 +1008,7 @@ def main() -> None:
             resolutions=resolutions,
             max_seconds_per_image=max_seconds_per_image,
             nx_sum=int(args.nx_sum),
+            ray_method=str(args.ray_method),
             variable=str(args.variable),
         )
 

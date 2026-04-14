@@ -201,6 +201,56 @@ def accumulate_midpoints(
     return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
 
+def accumulate_exact(
+    tree: Octree,
+    interpolator,
+    origins: np.ndarray,
+    directions: np.ndarray,
+    *,
+    t_min: float,
+    t_max: float,
+    ray_shape: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trace rays and accumulate exact trilinear cell integrals without packing segments."""
+    from .interpolator import OctreeInterpolator
+    from . import interpolator as interpolator_module
+
+    if not isinstance(interpolator, OctreeInterpolator):
+        raise TypeError("accumulate_exact_image requires one OctreeInterpolator.")
+    if interpolator.tree is not tree:
+        raise ValueError("interpolator.tree must match the tracer octree.")
+
+    o_flat = np.asarray(origins, dtype=np.float64)
+    d_flat = np.asarray(directions, dtype=np.float64)
+    n_rays = int(o_flat.shape[0])
+    n_components = int(interpolator.n_components)
+    accum = np.zeros((n_rays, n_components), dtype=np.float64)
+    cell_counts_out = np.zeros(n_rays, dtype=np.int64)
+    for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
+        chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
+        chunk_origins = o_flat[chunk_lo:chunk_hi]
+        chunk_directions = d_flat[chunk_lo:chunk_hi]
+        cell_counts, _time_counts, cell_buffer, time_buffer = fill_chunk(
+            tree,
+            chunk_origins,
+            chunk_directions,
+            t_min=t_min,
+            t_max=t_max,
+        )
+        cell_counts_out[chunk_lo:chunk_hi] = cell_counts
+        accum[chunk_lo:chunk_hi] = interpolator_module.accumulate_exact_cells_xyz(
+            chunk_origins,
+            chunk_directions,
+            cell_counts,
+            cell_buffer,
+            time_buffer,
+            tree.cell_bounds,
+            tree.corners,
+            interpolator._point_values_2d,
+        )
+    return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
+
+
 @dataclass(frozen=True)
 class RaySegments:
     """Packed per-ray crossing segments with one time list per ray."""
@@ -316,6 +366,35 @@ class OctreeRayTracer:
             raise ValueError("t_max must be greater than or equal to t_min.")
         o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
         return accumulate_midpoints(
+            self.tree,
+            interpolator,
+            o_flat,
+            d_flat,
+            t_min=t_lo,
+            t_max=t_hi,
+            ray_shape=ray_shape,
+        )
+
+    def accumulate_exact_image(
+        self,
+        interpolator,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        *,
+        t_min: float = 0,
+        t_max: float = np.inf,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Trace rays and accumulate exact trilinear cell integrals plus per-ray segment counts."""
+        t_lo = float(t_min)
+        t_hi = float(t_max)
+        if not math.isfinite(t_lo):
+            raise ValueError("t_min must be finite.")
+        if math.isnan(t_hi):
+            raise ValueError("t_max must not be NaN.")
+        if t_hi < t_lo:
+            raise ValueError("t_max must be greater than or equal to t_min.")
+        o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
+        return accumulate_exact(
             self.tree,
             interpolator,
             o_flat,

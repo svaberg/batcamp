@@ -91,6 +91,16 @@ def _build_reference_tree() -> Octree:
     return Octree(points, corners, tree_coord="xyz")
 
 
+def _build_unit_tree() -> Octree:
+    """Return one single-cell Cartesian tree on the unit cube."""
+    points, corners = build_cartesian_hex_mesh(
+        x_edges=np.array([0.0, 1.0], dtype=float),
+        y_edges=np.array([0.0, 1.0], dtype=float),
+        z_edges=np.array([0.0, 1.0], dtype=float),
+    )
+    return Octree(points, corners, tree_coord="xyz")
+
+
 def _ray_slice(segments, ray_id: int) -> tuple[np.ndarray, np.ndarray]:
     """Return one packed crossing-trace slice."""
     cell_lo = int(segments.ray_offsets[ray_id])
@@ -242,7 +252,7 @@ def test_trace_preserves_batch_shape() -> None:
 def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch) -> None:
     tree = _build_long_x_tree()
     tracer = OctreeRayTracer(tree)
-    monkeypatch.setattr(ray_module, "_TRACE_RAY_INITIAL_EVENTS", 32)
+    monkeypatch.setattr(ray_module, "DEFAULT_CROSSING_BUFFER_SIZE", 32)
 
     origin = np.array([-1.0, 0.5, 0.5], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
@@ -379,3 +389,21 @@ def test_accumulate_midpoint_image_matches_trace_then_render() -> None:
 
     np.testing.assert_allclose(image_accum, image_segments, atol=1.0e-12, rtol=0.0)
     np.testing.assert_array_equal(counts_accum, counts_segments)
+
+
+def test_accumulate_exact_image_integrates_bilinear_slanted_ray() -> None:
+    tree = _build_unit_tree()
+    tracer = OctreeRayTracer(tree)
+    points = np.asarray(tree._points, dtype=float)
+    interp = OctreeInterpolator(tree, points[:, 0] * points[:, 1])
+
+    origins = np.array([[[-0.25, 0.125, 0.5]]], dtype=float)
+    directions = np.array([[[1.0, 0.5, 0.0]]], dtype=float)
+
+    image_exact, counts_exact = tracer.accumulate_exact_image(interp, origins, directions)
+    image_mid, counts_mid = tracer.accumulate_midpoint_image(interp, origins, directions)
+
+    np.testing.assert_array_equal(counts_exact, np.array([[1]], dtype=np.int64))
+    np.testing.assert_array_equal(counts_mid, counts_exact)
+    np.testing.assert_allclose(image_exact, np.array([[7.0 / 24.0]], dtype=float), atol=1.0e-12, rtol=0.0)
+    assert abs(float(image_mid[0, 0]) - float(image_exact[0, 0])) > 1.0e-3
