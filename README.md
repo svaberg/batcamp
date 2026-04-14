@@ -55,3 +55,34 @@ plt.show()
 ```
 
 See [examples/quick_start.ipynb](examples/quick_start.ipynb) for a larger example.
+
+## Cartesian ray image
+For Cartesian data, the ray tracer can accumulate one image directly from a manually constructed plane of parallel rays. The example below does not use `camera_rays`.
+
+```python
+from batread import Dataset
+import matplotlib.pyplot as plt
+import numpy as np
+
+from batcamp import Octree, OctreeInterpolator, OctreeRayTracer
+
+ds = Dataset.from_file("sample_data/3d__var_2_n00006003.plt")
+tree = Octree.from_ds(ds, tree_coord="xyz")
+interp = OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))
+tracer = OctreeRayTracer(tree)
+
+lo, hi = tree.domain_bounds(coord="xyz")
+n = 128
+y_edges = np.linspace(lo[1], hi[1], n + 1)
+z_edges = np.linspace(lo[2], hi[2], n + 1)
+yg, zg = np.meshgrid(0.5 * (y_edges[:-1] + y_edges[1:]), 0.5 * (z_edges[:-1] + z_edges[1:]), indexing="xy")
+origins = np.stack((np.full_like(yg, lo[0]), yg, zg), axis=-1)
+directions = np.zeros_like(origins)
+directions[..., 0] = 1.0
+
+image, _ = tracer.accumulate_exact_image(interp, origins, directions, t_max=float(hi[0] - lo[0]))
+
+plt.imshow(image, origin="lower", norm="log")
+plt.colorbar(label="line integral")
+plt.show()
+```
