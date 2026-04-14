@@ -21,8 +21,10 @@ def normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndar
     d = np.array(directions, dtype=np.float64, order="C")
     if o.ndim == 0 or o.shape[-1] != 3:
         raise ValueError("origins must have shape (..., 3).")
-    if d.shape != o.shape:
-        raise ValueError("directions must have the same shape as origins.")
+    if d.shape == (3,):
+        d = np.broadcast_to(d, o.shape).copy()
+    elif d.shape != o.shape:
+        raise ValueError("directions must have shape (..., 3) or (3,).")
     if not np.all(np.isfinite(o)):
         raise ValueError("origins must contain only finite values.")
     if not np.all(np.isfinite(d)):
