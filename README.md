@@ -56,7 +56,7 @@ plt.show()
 
 See [examples/quick_start.ipynb](examples/quick_start.ipynb) for a larger example.
 
-## Cartesian ray image
+## Synthetic images
 For cartesian data, you can create a synthetic image from a set of rays.
 
 ```python
