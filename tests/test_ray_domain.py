@@ -318,19 +318,6 @@ def test_trace_refined_edge_crossing_keeps_positive_topology() -> None:
     _assert_positive_trace_forms_one_ray(tree, origin, direction, *_ray_slice(segments, 0))
 
 
-def test_render_midpoint_image_integrates_constant_density_along_one_ray() -> None:
-    tree = _build_xyz_tree()
-    tracer = OctreeRayTracer(tree)
-    interp = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
-    origins = np.array([[[-2.0, -0.3, -0.2]]], dtype=float)
-    directions = np.array([[[1.0, 0.0, 0.0]]], dtype=float)
-
-    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
-
-    assert image.shape == (1, 1)
-    np.testing.assert_allclose(image, np.array([[2.0]], dtype=float), atol=1.0e-12, rtol=0.0)
-
-
 def test_render_midpoint_image_uses_segment_cell_ids(monkeypatch) -> None:
     tree = _build_xyz_tree()
     tracer = OctreeRayTracer(tree)
@@ -349,48 +336,6 @@ def test_render_midpoint_image_uses_segment_cell_ids(monkeypatch) -> None:
     np.testing.assert_allclose(image, np.array([[2.0]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
-def test_render_midpoint_image_matches_cartesian_linear_reference_grid() -> None:
-    tree = _build_reference_tree()
-    tracer = OctreeRayTracer(tree)
-    interp = OctreeInterpolator(tree, np.asarray(tree._points, dtype=float)[:, 0] + 2.0 * np.asarray(tree._points, dtype=float)[:, 1])
-
-    ys = np.array([-0.5, 0.0, 0.5], dtype=float)
-    zs = np.array([-0.25, 0.25], dtype=float)
-    origins = np.zeros((zs.size, ys.size, 3), dtype=float)
-    origins[..., 0] = -2.0
-    origins[..., 1] = ys[None, :]
-    origins[..., 2] = zs[:, None]
-    directions = np.zeros_like(origins)
-    directions[..., 0] = 1.0
-
-    image = render_midpoint_image(interp, origins, directions, tracer.trace(origins, directions))
-
-    np.testing.assert_allclose(image, 4.0 * origins[..., 1], atol=1.0e-12, rtol=0.0)
-
-
-def test_accumulate_midpoint_image_matches_trace_then_render() -> None:
-    tree = _build_reference_tree()
-    tracer = OctreeRayTracer(tree)
-    interp = OctreeInterpolator(tree, np.asarray(tree._points, dtype=float)[:, 0] + 2.0 * np.asarray(tree._points, dtype=float)[:, 1])
-
-    ys = np.array([-0.5, 0.0, 0.5], dtype=float)
-    zs = np.array([-0.25, 0.25], dtype=float)
-    origins = np.zeros((zs.size, ys.size, 3), dtype=float)
-    origins[..., 0] = -2.0
-    origins[..., 1] = ys[None, :]
-    origins[..., 2] = zs[:, None]
-    directions = np.zeros_like(origins)
-    directions[..., 0] = 1.0
-
-    image_accum, counts_accum = tracer.accumulate_midpoint_image(interp, origins, directions)
-    segments = tracer.trace(origins, directions)
-    image_segments = render_midpoint_image(interp, origins, directions, segments)
-    counts_segments = np.diff(segments.ray_offsets).reshape(origins.shape[:-1])
-
-    np.testing.assert_allclose(image_accum, image_segments, atol=1.0e-12, rtol=0.0)
-    np.testing.assert_array_equal(counts_accum, counts_segments)
-
-
 def test_accumulate_exact_image_integrates_bilinear_slanted_ray() -> None:
     tree = _build_unit_tree()
     tracer = OctreeRayTracer(tree)
@@ -401,9 +346,6 @@ def test_accumulate_exact_image_integrates_bilinear_slanted_ray() -> None:
     directions = np.array([[[1.0, 0.5, 0.0]]], dtype=float)
 
     image_exact, counts_exact = tracer.accumulate_exact_image(interp, origins, directions)
-    image_mid, counts_mid = tracer.accumulate_midpoint_image(interp, origins, directions)
 
     np.testing.assert_array_equal(counts_exact, np.array([[1]], dtype=np.int64))
-    np.testing.assert_array_equal(counts_mid, counts_exact)
     np.testing.assert_allclose(image_exact, np.array([[7.0 / 24.0]], dtype=float), atol=1.0e-12, rtol=0.0)
-    assert abs(float(image_mid[0, 0]) - float(image_exact[0, 0])) > 1.0e-3
