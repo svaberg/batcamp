@@ -93,8 +93,8 @@ def trace_segments(
         time_chunks.append(chunk_times)
         n_cell += chunk_cell_total
         n_time += chunk_time_total
-        ray_offsets[chunk_lo + 1 : chunk_hi + 1] = n_cell - chunk_cell_total + chunk_cell_offsets[1:]
-        time_offsets[chunk_lo + 1 : chunk_hi + 1] = n_time - chunk_time_total + chunk_time_offsets[1:]
+        ray_offsets[chunk_lo + 1:chunk_hi + 1] = n_cell - chunk_cell_total + chunk_cell_offsets[1:]
+        time_offsets[chunk_lo + 1:chunk_hi + 1] = n_time - chunk_time_total + chunk_time_offsets[1:]
     cell_ids_out = np.concatenate(cell_chunks).astype(np.int64, copy=False) if n_cell else np.empty(0, dtype=np.int64)
     times_out = np.concatenate(time_chunks).astype(np.float64, copy=False) if n_time else np.empty(0, dtype=np.float64)
     return RaySegments(
@@ -123,10 +123,10 @@ def fill_chunk(
         cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
         time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
         cartesian_crossing_trace.trace_buffer(
-            tree._root_cell_ids,
+            tree.root_cell_ids,
             tree.cell_child,
             tree.cell_bounds,
-            tree._domain_bounds,
+            tree.domain_bounds_packed,
             tree.cell_neighbor,
             origins,
             directions,
@@ -198,7 +198,7 @@ def accumulate_midpoints(
             time_buffer,
             tree.cell_bounds,
             tree.corners,
-            interpolator._point_values_2d,
+            interpolator.point_values_2d,
         )
     return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
@@ -248,7 +248,7 @@ def accumulate_exact(
             time_buffer,
             tree.cell_bounds,
             tree.corners,
-            interpolator._point_values_2d,
+            interpolator.point_values_2d,
         )
     return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 

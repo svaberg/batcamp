@@ -284,7 +284,7 @@ def _interp_cells_xyz(
             cell_bounds,
             corners,
             point_values,
-    )
+        )
     return out
 
 
@@ -428,6 +428,11 @@ class OctreeInterpolator:
     def n_components(self) -> int:
         """Return the flat component count carried by each interpolation value."""
         return int(self._point_values_2d.shape[1])
+
+    @property
+    def point_values_2d(self) -> np.ndarray:
+        """Return flat `(n_points, n_components)` point values for interpolation kernels."""
+        return self._point_values_2d
 
     @property
     def value_shape(self) -> tuple[int, ...]:

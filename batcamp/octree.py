@@ -714,6 +714,11 @@ class Octree:
         return self._cell_child
 
     @property
+    def root_cell_ids(self) -> np.ndarray:
+        """Return rebuilt runtime root cell ids."""
+        return self._root_cell_ids
+
+    @property
     def cell_parent(self) -> np.ndarray:
         """Return rebuilt runtime parent references, with `-1` for roots."""
         return self._cell_parent
@@ -727,6 +732,11 @@ class Octree:
     def cell_neighbor(self) -> np.ndarray:
         """Return rebuilt runtime face/subface neighbor references for all occupied cells."""
         return self._cell_neighbor
+
+    @property
+    def domain_bounds_packed(self) -> np.ndarray:
+        """Return packed `(3, 2)` start/width domain bounds for the tree coordinate system."""
+        return self._domain_bounds
 
     @property
     def radial_edges(self) -> np.ndarray:
