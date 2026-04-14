@@ -13,6 +13,9 @@ from .octree import Octree
 
 __all__ = ["OctreeRayTracer", "RaySegments", "render_midpoint_image"]
 
+_TRACE_RAY_CHUNK_SIZE = 256
+_TRACE_RAY_INITIAL_EVENTS = 1000
+
 
 def _normalize_ray_arrays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
     """Return flat finite ray arrays plus the leading broadcast shape."""
@@ -46,44 +49,46 @@ def _trace_xyz_ray_batch(
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
     n_rays = int(o_flat.shape[0])
-    max_events = int(_xyz_refined_event_walk._MAX_RAY_TRACE_EVENTS)
     ray_offsets = np.empty(n_rays + 1, dtype=np.int64)
     time_offsets = np.empty(n_rays + 1, dtype=np.int64)
     ray_offsets[0] = 0
     time_offsets[0] = 0
-    chunk_size = 256
     cell_chunks: list[np.ndarray] = []
     time_chunks: list[np.ndarray] = []
     n_cell = 0
     n_time = 0
-    for chunk_lo in range(0, n_rays, chunk_size):
-        chunk_hi = min(chunk_lo + chunk_size, n_rays)
+    for chunk_lo in range(0, n_rays, _TRACE_RAY_CHUNK_SIZE):
+        chunk_hi = min(chunk_lo + _TRACE_RAY_CHUNK_SIZE, n_rays)
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         chunk_n_rays = int(chunk_hi - chunk_lo)
-        cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
-        time_counts = np.empty(chunk_n_rays, dtype=np.int64)
-        cell_buffer = np.empty((chunk_n_rays, max_events), dtype=np.int64)
-        time_buffer = np.empty((chunk_n_rays, max_events + 1), dtype=np.float64)
-        _xyz_refined_event_walk.trace_xyz_ray_batch_scratch_raw(
-            tree._root_cell_ids,
-            tree.cell_child,
-            tree.cell_bounds,
-            tree._domain_bounds,
-            tree.cell_neighbor,
-            chunk_origins,
-            chunk_directions,
-            float(t_min),
-            float(t_max),
-            cell_counts,
-            time_counts,
-            cell_buffer,
-            time_buffer,
-        )
-        if np.any(cell_counts < 0) or np.any(time_counts < 0):
-            raise ValueError(
-                f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={max_events} or encountered an invalid event."
+        event_capacity = _TRACE_RAY_INITIAL_EVENTS
+        while True:
+            cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
+            time_counts = np.empty(chunk_n_rays, dtype=np.int64)
+            cell_buffer = np.empty((chunk_n_rays, event_capacity), dtype=np.int64)
+            time_buffer = np.empty((chunk_n_rays, event_capacity + 1), dtype=np.float64)
+            _xyz_refined_event_walk.trace_xyz_ray_batch_scratch_raw(
+                tree._root_cell_ids,
+                tree.cell_child,
+                tree.cell_bounds,
+                tree._domain_bounds,
+                tree.cell_neighbor,
+                chunk_origins,
+                chunk_directions,
+                float(t_min),
+                float(t_max),
+                cell_counts,
+                time_counts,
+                cell_buffer,
+                time_buffer,
             )
+            if np.any(cell_counts == -1) or np.any(time_counts == -1):
+                event_capacity *= 2
+                continue
+            if np.any(cell_counts < 0) or np.any(time_counts < 0):
+                raise ValueError("xyz ray trace encountered an invalid event.")
+            break
         chunk_cell_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
         chunk_time_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
         chunk_cell_offsets[0] = 0

@@ -501,13 +501,30 @@ def _save_four_panel_figure(
         max_seg = int(np.max(seg))
         bins = np.arange(-0.5, max_seg + 1.5, 1.0)
         axes[1, 1].hist(seg, bins=bins, color="tab:blue", alpha=0.8, edgecolor="black", linewidth=0.5)
-        avg_seg = float(np.mean(seg))
+        min_seg = int(np.min(seg))
+        median_seg = float(np.median(seg))
+        max_seg_value = int(np.max(seg))
+        median_seg_label = f"{int(median_seg)}" if float(median_seg).is_integer() else f"{median_seg:.1f}"
         axes[1, 1].axvline(
-            avg_seg,
+            float(min_seg),
+            color="tab:orange",
+            linestyle="--",
+            linewidth=1.6,
+            label=f"ray min = {min_seg}",
+        )
+        axes[1, 1].axvline(
+            median_seg,
             color="tab:green",
             linestyle=":",
             linewidth=1.8,
-            label=f"ray mean = {avg_seg:.2f}",
+            label=f"ray median = {median_seg_label}",
+        )
+        axes[1, 1].axvline(
+            float(max_seg_value),
+            color="tab:purple",
+            linestyle="-.",
+            linewidth=1.6,
+            label=f"ray max = {max_seg_value}",
         )
         axes[1, 1].axvline(
             float(grid_segment_count),

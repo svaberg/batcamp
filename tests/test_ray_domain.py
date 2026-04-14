@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+import batcamp.ray as ray_module
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
@@ -68,6 +69,16 @@ def _build_xyz_coarse_fine_tree() -> Octree:
         dtype=np.int64,
     )
     return Octree(np.array(xyz_list, dtype=float), corners, tree_coord="xyz")
+
+
+def _build_long_x_tree(n_x: int = 40) -> Octree:
+    """Return one Cartesian strip with many x-cells for chunk-growth tests."""
+    points, corners = build_cartesian_hex_mesh(
+        x_edges=np.arange(int(n_x) + 1, dtype=float),
+        y_edges=np.array([0.0, 1.0], dtype=float),
+        z_edges=np.array([0.0, 1.0], dtype=float),
+    )
+    return Octree(points, corners, tree_coord="xyz")
 
 
 def _build_reference_tree() -> Octree:
@@ -226,6 +237,23 @@ def test_trace_preserves_batch_shape() -> None:
     np.testing.assert_array_equal(segments.time_offsets, np.array([0, 3, 6, 6, 9], dtype=np.int64))
     np.testing.assert_array_equal(_ray_slice(segments, 2)[0], np.empty(0, dtype=np.int64))
     np.testing.assert_array_equal(_ray_slice(segments, 2)[1], np.empty(0, dtype=float))
+
+
+def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch) -> None:
+    tree = _build_long_x_tree()
+    tracer = OctreeRayTracer(tree)
+    monkeypatch.setattr(ray_module, "_TRACE_RAY_INITIAL_EVENTS", 32)
+
+    origin = np.array([-1.0, 0.5, 0.5], dtype=float)
+    direction = np.array([1.0, 0.0, 0.0], dtype=float)
+    segments = tracer.trace(origin, direction)
+
+    positive_cell_ids, positive_times = _positive_trace(*_ray_slice(segments, 0))
+    assert positive_cell_ids.size == 40
+    np.testing.assert_allclose(positive_times[0], 1.0, atol=0.0, rtol=0.0)
+    np.testing.assert_allclose(positive_times[-1], 41.0, atol=0.0, rtol=0.0)
+    np.testing.assert_allclose(np.diff(positive_times), np.ones(40, dtype=float), atol=0.0, rtol=0.0)
+    _assert_positive_trace_forms_one_ray(tree, origin, direction, *_ray_slice(segments, 0))
 
 
 def test_trace_positive_corner_crossing_matches_expected_path() -> None:

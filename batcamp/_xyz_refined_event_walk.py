@@ -226,10 +226,10 @@ def trace_xyz_refined_event_path(
         cell_ids,
         times,
     )
+    if n_cell == -1 or n_time == -1:
+        raise ValueError(f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={_MAX_RAY_TRACE_EVENTS}.")
     if n_cell < 0 or n_time < 0:
-        raise ValueError(
-            f"xyz ray trace exceeded _MAX_RAY_TRACE_EVENTS={_MAX_RAY_TRACE_EVENTS} or encountered an invalid event."
-        )
+        raise ValueError("xyz ray trace encountered an invalid event.")
     return cell_ids[:n_cell].copy(), times[:n_time].copy()
 
 
@@ -588,6 +588,7 @@ def _trace_one_xyz_ray_raw(
     times_out: np.ndarray,
 ) -> tuple[int, int]:
     """Trace one Cartesian ray into fixed scratch buffers."""
+    max_events = int(cell_ids_out.shape[0])
     has_interval, domain_enter, domain_exit = _domain_interval_xyz_raw(origin_xyz, direction_xyz, domain_bounds)
     if not has_interval:
         return 0, 0
@@ -622,16 +623,16 @@ def _trace_one_xyz_ray_raw(
             active_faces,
         )
         if n_active_face < 0:
-            return -1, -1
+            return -2, -2
         if t_exit > stop_t:
-            if n_cell >= _MAX_RAY_TRACE_EVENTS:
+            if n_cell >= max_events:
                 return -1, -1
             cell_ids_out[n_cell] = int(current_cell)
             times_out[n_time] = float(stop_t)
             n_cell += 1
             n_time += 1
             break
-        if n_cell >= _MAX_RAY_TRACE_EVENTS:
+        if n_cell >= max_events:
             return -1, -1
         cell_ids_out[n_cell] = int(current_cell)
         times_out[n_time] = float(t_exit)
@@ -661,12 +662,12 @@ def _trace_one_xyz_ray_raw(
             active_face_order,
         )
         if path_count < 0:
-            return -1, -1
+            return -2, -2
         for path_pos in range(path_count - 1):
             intermediate_cell = int(path[path_pos])
             if intermediate_cell < 0:
                 break
-            if n_cell >= _MAX_RAY_TRACE_EVENTS:
+            if n_cell >= max_events:
                 return -1, -1
             cell_ids_out[n_cell] = int(intermediate_cell)
             times_out[n_time] = float(t_exit)
