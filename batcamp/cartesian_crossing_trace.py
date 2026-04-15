@@ -654,6 +654,7 @@ def trace_buffer(
     cell_bounds: np.ndarray,
     domain_bounds: np.ndarray,
     cell_neighbor: np.ndarray,
+    cell_depth: np.ndarray,
     origins: np.ndarray,
     directions: np.ndarray,
     t_min: float,
@@ -671,6 +672,7 @@ def trace_buffer(
         cell_bounds (const): Packed leaf bounds.
         domain_bounds (const): Cartesian domain bounds.
         cell_neighbor (const): Packed face/subface neighbor table.
+        cell_depth (const): Packed cell depths, unused for Cartesian traversal.
         origins (const): Flat origin array with shape `(n_rays, 3)`.
         directions (const): Flat direction array with shape `(n_rays, 3)`.
         t_min (const): Lower parameter clip.

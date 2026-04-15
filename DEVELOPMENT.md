@@ -183,6 +183,11 @@ tasks, in this order.
    role; coordinate-specific scratch and ownership inputs stay local to their
    branch.
 
+   The shared ray layer selects the coordinate crossing module once per chunk
+   and calls its `trace_buffer()` through the same argument layout. Coordinate
+   kernels share the `cell_depth` slot; spherical uses it for polar-axis
+   transfer and Cartesian keeps it unused.
+
 8. Keep accumulation branch-independent above traced segments.
    Status: done.
 

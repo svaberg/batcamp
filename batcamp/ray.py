@@ -160,49 +160,36 @@ def _trace_chunk_to_scratch(
     """
     chunk_n_rays = int(origins.shape[0])
     tree_coord = str(tree.tree_coord)
+    if tree_coord == "xyz":
+        tracer = cartesian_crossing_trace
+    elif tree_coord == "rpa":
+        tracer = spherical_crossing_trace
+    else:
+        raise NotImplementedError(
+            f"trace supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
+        )
     crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
     while True:
         cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
         time_counts = np.empty(chunk_n_rays, dtype=np.int64)
         cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
         time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-        if tree_coord == "xyz":
-            cartesian_crossing_trace.trace_buffer(
-                tree.root_cell_ids,
-                tree.cell_child,
-                tree.cell_bounds,
-                tree.packed_domain_bounds,
-                tree.cell_neighbor,
-                origins,
-                directions,
-                float(t_min),
-                float(t_max),
-                cell_counts,
-                time_counts,
-                cell_buffer,
-                time_buffer,
-            )
-        elif tree_coord == "rpa":
-            spherical_crossing_trace.trace_buffer(
-                tree.root_cell_ids,
-                tree.cell_child,
-                tree.cell_bounds,
-                tree.packed_domain_bounds,
-                tree.cell_neighbor,
-                tree.cell_depth,
-                origins,
-                directions,
-                float(t_min),
-                float(t_max),
-                cell_counts,
-                time_counts,
-                cell_buffer,
-                time_buffer,
-            )
-        else:
-            raise NotImplementedError(
-                f"trace supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
-            )
+        tracer.trace_buffer(
+            tree.root_cell_ids,
+            tree.cell_child,
+            tree.cell_bounds,
+            tree.packed_domain_bounds,
+            tree.cell_neighbor,
+            tree.cell_depth,
+            origins,
+            directions,
+            float(t_min),
+            float(t_max),
+            cell_counts,
+            time_counts,
+            cell_buffer,
+            time_buffer,
+        )
         if np.any(cell_counts == -1) or np.any(time_counts == -1):
             crossing_capacity *= 2
             continue
