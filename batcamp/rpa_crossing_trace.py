@@ -100,8 +100,10 @@ def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float
     if roots.size == 0:
         return roots
 
-    valid: list[float] = []
-    for root in roots.tolist():
+    valid = np.empty(int(roots.shape[0]), dtype=np.float64)
+    n_valid = 0
+    for root_pos in range(int(roots.shape[0])):
+        root = float(roots[root_pos])
         point_xyz = _xyz_at_time(origin_xyz, direction_xyz, float(root))
         radius = float(np.linalg.norm(point_xyz))
         if radius <= (_TIME_ATOL + _TIME_RTOL):
@@ -110,8 +112,9 @@ def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float
             continue
         polar_here = math.acos(np.clip(float(point_xyz[2]) / radius, -1.0, 1.0))
         if _times_close(polar_here, polar_value):
-            valid.append(float(root))
-    return np.asarray(valid, dtype=np.float64)
+            valid[n_valid] = float(root)
+            n_valid += 1
+    return valid[:n_valid]
 
 
 def _azimuth_plane_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, azimuth: float) -> np.ndarray:
@@ -809,27 +812,28 @@ def _start_active_faces(
     active_faces_out: np.ndarray,
 ) -> int:
     """Return faces whose crossing time is snapped to the start time."""
-    candidates: list[int] = []
-
-    def face_is_active(face_id: int) -> bool:
+    n_active_face = 0
+    for face_id in range(6):
         roots = _face_roots(cell_bounds, int(cell_id), int(face_id), origin_xyz, direction_xyz)
-        if not any(_times_close(float(root), float(t_event)) for root in np.asarray(roots, dtype=np.float64)):
-            return False
+        face_at_start = False
+        for root in np.asarray(roots, dtype=np.float64):
+            if _times_close(float(root), float(t_event)):
+                face_at_start = True
+                break
+        if not face_at_start:
+            continue
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(start_xyz, direction_xyz, axis)
         if side == 0:
-            return direction_sign < 0
-        return direction_sign > 0
-
-    for face_id in range(6):
-        if face_is_active(int(face_id)):
-            candidates.append(int(face_id))
-
-    candidates = sorted(candidates)
-    for face_pos, face_id in enumerate(candidates):
-        active_faces_out[face_pos] = int(face_id)
-    return int(len(candidates))
+            if direction_sign >= 0:
+                continue
+        else:
+            if direction_sign <= 0:
+                continue
+        active_faces_out[n_active_face] = int(face_id)
+        n_active_face += 1
+    return int(n_active_face)
 
 
 def _start_cell_owner(

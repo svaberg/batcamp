@@ -147,8 +147,10 @@ tasks, in this order.
    exception-driven invalid states with fixed buffers and explicit return codes.
    This is now scoped to the RPA event solver itself; shared chunk mechanics are
    already outside the coordinate branch. `find_exit()` now uses fixed
-   per-face candidate storage, and future-root selection follows the scalar
-   nearest-event pattern used by Cartesian traversal. Remaining work is in the
+   per-face candidate storage, future-root selection follows the scalar
+   nearest-event pattern used by Cartesian traversal, startup active-face
+   discovery scans faces directly in deterministic face order, and polar-root
+   filtering writes into a fixed-size result buffer. Remaining work is in the
    other RPA event-solver helpers.
 
 6. Keep RPA seam and pole handling local to owner resolution.
