@@ -118,7 +118,7 @@ def _walk_faces_result(
 ) -> tuple[int, ...]:
     """Walk one Cartesian face event through the face/subface neighbor graph."""
     if str(tree.tree_coord) != "xyz":
-        raise ValueError("walk_event_faces_xyz supports only tree_coord='xyz'.")
+        raise ValueError("walk_faces_xyz supports only tree_coord='xyz'.")
     active_faces_arr = np.asarray(active_faces, dtype=np.int64)
     path = np.empty(max(1, int(active_faces_arr.size)), dtype=np.int64)
     active_face_by_axis = np.empty(3, dtype=np.int64)

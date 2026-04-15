@@ -11,7 +11,7 @@ from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import render_midpoint_image
-from batcamp import rpa_crossing_trace
+from batcamp import spherical_crossing_trace
 from fake_dataset import build_spherical_hex_mesh
 
 _PI = math.pi
@@ -138,12 +138,12 @@ def _cell_exit_event_rpa(
     direction_xyz: np.ndarray,
     t_current: float,
 ) -> tuple[float, tuple[int, ...], bool]:
-    """Compatibility wrapper around the production spherical exit finder."""
+    """Test wrapper around the production spherical exit finder."""
     active_faces = np.empty(3, dtype=np.int64)
     candidate_times = np.empty(6, dtype=np.float64)
     roots = np.empty(2, dtype=np.float64)
     candidate_xyz = np.empty(3, dtype=np.float64)
-    t_exit, n_active_face, axis_transfer = rpa_crossing_trace.find_exit(
+    t_exit, n_active_face, axis_transfer = spherical_crossing_trace.find_exit(
         cell_bounds,
         cell_id,
         origin_xyz,
@@ -158,12 +158,12 @@ def _cell_exit_event_rpa(
 
 
 def _fill_active_face_state_rpa(active_faces: tuple[int, ...]) -> tuple[np.ndarray, np.ndarray]:
-    """Compatibility wrapper around the production active-face state helper."""
+    """Test wrapper around the production active-face state helper."""
     active_faces_array = np.asarray(active_faces, dtype=np.int64)
     active_face_by_axis = np.full(3, -1, dtype=np.int64)
     active_face_order = np.full(6, -1, dtype=np.int64)
     current_face_id = int(active_faces_array[0]) if active_faces_array.size else -1
-    rpa_crossing_trace._fill_active_face_state(
+    spherical_crossing_trace._fill_active_face_state(
         active_faces_array,
         int(active_faces_array.size),
         current_face_id,
@@ -186,9 +186,9 @@ def _event_subface_id_rpa(
     scratch_rpa: np.ndarray,
     direction_xyz: np.ndarray,
 ) -> int:
-    """Compatibility wrapper around the production subface selector."""
+    """Test wrapper around the production subface selector."""
     return int(
-        rpa_crossing_trace.find_subface(
+        spherical_crossing_trace.find_subface(
             cell_neighbor,
             domain_bounds,
             cell_bounds,
@@ -205,9 +205,9 @@ def _event_subface_id_rpa(
 
 
 def _find_cell_rpa_single(tree: Octree, query_xyz: np.ndarray) -> int:
-    """Compatibility wrapper around the production spherical cell lookup."""
+    """Test wrapper around the production spherical cell lookup."""
     return int(
-        rpa_crossing_trace.find_cell(
+        spherical_crossing_trace.find_cell(
             query_xyz,
             tree.cell_child,
             tree._root_cell_ids,
@@ -225,8 +225,8 @@ def trace_rpa_test_path(
     t_min: float = 0.0,
     t_max: float = np.inf,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compatibility wrapper around the production one-ray spherical trace."""
-    return rpa_crossing_trace.trace_ray(
+    """Test wrapper around the production one-ray spherical trace."""
+    return spherical_crossing_trace.trace_ray(
         tree,
         origin_xyz,
         direction_xyz,
@@ -243,7 +243,7 @@ def trace_rpa_test_rays(
     t_min: float = 0.0,
     t_max: float = np.inf,
 ):
-    """Compatibility wrapper around the production batched spherical trace."""
+    """Test wrapper around the production batched spherical trace."""
     tracer = OctreeRayTracer(tree)
     return tracer.trace(
         origins,
@@ -253,7 +253,7 @@ def trace_rpa_test_rays(
     )
 
 
-def walk_event_faces_rpa(
+def walk_faces_rpa(
     tree: Octree,
     start_cell_id: int,
     active_faces: tuple[int, ...],
@@ -261,14 +261,14 @@ def walk_event_faces_rpa(
     direction_xyz: np.ndarray,
     t_event: float,
 ) -> tuple[int, ...]:
-    """Compatibility wrapper around the production spherical face walk."""
+    """Test wrapper around the production spherical face walk."""
     active_faces_array = np.asarray(active_faces, dtype=np.int64)
     crossing = np.empty(3, dtype=np.float64)
     crossing_rpa = np.empty(3, dtype=np.float64)
     path = np.empty(3, dtype=np.int64)
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
-    path_count = rpa_crossing_trace.walk_event_faces(
+    path_count = spherical_crossing_trace.walk_faces(
         tree.cell_neighbor,
         tree._domain_bounds,
         tree.cell_bounds,
@@ -603,7 +603,7 @@ def _assert_first_event_matches_lookup_rpa(
 
     t_exit, active_faces, axis_transfer = _cell_exit_event_rpa(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     assert not axis_transfer
-    path = walk_event_faces_rpa(tree, start_cell_id, active_faces, origin, direction, t_exit)
+    path = walk_faces_rpa(tree, start_cell_id, active_faces, origin, direction, t_exit)
     traced_cell_ids, traced_times = trace_rpa_test_path(tree, origin, direction)
     expected_owner, expected_t_exit = _lookup_after_first_event_rpa(tree, origin, direction)
 
@@ -634,7 +634,7 @@ def _assert_multiface_event_is_order_invariant_rpa(
     expected_owner, _expected_t_exit = _lookup_after_first_event_rpa(tree, origin, direction)
     finals = set()
     for permutation in itertools.permutations(active_faces):
-        path = walk_event_faces_rpa(tree, start_cell_id, permutation, origin, direction, t_exit)
+        path = walk_faces_rpa(tree, start_cell_id, permutation, origin, direction, t_exit)
         finals.add(int(path[-1]))
     assert finals == {expected_owner}
 

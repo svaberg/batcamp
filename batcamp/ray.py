@@ -11,7 +11,7 @@ from numba import njit
 from numba import prange
 
 from . import cartesian_crossing_trace
-from . import rpa_crossing_trace
+from . import spherical_crossing_trace
 from .octree import Octree
 
 TRACE_CHUNK_SIZE = 256
@@ -183,7 +183,7 @@ def _trace_chunk_to_scratch(
                 time_buffer,
             )
         elif tree_coord == "rpa":
-            rpa_crossing_trace.trace_buffer(
+            spherical_crossing_trace.trace_buffer(
                 tree.root_cell_ids,
                 tree.cell_child,
                 tree.cell_bounds,

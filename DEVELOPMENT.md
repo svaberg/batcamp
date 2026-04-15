@@ -150,7 +150,7 @@ tasks, in this order.
    per-face candidate storage, future-root selection follows the scalar
    nearest-event pattern used by Cartesian traversal, startup active-face
    discovery scans faces directly in deterministic face order, and polar-root
-   filtering writes into a fixed-size result buffer. RPA trace kernels now use
+   filtering writes into a fixed-size result buffer. Spherical trace kernels now use
    Numba for the scalar root solvers, event selection, owner resolution, single
    ray trace, and batch `trace_buffer()` path. Root solvers write into
    caller-owned two-slot scratch buffers instead of allocating per-face root
@@ -204,7 +204,7 @@ tasks, in this order.
     The RPA batch path is now Numba-compatible, face root solving uses fixed
     scratch buffers, event coordinates are filled into reusable scratch arrays,
     and `find_exit()` uses per-ray scratch. The public ray-step benchmark now
-    supports both XYZ and RPA trees. The standalone RPA trace starts with a 32
+    supports both XYZ and RPA trees. The standalone spherical trace starts with a 32
     crossing-event buffer and grows it only when needed. The `environment.yml`
     environment should contain exactly one `batcamp` install: an editable install
     from this repository. Benchmark scripts and notebooks then import the same

@@ -784,7 +784,7 @@ def find_subface(
 
 
 @njit(cache=True)
-def _fill_crossing_scratch(
+def _write_crossing(
     cell_bounds: np.ndarray,
     cell_id: int,
     active_faces: np.ndarray,
@@ -810,7 +810,7 @@ def _fill_crossing_scratch(
 
 
 @njit(cache=True)
-def walk_event_faces(
+def walk_faces(
     cell_neighbor: np.ndarray,
     domain_bounds: np.ndarray,
     cell_bounds: np.ndarray,
@@ -827,7 +827,7 @@ def walk_event_faces(
     active_face_order: np.ndarray,
 ) -> int:
     """Walk one time-defined spherical crossing through the face/subface neighbor graph."""
-    _fill_crossing_scratch(
+    _write_crossing(
         cell_bounds,
         start_cell_id,
         active_faces,
@@ -945,7 +945,7 @@ def _start_cell_owner(
     )
     if n_active_face == 0:
         return int(current_cell)
-    path_count = walk_event_faces(
+    path_count = walk_faces(
         cell_neighbor,
         domain_bounds,
         cell_bounds,
@@ -1139,7 +1139,7 @@ def _trace_ray(
         times_out[n_time] = float(t_exit)
         n_cell += 1
         n_time += 1
-        path_count = walk_event_faces(
+        path_count = walk_faces(
             cell_neighbor,
             domain_bounds,
             cell_bounds,
