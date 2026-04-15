@@ -224,7 +224,8 @@ tasks, in this order.
     from this repository. Benchmark scripts and notebooks then import the same
     checkout without any example-side import-path plumbing. The grid-vs-ray
     benchmark uses trilinear ray accumulation by default for both XYZ and RPA
-    trees. It streams grid-sum resampling in pixel chunks and caches grid-sum
+    trees. It streams grid-sum resampling in small pixel chunks, bounds
+    scatter/CSV diagnostic payloads at large image sizes, and caches grid-sum
     images under its output directory, keyed by dataset file metadata, benchmark
     phase, variable, bounds, resolution, and `nx_sum`.
     The cache stores the measured grid runtime with the image, with separate

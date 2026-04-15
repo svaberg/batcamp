@@ -30,7 +30,9 @@ from benchmark_helpers import resolve_data_file
 
 
 _GRID_CACHE_VERSION = 3
-_GRID_SUM_PIXEL_CHUNK_SIZE = 4096
+_GRID_SUM_PIXEL_CHUNK_SIZE = 1024
+_SCATTER_MAX_POINTS = 100_000
+_BOUNDARY_SCATTER_MAX_POINTS = 25_000
 
 
 def _grid_sum_image(
@@ -318,6 +320,15 @@ def _array_stats(a: np.ndarray) -> tuple[int, int]:
     return nan_count, zero_count
 
 
+def _sample_mask_indices(mask: np.ndarray, max_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return deterministic sampled 2D indices from one boolean mask."""
+    flat = np.flatnonzero(mask.reshape(-1))
+    if flat.size > int(max_points):
+        sample = np.linspace(0, flat.size - 1, int(max_points), dtype=np.int64)
+        flat = flat[sample]
+    return np.unravel_index(flat, mask.shape)
+
+
 def _equality_deviation(
     img0: np.ndarray,
     img1: np.ndarray,
@@ -353,6 +364,7 @@ def _discrepancy_rows(
     pixel_z: np.ndarray,
     pixel_r: np.ndarray,
     log10_threshold: float = 0.1,
+    max_category_rows: int = 256,
     max_finite_rows: int = 256,
 ) -> list[dict[str, float | int | str]]:
     """Return one sorted discrepancy list for one comparison image pair."""
@@ -369,6 +381,10 @@ def _discrepancy_rows(
     rows: list[dict[str, float | int | str]] = []
     for kind, mask, log_mag in categories:
         iz, iy = np.nonzero(mask)
+        if iz.size > int(max_category_rows):
+            selected = np.argsort(pixel_r[iz, iy])[-int(max_category_rows):]
+            iz = iz[selected]
+            iy = iy[selected]
         for k in range(iz.size):
             i = int(iz[k])
             j = int(iy[k])
@@ -394,13 +410,13 @@ def _discrepancy_rows(
     if np.any(both_pos):
         abs_log10 = np.abs(np.log10(img1[both_pos]) - np.log10(img0[both_pos]))
         if np.any(abs_log10 >= log10_threshold):
-            coords = np.column_stack(np.nonzero(both_pos))
+            iz_all, iy_all = np.nonzero(both_pos)
             selected = np.nonzero(abs_log10 >= log10_threshold)[0]
             selected = selected[np.argsort(abs_log10[selected])[::-1]]
             selected = selected[: int(max_finite_rows)]
             for idx in selected:
-                i = int(coords[idx, 0])
-                j = int(coords[idx, 1])
+                i = int(iz_all[idx])
+                j = int(iy_all[idx])
                 rows.append(
                     {
                         "kind": "finite_log10_mismatch",
@@ -481,11 +497,17 @@ def _save_four_panel_figure(
     plot1_only = np.isfinite(img0) & (img0 == 0.0) & pos1
     plot0_nan = pos0 & np.isnan(img1)
     plot1_nan = np.isnan(img0) & pos1
-    pos_vals = np.concatenate((img0[pos0], img1[pos1])) if (np.any(pos0) or np.any(pos1)) else np.array([], dtype=float)
+    has_positive = bool(np.any(pos0) or np.any(pos1))
 
-    if pos_vals.size > 0:
-        vmin = float(np.min(pos_vals))
-        vmax = float(np.max(pos_vals))
+    if has_positive:
+        vmin = np.inf
+        vmax = -np.inf
+        if np.any(pos0):
+            vmin = min(vmin, float(np.min(img0[pos0])))
+            vmax = max(vmax, float(np.max(img0[pos0])))
+        if np.any(pos1):
+            vmin = min(vmin, float(np.min(img1[pos1])))
+            vmax = max(vmax, float(np.max(img1[pos1])))
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin <= 0.0 or vmax <= vmin:
             vmin, vmax = 1.0, 10.0
         norm = LogNorm(vmin=vmin, vmax=vmax)
@@ -563,9 +585,9 @@ def _save_four_panel_figure(
     cbar.ax.tick_params(labelsize=8, pad=1)
 
     axes[1, 0].set_title(f"Comparison: grid vs {ray_label.lower()}")
-    if pos_vals.size > 0:
-        lo_data = float(np.min(pos_vals))
-        hi_data = float(np.max(pos_vals))
+    if has_positive:
+        lo_data = float(vmin)
+        hi_data = float(vmax)
         if not np.isfinite(lo_data) or not np.isfinite(hi_data) or lo_data <= 0.0 or hi_data <= lo_data:
             lo_data, hi_data = 1.0, 10.0
         pad = 1.12
@@ -583,22 +605,24 @@ def _save_four_panel_figure(
             r_lo = 0.0
             r_hi = max(r_lo + 1.0, r_hi)
         r_norm = Normalize(vmin=r_lo, vmax=r_hi)
-        if np.any(both_pos):
+        iz, iy = _sample_mask_indices(both_pos, _SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                img0[both_pos].reshape(-1),
-                img1[both_pos].reshape(-1),
-                c=pixel_r[both_pos].reshape(-1),
+                img0[iz, iy],
+                img1[iz, iy],
+                c=pixel_r[iz, iy],
                 cmap="cividis",
                 norm=r_norm,
                 s=12,
                 alpha=0.85,
                 linewidths=0.0,
             )
-        if np.any(plot0_only):
+        iz, iy = _sample_mask_indices(plot0_only, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                img0[plot0_only].reshape(-1),
-                np.full(int(np.count_nonzero(plot0_only)), boundary_frac_zero, dtype=float),
-                c=pixel_r[plot0_only].reshape(-1),
+                img0[iz, iy],
+                np.full(iz.size, boundary_frac_zero, dtype=float),
+                c=pixel_r[iz, iy],
                 cmap="cividis",
                 norm=r_norm,
                 marker="v",
@@ -607,11 +631,12 @@ def _save_four_panel_figure(
                 linewidths=0.0,
                 transform=y_boundary_transform,
             )
-        if np.any(plot1_only):
+        iz, iy = _sample_mask_indices(plot1_only, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                np.full(int(np.count_nonzero(plot1_only)), boundary_frac_zero, dtype=float),
-                img1[plot1_only].reshape(-1),
-                c=pixel_r[plot1_only].reshape(-1),
+                np.full(iz.size, boundary_frac_zero, dtype=float),
+                img1[iz, iy],
+                c=pixel_r[iz, iy],
                 cmap="cividis",
                 norm=r_norm,
                 marker="<",
@@ -620,11 +645,12 @@ def _save_four_panel_figure(
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
-        if np.any(plot0_nan):
+        iz, iy = _sample_mask_indices(plot0_nan, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                img0[plot0_nan].reshape(-1),
-                np.full(int(np.count_nonzero(plot0_nan)), boundary_frac_nan, dtype=float),
-                c=pixel_r[plot0_nan].reshape(-1),
+                img0[iz, iy],
+                np.full(iz.size, boundary_frac_nan, dtype=float),
+                c=pixel_r[iz, iy],
                 cmap="cividis",
                 norm=r_norm,
                 marker="^",
@@ -633,11 +659,12 @@ def _save_four_panel_figure(
                 linewidths=0.0,
                 transform=y_boundary_transform,
             )
-        if np.any(plot1_nan):
+        iz, iy = _sample_mask_indices(plot1_nan, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                np.full(int(np.count_nonzero(plot1_nan)), boundary_frac_nan, dtype=float),
-                img1[plot1_nan].reshape(-1),
-                c=pixel_r[plot1_nan].reshape(-1),
+                np.full(iz.size, boundary_frac_nan, dtype=float),
+                img1[iz, iy],
+                c=pixel_r[iz, iy],
                 cmap="cividis",
                 norm=r_norm,
                 marker=">",

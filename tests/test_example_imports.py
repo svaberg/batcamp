@@ -101,3 +101,36 @@ def test_grid_vs_ray_grid_sum_streams_pixel_chunks(monkeypatch) -> None:
 
     np.testing.assert_allclose(image, expected, atol=1.0e-12, rtol=0.0)
     assert calls == [15, 15, 15, 15, 15, 5]
+
+
+def test_grid_vs_ray_sample_mask_indices_bounds_scatter_points() -> None:
+    module = _load_benchmark_grid_vs_ray_module()
+    mask = np.ones((4, 5), dtype=bool)
+
+    iz, iy = module._sample_mask_indices(mask, 6)
+
+    assert iz.size == 6
+    assert iy.size == 6
+    np.testing.assert_array_equal(iz, np.array([0, 0, 1, 2, 3, 3], dtype=np.int64))
+    np.testing.assert_array_equal(iy, np.array([0, 3, 2, 1, 0, 4], dtype=np.int64))
+
+
+def test_grid_vs_ray_discrepancy_rows_bounds_category_rows() -> None:
+    module = _load_benchmark_grid_vs_ray_module()
+    img0 = np.ones((4, 4), dtype=float)
+    img1 = np.full((4, 4), np.nan, dtype=float)
+    pixel_y, pixel_z = np.meshgrid(np.arange(4, dtype=float), np.arange(4, dtype=float), indexing="xy")
+    pixel_r = np.arange(16, dtype=float).reshape(4, 4)
+
+    rows = module._discrepancy_rows(
+        img0,
+        img1,
+        pixel_y=pixel_y,
+        pixel_z=pixel_z,
+        pixel_r=pixel_r,
+        max_category_rows=3,
+    )
+
+    assert len(rows) == 3
+    assert {row["kind"] for row in rows} == {"grid_pos_ray_nan"}
+    assert [row["r"] for row in rows] == [15.0, 14.0, 13.0]
