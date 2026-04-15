@@ -150,8 +150,11 @@ tasks, in this order.
    per-face candidate storage, future-root selection follows the scalar
    nearest-event pattern used by Cartesian traversal, startup active-face
    discovery scans faces directly in deterministic face order, and polar-root
-   filtering writes into a fixed-size result buffer. Remaining work is in the
-   other RPA event-solver helpers.
+   filtering writes into a fixed-size result buffer. RPA trace kernels now use
+   Numba for the scalar root solvers, event selection, owner resolution, single
+   ray trace, and batch `trace_buffer()` path. Remaining work is to reduce the
+   small root/crossing allocations inside those compiled kernels and then time
+   the batch path.
 
 6. Keep RPA seam and pole handling local to owner resolution.
    Status: done.
@@ -196,9 +199,9 @@ tasks, in this order.
 11. Only optimize RPA after the structure is fixed.
     Status: pending.
 
-    Once RPA no longer depends on Python lists, dynamic allocations, or
-    exceptions in the trace loop, make the batch path Numba-compatible and
-    compare it against the same workloads used for XYZ.
+    The RPA batch path is now Numba-compatible. Next, reduce remaining compiled
+    allocations in the event solver and compare against the same workloads used
+    for XYZ.
 
 ## Explicit non-goals for ray traversal
 Traversal should work directly on the adaptive octree geometry.
