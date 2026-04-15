@@ -8,25 +8,52 @@ from pathlib import Path
 import pytest
 
 
-_BENCHMARK_MODULES = [
-    "examples.benchmark_grid_vs_ray",
-    "examples.benchmark_ray_step_costs",
-    "examples.benchmark_xy_plane",
-    "examples.benchmark_random_points",
+_BENCHMARK_SCRIPTS = [
+    "benchmark_grid_vs_ray.py",
+    "benchmark_ray_step_costs.py",
+    "benchmark_xy_plane.py",
+    "benchmark_random_points.py",
 ]
 
 
-@pytest.mark.parametrize("module_name", _BENCHMARK_MODULES)
-def test_benchmark_modules_run_from_repo_root(module_name: str) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+def _env_without_pythonpath() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
+    return env
+
+
+@pytest.mark.parametrize("script_name", _BENCHMARK_SCRIPTS)
+def test_benchmark_scripts_run_from_examples(script_name: str) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    examples_dir = repo_root / "examples"
 
     subprocess.run(
-        [sys.executable, "-m", module_name, "--help"],
-        cwd=repo_root,
-        env=env,
+        [sys.executable, script_name, "--help"],
+        cwd=examples_dir,
+        env=_env_without_pythonpath(),
         check=True,
         text=True,
         capture_output=True,
     )
+
+
+def test_examples_import_repo_editable_install() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    examples_dir = repo_root / "examples"
+    code = """
+import pathlib
+import batcamp
+
+print(pathlib.Path(batcamp.__file__).resolve())
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=examples_dir,
+        env=_env_without_pythonpath(),
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert Path(result.stdout.strip()) == repo_root / "batcamp" / "__init__.py"
