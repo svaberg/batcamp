@@ -216,7 +216,7 @@ def accumulate_midpoints(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Trace rays and accumulate midpoint samples without packing segments."""
     if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
-        raise TypeError("accumulate_midpoint_image requires one OctreeInterpolator.")
+        raise TypeError("midpoint_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
     if str(tree.tree_coord) != "xyz":
@@ -281,11 +281,11 @@ def accumulate_exact(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Trace rays and accumulate exact trilinear cell integrals without packing segments."""
     if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
-        raise TypeError("accumulate_exact_image requires one OctreeInterpolator.")
+        raise TypeError("exact_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
     if str(tree.tree_coord) != "xyz":
-        raise NotImplementedError("accumulate_exact_image currently supports only tree_coord='xyz'.")
+        raise NotImplementedError("exact_image currently supports only tree_coord='xyz'.")
 
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
@@ -414,7 +414,7 @@ class OctreeRayTracer:
             ray_shape=ray_shape,
         )
 
-    def accumulate_midpoint_image(
+    def midpoint_image(
         self,
         interpolator,
         origins: np.ndarray,
@@ -443,7 +443,7 @@ class OctreeRayTracer:
             ray_shape=ray_shape,
         )
 
-    def accumulate_exact_image(
+    def exact_image(
         self,
         interpolator,
         origins: np.ndarray,

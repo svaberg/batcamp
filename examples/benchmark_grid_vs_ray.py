@@ -256,7 +256,7 @@ def _ray_image_and_segment_counts(
     """Trace one plane of parallel rays and return one accumulated image and segment counts."""
     origins, directions, t_end = _ray_setup(n_plane=int(n_plane), bounds=bounds)
     if str(ray_method) == "midpoint":
-        image, counts = tracer.accumulate_midpoint_image(
+        image, counts = tracer.midpoint_image(
             interp,
             origins,
             directions,
@@ -264,7 +264,7 @@ def _ray_image_and_segment_counts(
             t_max=float(t_end),
         )
     elif str(ray_method) == "exact":
-        image, counts = tracer.accumulate_exact_image(
+        image, counts = tracer.exact_image(
             interp,
             origins,
             directions,

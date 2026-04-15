@@ -356,7 +356,7 @@ def test_render_midpoint_image_uses_segment_cell_ids(monkeypatch) -> None:
     np.testing.assert_allclose(image, np.array([[2.0]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
-def test_accumulate_exact_image_integrates_bilinear_slanted_ray() -> None:
+def test_exact_image_integrates_bilinear_slanted_ray() -> None:
     tree = _build_unit_tree()
     tracer = OctreeRayTracer(tree)
     points = np.asarray(tree._points, dtype=float)
@@ -365,7 +365,7 @@ def test_accumulate_exact_image_integrates_bilinear_slanted_ray() -> None:
     origins = np.array([[[-0.25, 0.125, 0.5]]], dtype=float)
     directions = np.array([[[1.0, 0.5, 0.0]]], dtype=float)
 
-    image_exact, counts_exact = tracer.accumulate_exact_image(interp, origins, directions)
+    image_exact, counts_exact = tracer.exact_image(interp, origins, directions)
 
     np.testing.assert_array_equal(counts_exact, np.array([[1]], dtype=np.int64))
     np.testing.assert_allclose(image_exact, np.array([[7.0 / 24.0]], dtype=float), atol=1.0e-12, rtol=0.0)
