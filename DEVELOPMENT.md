@@ -167,6 +167,12 @@ tasks, in this order.
    several independent trace events. Zero-length hops may exist only to preserve
    correct ownership across the event.
 
+   Deterministic ordering means each branch uses its native packed face and
+   subface order consistently. RPA traversal must not assume that spherical
+   cell corners or subfaces have the same geometric order as Cartesian cells;
+   RPA owner resolution should use RPA face ids, the octree neighbor table, and
+   destination-side RPA interval containment.
+
 8. Keep accumulation branch-independent above traced segments.
    Status: done.
 
