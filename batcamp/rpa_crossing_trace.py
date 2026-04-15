@@ -160,14 +160,17 @@ def _face_roots(
 
 def _next_time_after(roots: np.ndarray, time: float) -> float | None:
     """Return the nearest root strictly after one ray time, or `None` when absent."""
-    future: list[float] = []
-    for root in np.asarray(roots, dtype=np.float64).tolist():
+    best = math.inf
+    time_value = float(time)
+    for root in np.asarray(roots, dtype=np.float64):
         root_value = float(root)
-        if root_value > float(time) and not _times_close(root_value, float(time)):
-            future.append(root_value)
-    if not future:
+        if root_value <= time_value or _times_close(root_value, time_value):
+            continue
+        if root_value < best:
+            best = root_value
+    if math.isinf(best):
         return None
-    return min(future)
+    return best
 
 
 def _axis_interval_unwrapped(axis: int, start: float, width: float, reference: float) -> tuple[float, float]:
