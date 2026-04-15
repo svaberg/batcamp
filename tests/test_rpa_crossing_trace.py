@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+from functools import lru_cache
 import math
 
 import numpy as np
@@ -133,7 +134,7 @@ def _normalize_direction(direction_xyz: tuple[float, float, float]) -> np.ndarra
 def _cell_exit_event_rpa(
     cell_bounds: np.ndarray,
     cell_id: int,
-    current_xyz: np.ndarray,
+    origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_current: float,
 ) -> tuple[float, tuple[int, ...], bool]:
@@ -142,7 +143,7 @@ def _cell_exit_event_rpa(
     t_exit, n_active_face, axis_transfer = rpa_crossing_trace.find_exit(
         cell_bounds,
         cell_id,
-        current_xyz,
+        origin_xyz,
         direction_xyz,
         t_current,
         active_faces,
@@ -175,8 +176,8 @@ def _event_subface_id_rpa(
     active_face_by_axis: np.ndarray,
     active_face_order: np.ndarray,
     current_face_order: int,
-    event_xyz: np.ndarray,
-    event_rpa: np.ndarray,
+    scratch_xyz: np.ndarray,
+    scratch_rpa: np.ndarray,
     direction_xyz: np.ndarray,
 ) -> int:
     """Compatibility wrapper around the production subface selector."""
@@ -190,37 +191,11 @@ def _event_subface_id_rpa(
             active_face_by_axis,
             active_face_order,
             current_face_order,
-            event_xyz,
-            event_rpa,
+            scratch_xyz,
+            scratch_rpa,
             direction_xyz,
         )
     )
-
-
-def _event_state_on_active_faces(
-    cell_bounds: np.ndarray,
-    cell_id: int,
-    active_faces: tuple[int, ...],
-    current_xyz: np.ndarray,
-    direction_xyz: np.ndarray,
-    delta_t: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compatibility wrapper around the production crossing writer."""
-    crossing = np.empty(3, dtype=np.float64)
-    crossing_rpa = np.empty(3, dtype=np.float64)
-    active_faces_array = np.asarray(active_faces, dtype=np.int64)
-    rpa_crossing_trace._write_crossing(
-        cell_bounds,
-        cell_id,
-        active_faces_array,
-        int(active_faces_array.size),
-        current_xyz,
-        direction_xyz,
-        delta_t,
-        crossing,
-        crossing_rpa,
-    )
-    return crossing, crossing_rpa
 
 
 def _find_cell_rpa_single(tree: Octree, query_xyz: np.ndarray) -> int:
@@ -276,25 +251,29 @@ def walk_event_faces_rpa(
     tree: Octree,
     start_cell_id: int,
     active_faces: tuple[int, ...],
-    event_xyz: np.ndarray,
-    event_rpa: np.ndarray,
+    origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
+    t_event: float,
 ) -> tuple[int, ...]:
     """Compatibility wrapper around the production spherical face walk."""
     active_faces_array = np.asarray(active_faces, dtype=np.int64)
+    crossing = np.empty(3, dtype=np.float64)
+    crossing_rpa = np.empty(3, dtype=np.float64)
     path = np.empty(3, dtype=np.int64)
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
-    path_count = rpa_crossing_trace.walk_faces(
+    path_count = rpa_crossing_trace.walk_event_faces(
         tree.cell_neighbor,
         tree._domain_bounds,
         tree.cell_bounds,
         start_cell_id,
         active_faces_array,
         int(active_faces_array.size),
-        event_xyz,
-        event_rpa,
+        origin_xyz,
         direction_xyz,
+        t_event,
+        crossing,
+        crossing_rpa,
         path,
         active_face_by_axis,
         active_face_order,
@@ -618,15 +597,7 @@ def _assert_first_event_matches_lookup_rpa(
 
     t_exit, active_faces, axis_transfer = _cell_exit_event_rpa(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     assert not axis_transfer
-    event_xyz, event_rpa = _event_state_on_active_faces(
-        tree.cell_bounds,
-        start_cell_id,
-        active_faces,
-        origin,
-        direction,
-        t_exit,
-    )
-    path = walk_event_faces_rpa(tree, start_cell_id, active_faces, event_xyz, event_rpa, direction)
+    path = walk_event_faces_rpa(tree, start_cell_id, active_faces, origin, direction, t_exit)
     traced_cell_ids, traced_times = trace_rpa_test_path(tree, origin, direction)
     expected_owner, expected_t_exit = _lookup_after_first_event_rpa(tree, origin, direction)
 
@@ -657,17 +628,43 @@ def _assert_multiface_event_is_order_invariant_rpa(
     expected_owner, _expected_t_exit = _lookup_after_first_event_rpa(tree, origin, direction)
     finals = set()
     for permutation in itertools.permutations(active_faces):
-        event_xyz, event_rpa = _event_state_on_active_faces(
-            tree.cell_bounds,
-            start_cell_id,
-            permutation,
-            origin,
-            direction,
-            t_exit,
-        )
-        path = walk_event_faces_rpa(tree, start_cell_id, permutation, event_xyz, event_rpa, direction)
+        path = walk_event_faces_rpa(tree, start_cell_id, permutation, origin, direction, t_exit)
         finals.add(int(path[-1]))
     assert finals == {expected_owner}
+
+
+@lru_cache(maxsize=1)
+def _build_sc_benchmark_trace_case():
+    """Return the cached SC 64x64 benchmark tracing setup."""
+    from batread import Dataset
+
+    from examples.benchmark_grid_vs_ray import _ray_setup
+    from sample_data_helper import data_file
+
+    ds = Dataset.from_file(str(data_file("3d__var_4_n00044000.plt")))
+    tree = Octree.from_ds(ds)
+    xyz = np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in ("X [R]", "Y [R]", "Z [R]")))
+    dmin = np.min(xyz, axis=0)
+    dmax = np.max(xyz, axis=0)
+    bounds = (
+        float(dmin[0]),
+        float(dmax[0]),
+        float(dmin[1]),
+        float(dmax[1]),
+        float(dmin[2]),
+        float(dmax[2]),
+    )
+    origins, directions, t_end = _ray_setup(n_plane=64, bounds=bounds)
+    return ds, tree, origins, directions, float(t_end)
+
+
+def _sc_benchmark_ray(
+    iz: int,
+    iy: int,
+) -> tuple[Octree, np.ndarray, np.ndarray, float]:
+    """Return one traced SC benchmark ray by image indices."""
+    _ds, tree, origins, directions, t_end = _build_sc_benchmark_trace_case()
+    return tree, np.asarray(origins[iz, iy], dtype=float), np.asarray(directions[iz, iy], dtype=float), float(t_end)
 
 
 @pytest.mark.parametrize("origin_rpa", _INTERIOR_ORIGINS, ids=lambda origin: f"rpa={origin}")
@@ -828,9 +825,9 @@ def test_event_subface_id_rpa_uses_destination_side_rpa_intervals() -> None:
     )
     cell_neighbor = -np.ones((5, 6, 4), dtype=np.int64)
     cell_neighbor[0, 1] = np.array((1, 2, 3, 4), dtype=np.int64)
-    event_rpa = np.array((2.0, 0.5, 0.25), dtype=float)
-    event_xyz = _rpa_to_xyz((2.0, 0.5, 0.25))
-    direction_xyz = np.asarray(event_xyz, dtype=float)
+    scratch_rpa = np.array((2.0, 0.5, 0.25), dtype=float)
+    scratch_xyz = _rpa_to_xyz((2.0, 0.5, 0.25))
+    direction_xyz = np.asarray(scratch_xyz, dtype=float)
 
     active_face_by_axis, active_face_order = _fill_active_face_state_rpa((1,))
     subface_id = _event_subface_id_rpa(
@@ -842,8 +839,8 @@ def test_event_subface_id_rpa_uses_destination_side_rpa_intervals() -> None:
         active_face_by_axis,
         active_face_order,
         int(active_face_order[1]),
-        np.asarray(event_xyz, dtype=float),
-        event_rpa,
+        np.asarray(scratch_xyz, dtype=float),
+        scratch_rpa,
         direction_xyz,
     )
 
@@ -1002,6 +999,42 @@ def test_rpa_render_midpoint_image_matches_standalone_midpoint_render() -> None:
     expected = _render_standalone_midpoint_image(interpolator, origins, directions, segments)
 
     np.testing.assert_allclose(image, expected, atol=1.0e-10, rtol=0.0)
+
+
+def test_sc_benchmark_artifact_rays_render_match_standalone_midpoint_image() -> None:
+    ds, tree, origins, directions, t_end = _build_sc_benchmark_trace_case()
+    tracer = OctreeRayTracer(tree)
+    interpolator = OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))
+    sample_origins = np.asarray(
+        (
+            origins[32, 33],
+            origins[41, 22],
+        ),
+        dtype=float,
+    )
+    sample_directions = np.asarray(
+        (
+            directions[32, 33],
+            directions[41, 22],
+        ),
+        dtype=float,
+    )
+
+    segments = tracer.trace(sample_origins, sample_directions, t_min=0.0, t_max=float(t_end))
+    image = render_midpoint_image(interpolator, sample_origins, sample_directions, segments)
+    expected = _render_standalone_midpoint_image(interpolator, sample_origins, sample_directions, segments)
+
+    np.testing.assert_allclose(image, expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_trace_sc_benchmark_vertical_artifact_ray_matches_lookup_oracle() -> None:
+    tree, origin, direction, t_end = _sc_benchmark_ray(32, 33)
+    _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))
+
+
+def test_trace_sc_benchmark_corner_artifact_ray_matches_lookup_oracle() -> None:
+    tree, origin, direction, t_end = _sc_benchmark_ray(41, 22)
+    _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))
 
 
 def test_rpa_accumulate_exact_image_is_not_yet_supported() -> None:
