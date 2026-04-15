@@ -12,6 +12,7 @@ import time
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.colors import Normalize
+from matplotlib.colors import SymLogNorm
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
 from batread.dataset import Dataset
@@ -329,17 +330,17 @@ def _sample_mask_indices(mask: np.ndarray, max_points: int) -> tuple[np.ndarray,
     return np.unravel_index(flat, mask.shape)
 
 
-def _radius_color_norm(radius_values: np.ndarray):
-    """Return the log radius color norm for comparison scatter points."""
-    r_vals = np.asarray(radius_values, dtype=float).reshape(-1)
-    positive = r_vals[np.isfinite(r_vals) & (r_vals > 0.0)]
-    if positive.size == 0:
-        raise ValueError("Comparison scatter radius colors require positive finite radii.")
-    r_lo = float(np.min(positive))
-    r_hi = float(np.max(positive))
-    if r_hi <= r_lo:
-        raise ValueError("Comparison scatter radius colors require a non-degenerate positive radius range.")
-    return LogNorm(vmin=r_lo, vmax=r_hi)
+def _height_color_norm(height_values: np.ndarray) -> SymLogNorm:
+    """Return the symlog height-over-surface color norm for comparison scatter points."""
+    heights = np.asarray(height_values, dtype=float).reshape(-1)
+    finite = heights[np.isfinite(heights)]
+    if finite.size == 0:
+        raise ValueError("Comparison scatter height colors require finite values.")
+    h_lo = float(np.min(finite))
+    h_hi = float(np.max(finite))
+    if h_hi <= h_lo:
+        raise ValueError("Comparison scatter height colors require a non-degenerate range.")
+    return SymLogNorm(linthresh=1.0e-3, vmin=h_lo, vmax=h_hi)
 
 
 def _equality_deviation(
@@ -610,15 +611,17 @@ def _save_four_panel_figure(
         y_boundary_transform = blended_transform_factory(axes[1, 0].transData, axes[1, 0].transAxes)
         boundary_frac_zero = 0.015
         boundary_frac_nan = 0.045
-        r_norm = _radius_color_norm(pixel_r)
+        pixel_height = pixel_r - 1.0
+        height_norm = _height_color_norm(pixel_height)
+        height_cmap = "cividis"
         iz, iy = _sample_mask_indices(both_pos, _SCATTER_MAX_POINTS)
         if iz.size > 0:
             axes[1, 0].scatter(
                 img0[iz, iy],
                 img1[iz, iy],
-                c=pixel_r[iz, iy],
-                cmap="cividis",
-                norm=r_norm,
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 s=12,
                 alpha=0.85,
                 linewidths=0.0,
@@ -628,9 +631,9 @@ def _save_four_panel_figure(
             axes[1, 0].scatter(
                 img0[iz, iy],
                 np.full(iz.size, boundary_frac_zero, dtype=float),
-                c=pixel_r[iz, iy],
-                cmap="cividis",
-                norm=r_norm,
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker="v",
                 s=22,
                 alpha=0.95,
@@ -642,9 +645,9 @@ def _save_four_panel_figure(
             axes[1, 0].scatter(
                 np.full(iz.size, boundary_frac_zero, dtype=float),
                 img1[iz, iy],
-                c=pixel_r[iz, iy],
-                cmap="cividis",
-                norm=r_norm,
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker="<",
                 s=22,
                 alpha=0.95,
@@ -656,9 +659,9 @@ def _save_four_panel_figure(
             axes[1, 0].scatter(
                 img0[iz, iy],
                 np.full(iz.size, boundary_frac_nan, dtype=float),
-                c=pixel_r[iz, iy],
-                cmap="cividis",
-                norm=r_norm,
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker="^",
                 s=24,
                 alpha=0.95,
@@ -670,15 +673,21 @@ def _save_four_panel_figure(
             axes[1, 0].scatter(
                 np.full(iz.size, boundary_frac_nan, dtype=float),
                 img1[iz, iy],
-                c=pixel_r[iz, iy],
-                cmap="cividis",
-                norm=r_norm,
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker=">",
                 s=24,
                 alpha=0.95,
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
+        height_cax = axes[1, 0].inset_axes([0.55, 0.075, 0.38, 0.035])
+        height_mappable = plt.cm.ScalarMappable(norm=height_norm, cmap=height_cmap)
+        height_mappable.set_array([])
+        height_cbar = fig.colorbar(height_mappable, cax=height_cax, orientation="horizontal")
+        height_cbar.set_label("height over surface (R-1)", fontsize=7)
+        height_cbar.ax.tick_params(labelsize=6, pad=1)
         axes[1, 0].set_xlim(lo, hi)
         axes[1, 0].set_ylim(lo, hi)
         axes[1, 0].set_xscale("log")
@@ -1204,7 +1213,7 @@ def main() -> None:
 
     resolutions = _resolution_ramp(int(args.min_resolution), int(args.max_resolution))
     if int(args.min_resolution) < 4:
-        raise ValueError("min-resolution must be at least 4 for log-radius comparison colors.")
+        raise ValueError("min-resolution must be at least 4 for symlog height comparison colors.")
     max_seconds_per_image = float(args.max_seconds_per_image)
     if max_seconds_per_image <= 0.0:
         raise ValueError("max_seconds_per_image must be positive.")

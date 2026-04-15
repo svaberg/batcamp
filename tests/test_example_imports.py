@@ -57,7 +57,7 @@ def test_benchmark_scripts_run_from_examples(script_name: str) -> None:
     )
 
 
-def test_grid_vs_ray_rejects_resolution_too_small_for_log_radius_colors() -> None:
+def test_grid_vs_ray_rejects_resolution_too_small_for_symlog_height_colors() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     examples_dir = repo_root / "examples"
 
@@ -78,7 +78,7 @@ def test_grid_vs_ray_rejects_resolution_too_small_for_log_radius_colors() -> Non
     )
 
     assert result.returncode != 0
-    assert "min-resolution must be at least 4" in result.stderr
+    assert "min-resolution must be at least 4 for symlog height comparison colors" in result.stderr
 
 
 def test_examples_import_repo_editable_install() -> None:
@@ -139,21 +139,22 @@ def test_grid_vs_ray_sample_mask_indices_bounds_scatter_points() -> None:
     np.testing.assert_array_equal(iy, np.array([0, 3, 2, 1, 0, 4], dtype=np.int64))
 
 
-def test_grid_vs_ray_radius_color_norm_uses_log_when_possible() -> None:
+def test_grid_vs_ray_height_color_norm_uses_symlog() -> None:
     module = _load_benchmark_grid_vs_ray_module()
 
-    norm = module._radius_color_norm(np.array([1.0, 10.0, 100.0], dtype=float))
+    norm = module._height_color_norm(np.array([-1.0, -1.0e-4, 0.0, 1.0e-4, 10.0], dtype=float))
 
-    assert isinstance(norm, module.LogNorm)
-    assert norm.vmin == 1.0
-    assert norm.vmax == 100.0
+    assert isinstance(norm, module.SymLogNorm)
+    assert norm.linthresh == 1.0e-3
+    assert norm.vmin == -1.0
+    assert norm.vmax == 10.0
 
 
-def test_grid_vs_ray_radius_color_norm_rejects_degenerate_radius() -> None:
+def test_grid_vs_ray_height_color_norm_rejects_degenerate_height() -> None:
     module = _load_benchmark_grid_vs_ray_module()
 
-    with pytest.raises(ValueError, match="positive finite radii"):
-        module._radius_color_norm(np.array([0.0, 0.0], dtype=float))
+    with pytest.raises(ValueError, match="non-degenerate"):
+        module._height_color_norm(np.array([0.0, 0.0], dtype=float))
 
 
 def test_grid_vs_ray_discrepancy_rows_bounds_category_rows() -> None:
