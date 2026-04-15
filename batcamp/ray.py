@@ -269,7 +269,7 @@ def midpoint_image(
     return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
 
-def exact_image(
+def trilinear_image(
     tree: Octree,
     interpolator,
     origins: np.ndarray,
@@ -279,13 +279,13 @@ def exact_image(
     t_max: float,
     ray_shape: tuple[int, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Trace rays and accumulate exact trilinear cell integrals without packing segments."""
+    """Trace rays and integrate trilinear cell interpolants without packing segments."""
     if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
-        raise TypeError("exact_image requires one OctreeInterpolator.")
+        raise TypeError("trilinear_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
     if str(tree.tree_coord) != "xyz":
-        raise NotImplementedError("exact_image currently supports only tree_coord='xyz'.")
+        raise NotImplementedError("trilinear_image currently supports only tree_coord='xyz'.")
 
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
@@ -443,7 +443,7 @@ class OctreeRayTracer:
             ray_shape=ray_shape,
         )
 
-    def exact_image(
+    def trilinear_image(
         self,
         interpolator,
         origins: np.ndarray,
@@ -452,7 +452,7 @@ class OctreeRayTracer:
         t_min: float = 0,
         t_max: float = np.inf,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and accumulate exact trilinear cell integrals plus per-ray segment counts."""
+        """Trace rays and integrate trilinear cell interpolants plus per-ray segment counts."""
         t_lo = float(t_min)
         t_hi = float(t_max)
         if not math.isfinite(t_lo):
@@ -462,7 +462,7 @@ class OctreeRayTracer:
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
         o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
-        return exact_image(
+        return trilinear_image(
             self.tree,
             interpolator,
             o_flat,

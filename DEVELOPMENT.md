@@ -191,15 +191,15 @@ tasks, in this order.
 8. Keep accumulation branch-independent above traced segments.
    Status: done.
 
-   Midpoint and exact accumulation should consume known cell ids and time
+   Midpoint and trilinear image accumulation should consume known cell ids and time
    intervals. Coordinate-specific interpolation details belong below that
    boundary.
 
-9. Do not add exact RPA accumulation until RPA traversal is structurally stable.
+9. Do not add trilinear RPA image accumulation until RPA traversal is structurally stable.
    Status: done.
 
    First make RPA produce the same kind of reliable time intervals as XYZ; only
-   then design exact integration for spherical-coordinate cells.
+   then design trilinear integration for spherical-coordinate cells.
 
 10. Add or preserve tests around the shared invariants.
     Status: done.

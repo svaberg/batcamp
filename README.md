@@ -71,7 +71,7 @@ y, z = np.meshgrid(
     indexing="xy",
 )
 origins = np.stack((np.full_like(y, -24), y, z), axis=-1)
-image, _ = tracer.exact_image(interp, origins, np.array([1.0, 0.0, 0.0]))
+image, _ = tracer.trilinear_image(interp, origins, np.array([1.0, 0.0, 0.0]))
 
 plt.pcolormesh(y, z, image, shading="auto", norm="log")
 plt.colorbar(label="line integral")

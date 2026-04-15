@@ -1063,7 +1063,7 @@ def test_trace_sc_benchmark_corner_artifact_ray_matches_lookup_oracle() -> None:
     _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))
 
 
-def test_rpa_exact_image_is_not_yet_supported() -> None:
+def test_rpa_trilinear_image_is_not_yet_supported() -> None:
     tree = _build_uniform_rpa_tree()
     tracer = OctreeRayTracer(tree)
     interpolator = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
@@ -1071,4 +1071,4 @@ def test_rpa_exact_image_is_not_yet_supported() -> None:
     direction = np.array((1.0, 0.0, 0.0), dtype=float)
 
     with pytest.raises(NotImplementedError, match="tree_coord='xyz'"):
-        tracer.exact_image(interpolator, origin, direction)
+        tracer.trilinear_image(interpolator, origin, direction)

@@ -263,8 +263,8 @@ def _ray_image_and_segment_counts(
             t_min=0.0,
             t_max=float(t_end),
         )
-    elif str(ray_method) == "exact":
-        image, counts = tracer.exact_image(
+    elif str(ray_method) == "trilinear":
+        image, counts = tracer.trilinear_image(
             interp,
             origins,
             directions,
@@ -281,8 +281,8 @@ def _ray_image_and_segment_counts(
 def _ray_methods(ray_method: str) -> list[str]:
     """Return the concrete ray methods to run for one benchmark invocation."""
     if str(ray_method) == "both":
-        return ["midpoint", "exact"]
-    if str(ray_method) in {"midpoint", "exact"}:
+        return ["midpoint", "trilinear"]
+    if str(ray_method) in {"midpoint", "trilinear"}:
         return [str(ray_method)]
     raise ValueError(f"Unsupported ray_method '{ray_method}'.")
 
@@ -797,31 +797,31 @@ def _write_method_comparison_table(
     rows_by_method: dict[str, list[dict[str, float | int]]],
     out_path: Path,
 ) -> None:
-    """Write one direct midpoint-versus-exact timing comparison table."""
+    """Write one direct midpoint-versus-trilinear timing comparison table."""
     midpoint_rows = rows_by_method.get("midpoint", [])
-    exact_rows = rows_by_method.get("exact", [])
-    if not midpoint_rows or not exact_rows:
+    trilinear_rows = rows_by_method.get("trilinear", [])
+    if not midpoint_rows or not trilinear_rows:
         return
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "## Ray Method Comparison",
         "",
-        "| resolution | pixels | midpoint_s | exact_s | exact/midpoint |",
+        "| resolution | pixels | midpoint_s | trilinear_s | trilinear/midpoint |",
         "|---:|---:|---:|---:|---:|",
     ]
-    for midpoint_row, exact_row in zip(midpoint_rows, exact_rows, strict=True):
+    for midpoint_row, trilinear_row in zip(midpoint_rows, trilinear_rows, strict=True):
         resolution = int(midpoint_row["resolution"])
-        if resolution != int(exact_row["resolution"]):
-            raise ValueError("midpoint/exact comparison rows must share the same resolutions.")
+        if resolution != int(trilinear_row["resolution"]):
+            raise ValueError("midpoint/trilinear comparison rows must share the same resolutions.")
         midpoint_s = float(midpoint_row["ray_s"])
-        exact_s = float(exact_row["ray_s"])
+        trilinear_s = float(trilinear_row["ray_s"])
         lines.append(
             f"| {resolution}x{resolution} | "
             f"{int(midpoint_row['pixels'])} | "
             f"{midpoint_s:.6f} | "
-            f"{exact_s:.6f} | "
-            f"{(exact_s / max(midpoint_s, 1.0e-15)):.3f} |"
+            f"{trilinear_s:.6f} | "
+            f"{(trilinear_s / max(midpoint_s, 1.0e-15)):.3f} |"
         )
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1154,9 +1154,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--ray-method",
-        choices=("midpoint", "exact", "both"),
-        default="exact",
-        help="Ray accumulation method to benchmark (default: exact). Use 'both' for one-process midpoint/exact comparison.",
+        choices=("midpoint", "trilinear", "both"),
+        default="trilinear",
+        help="Ray accumulation method to benchmark (default: trilinear). Use 'both' for one-process midpoint/trilinear comparison.",
     )
     parser.add_argument(
         "--output-dir",
