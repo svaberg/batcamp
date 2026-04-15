@@ -330,15 +330,15 @@ def _sample_mask_indices(mask: np.ndarray, max_points: int) -> tuple[np.ndarray,
 
 
 def _radius_color_norm(radius_values: np.ndarray):
-    """Return a log radius color norm when possible."""
+    """Return the log radius color norm for comparison scatter points."""
     r_vals = np.asarray(radius_values, dtype=float).reshape(-1)
     positive = r_vals[np.isfinite(r_vals) & (r_vals > 0.0)]
     if positive.size == 0:
-        return Normalize(vmin=0.0, vmax=1.0)
+        raise ValueError("Comparison scatter radius colors require positive finite radii.")
     r_lo = float(np.min(positive))
     r_hi = float(np.max(positive))
     if r_hi <= r_lo:
-        return Normalize(vmin=r_lo, vmax=max(r_lo + 1.0, 1.0))
+        raise ValueError("Comparison scatter radius colors require a non-degenerate positive radius range.")
     return LogNorm(vmin=r_lo, vmax=r_hi)
 
 

@@ -125,13 +125,11 @@ def test_grid_vs_ray_radius_color_norm_uses_log_when_possible() -> None:
     assert norm.vmax == 100.0
 
 
-def test_grid_vs_ray_radius_color_norm_falls_back_for_degenerate_radius() -> None:
+def test_grid_vs_ray_radius_color_norm_rejects_degenerate_radius() -> None:
     module = _load_benchmark_grid_vs_ray_module()
 
-    norm = module._radius_color_norm(np.array([0.0, 0.0], dtype=float))
-
-    assert isinstance(norm, module.Normalize)
-    assert not isinstance(norm, module.LogNorm)
+    with pytest.raises(ValueError, match="positive finite radii"):
+        module._radius_color_norm(np.array([0.0, 0.0], dtype=float))
 
 
 def test_grid_vs_ray_discrepancy_rows_bounds_category_rows() -> None:
