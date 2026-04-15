@@ -639,12 +639,32 @@ def _assert_multiface_event_is_order_invariant_rpa(
     assert finals == {expected_owner}
 
 
+def _benchmark_plane_axis_points(lo: float, hi: float, n: int) -> np.ndarray:
+    step = (float(hi) - float(lo)) / float(n)
+    return float(lo) + (np.arange(int(n), dtype=float) + 0.5) * step
+
+
+def _benchmark_ray_setup(
+    *,
+    n_plane: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> tuple[np.ndarray, np.ndarray, float]:
+    xmin, xmax, ymin, ymax, zmin, zmax = bounds
+    y = _benchmark_plane_axis_points(ymin, ymax, int(n_plane))
+    z = _benchmark_plane_axis_points(zmin, zmax, int(n_plane))
+    yg, zg = np.meshgrid(y, z, indexing="xy")
+    xg = np.full_like(yg, float(xmin), dtype=float)
+    origins = np.stack((xg, yg, zg), axis=-1)
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+    return origins, directions, float(xmax - xmin)
+
+
 @lru_cache(maxsize=1)
 def _build_sc_benchmark_trace_case():
     """Return the cached SC 64x64 benchmark tracing setup."""
     from batread import Dataset
 
-    from examples.benchmark_grid_vs_ray import _ray_setup
     from sample_data_helper import data_file
 
     ds = Dataset.from_file(str(data_file("3d__var_4_n00044000.plt")))
@@ -660,7 +680,7 @@ def _build_sc_benchmark_trace_case():
         float(dmin[2]),
         float(dmax[2]),
     )
-    origins, directions, t_end = _ray_setup(n_plane=64, bounds=bounds)
+    origins, directions, t_end = _benchmark_ray_setup(n_plane=64, bounds=bounds)
     return ds, tree, origins, directions, float(t_end)
 
 
