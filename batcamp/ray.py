@@ -95,7 +95,7 @@ def trace_segments(
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         chunk_n_rays = int(chunk_hi - chunk_lo)
-        cell_counts, time_counts, cell_buffer, time_buffer = fill_chunk(
+        cell_counts, time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
             tree,
             chunk_origins,
             chunk_directions,
@@ -145,7 +145,7 @@ def trace_segments(
     )
 
 
-def fill_chunk(
+def _trace_chunk_to_scratch(
     tree: Octree,
     origins: np.ndarray,
     directions: np.ndarray,
@@ -153,7 +153,11 @@ def fill_chunk(
     t_min: float,
     t_max: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Trace one chunk into reusable crossing buffers."""
+    """Trace one chunk into scratch buffers, growing capacity on overflow.
+
+    Coordinate kernels write `-1` counts for scratch overflow and counts below
+    `-1` for invalid crossings.
+    """
     chunk_n_rays = int(origins.shape[0])
     tree_coord = str(tree.tree_coord)
     crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
@@ -196,12 +200,14 @@ def fill_chunk(
                 time_buffer,
             )
         else:
-            raise NotImplementedError(f"fill_chunk supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}.")
+            raise NotImplementedError(
+                f"trace supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
+            )
         if np.any(cell_counts == -1) or np.any(time_counts == -1):
             crossing_capacity *= 2
             continue
         if np.any(cell_counts < 0) or np.any(time_counts < 0):
-            raise ValueError("Cartesian ray trace encountered an invalid crossing.")
+            raise ValueError("Ray trace encountered an invalid crossing.")
         return cell_counts, time_counts, cell_buffer, time_buffer
 
 
@@ -259,7 +265,7 @@ def accumulate_midpoints(
         chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
-        cell_counts, _time_counts, cell_buffer, time_buffer = fill_chunk(
+        cell_counts, _time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
             tree,
             chunk_origins,
             chunk_directions,
@@ -311,7 +317,7 @@ def accumulate_exact(
         chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
-        cell_counts, _time_counts, cell_buffer, time_buffer = fill_chunk(
+        cell_counts, _time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
             tree,
             chunk_origins,
             chunk_directions,

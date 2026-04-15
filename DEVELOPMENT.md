@@ -137,15 +137,16 @@ tasks, in this order.
 
    The Cartesian branch already has fixed scratch buffers, packed output, and
    direct accumulation. Shared non-geometric mechanics should not live in the
-   coordinate branches.
+   coordinate branches. Scratch allocation, overflow retry, invalid-count
+   handling, and packing are owned by the shared ray layer.
 
 5. Rework RPA event solving around fixed scratch arrays.
    Status: pending.
 
    Replace hot-path Python lists, small per-event allocations, and
    exception-driven invalid states with fixed buffers and explicit return codes.
-   This is now the main remaining place where RPA keeps private traversal
-   machinery that is not forced by the event equations.
+   This is now scoped to the RPA event solver itself; shared chunk mechanics are
+   already outside the coordinate branch.
 
 6. Keep RPA seam and pole handling local to owner resolution.
    Status: done.
