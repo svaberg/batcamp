@@ -19,7 +19,7 @@ TRACE_CHUNK_SIZE = 256
 DEFAULT_CROSSING_BUFFER_SIZE = 256
 
 
-def normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
+def prepare_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
     """Return flat finite ray arrays plus the broadcast shape."""
     o = np.array(origins, dtype=np.float64, order="C")
     d = np.array(directions, dtype=np.float64, order="C")
@@ -41,7 +41,7 @@ def normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndar
 
 
 @njit(cache=True, parallel=True)
-def _pack_crossing_buffer(
+def _pack_crossing_buffers(
     cell_counts: np.ndarray,
     time_counts: np.ndarray,
     cell_ids_scratch: np.ndarray,
@@ -118,7 +118,7 @@ def trace_segments(
         chunk_time_total = int(chunk_time_offsets[-1])
         chunk_cells = np.empty(chunk_cell_total, dtype=np.int64)
         chunk_times = np.empty(chunk_time_total, dtype=np.float64)
-        _pack_crossing_buffer(
+        _pack_crossing_buffers(
             cell_counts,
             time_counts,
             cell_buffer,
@@ -204,7 +204,7 @@ def _reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_sha
     return out.reshape(tuple(ray_shape))
 
 
-def accumulate_midpoints(
+def midpoint_image(
     tree: Octree,
     interpolator,
     origins: np.ndarray,
@@ -269,7 +269,7 @@ def accumulate_midpoints(
     return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
 
-def accumulate_exact(
+def exact_image(
     tree: Octree,
     interpolator,
     origins: np.ndarray,
@@ -404,7 +404,7 @@ class OctreeRayTracer:
             raise ValueError("t_max must not be NaN.")
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
-        o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
+        o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
         return trace_segments(
             self.tree,
             o_flat,
@@ -432,8 +432,8 @@ class OctreeRayTracer:
             raise ValueError("t_max must not be NaN.")
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
-        o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
-        return accumulate_midpoints(
+        o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
+        return midpoint_image(
             self.tree,
             interpolator,
             o_flat,
@@ -461,8 +461,8 @@ class OctreeRayTracer:
             raise ValueError("t_max must not be NaN.")
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
-        o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
-        return accumulate_exact(
+        o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
+        return exact_image(
             self.tree,
             interpolator,
             o_flat,
@@ -486,7 +486,7 @@ def render_midpoint_image(
     """Render one midpoint-sampled line integral from packed crossing segments."""
     if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
-    o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
+    o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
     if tuple(ray_shape) != tuple(segments.ray_shape):
         raise ValueError("segments.ray_shape must match the ray origin/direction shape.")
 
