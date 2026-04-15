@@ -451,37 +451,47 @@ def find_exit(
     active_faces: np.ndarray,
 ) -> tuple[float, int, bool]:
     """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state."""
-    candidates: list[tuple[float, int]] = []
+    candidate_times = np.empty(6, dtype=np.float64)
+    candidate_times[:] = np.nan
+    n_candidate = 0
 
-    def add_candidate(face_id: int, candidate_time: float | None) -> None:
+    for face_id in range(6):
+        roots = _face_roots(cell_bounds, int(cell_id), int(face_id), origin, direction)
+        candidate_time = _next_time_after(roots, float(t_current))
         if candidate_time is None:
-            return
+            continue
         candidate_xyz = _xyz_at_time(origin, direction, float(candidate_time))
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(candidate_xyz, direction, axis)
         if side == 0:
             if direction_sign >= 0:
-                return
+                continue
         else:
             if direction_sign <= 0:
-                return
-        candidates.append((float(candidate_time), int(face_id)))
-
-    for face_id in range(6):
-        roots = _face_roots(cell_bounds, int(cell_id), int(face_id), origin, direction)
-        add_candidate(int(face_id), _next_time_after(roots, float(t_current)))
+                continue
+        candidate_times[face_id] = float(candidate_time)
+        n_candidate += 1
 
     axis_transfer_time = _axis_transfer_time(cell_bounds, int(cell_id), origin, direction, float(t_current))
-    if not candidates and axis_transfer_time is None:
+    if n_candidate == 0 and axis_transfer_time is None:
         return np.nan, -1, False
-    t_exit = min(t_face for t_face, _face_id in candidates) if candidates else math.inf
+    t_exit = math.inf
+    for face_id in range(6):
+        candidate_time = float(candidate_times[face_id])
+        if np.isnan(candidate_time):
+            continue
+        if candidate_time < t_exit:
+            t_exit = candidate_time
     if axis_transfer_time is not None:
         if float(axis_transfer_time) < t_exit:
             t_exit = float(axis_transfer_time)
     n_active_face = 0
-    for t_face, face_id in sorted(candidates, key=lambda item: item[1]):
-        if _times_close(float(t_face), float(t_exit)):
+    for face_id in range(6):
+        candidate_time = float(candidate_times[face_id])
+        if np.isnan(candidate_time):
+            continue
+        if _times_close(candidate_time, float(t_exit)):
             active_faces[n_active_face] = int(face_id)
             n_active_face += 1
     axis_transfer = axis_transfer_time is not None and _times_close(float(axis_transfer_time), float(t_exit))

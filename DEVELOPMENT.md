@@ -146,7 +146,9 @@ tasks, in this order.
    Replace hot-path Python lists, small per-event allocations, and
    exception-driven invalid states with fixed buffers and explicit return codes.
    This is now scoped to the RPA event solver itself; shared chunk mechanics are
-   already outside the coordinate branch.
+   already outside the coordinate branch. `find_exit()` now uses fixed
+   per-face candidate storage; remaining work is in the other RPA event-solver
+   helpers.
 
 6. Keep RPA seam and pole handling local to owner resolution.
    Status: done.
