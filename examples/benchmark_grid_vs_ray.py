@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
-import sys
 import time
 
 import matplotlib.pyplot as plt
@@ -15,12 +14,6 @@ from matplotlib.colors import Normalize
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
 from batread.dataset import Dataset
-
-if __package__ in {None, ""}:
-    _EXAMPLES_DIR = Path(__file__).resolve().parent
-    _REPO_ROOT = _EXAMPLES_DIR.parent
-    sys.path.insert(0, str(_REPO_ROOT))
-    sys.path.insert(0, str(_EXAMPLES_DIR))
 
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer

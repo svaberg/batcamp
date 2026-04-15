@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 import time
 
 import matplotlib.pyplot as plt
@@ -19,12 +18,6 @@ from matplotlib.colors import Normalize
 import numpy as np
 from batread.dataset import Dataset
 from scipy.interpolate import NearestNDInterpolator
-
-if __package__ in {None, ""}:
-    _EXAMPLES_DIR = Path(__file__).resolve().parent
-    _REPO_ROOT = _EXAMPLES_DIR.parent
-    sys.path.insert(0, str(_REPO_ROOT))
-    sys.path.insert(0, str(_EXAMPLES_DIR))
 
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS

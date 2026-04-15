@@ -13,9 +13,6 @@ import time
 import pooch
 from batread.dataset import Dataset
 
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from batcamp import Octree
 
 
