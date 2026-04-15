@@ -61,10 +61,10 @@ def trace_ray(
         cell_ids = np.empty(crossing_capacity, dtype=np.int64)
         times = np.empty(crossing_capacity + 1, dtype=np.float64)
         n_cell, n_time = _trace_ray(
-            tree._root_cell_ids,
+            tree.root_cell_ids,
             tree.cell_child,
             tree.cell_bounds,
-            tree._domain_bounds,
+            tree.packed_domain_bounds,
             tree.cell_neighbor,
             int(start_cell_id),
             origin,

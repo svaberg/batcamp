@@ -699,6 +699,11 @@ class Octree:
         return self._cell_bounds
 
     @property
+    def packed_domain_bounds(self) -> np.ndarray:
+        """Return packed `(3, 2)` start/width domain bounds in tree coordinates."""
+        return self._domain_bounds
+
+    @property
     def cell_levels(self) -> np.ndarray:
         """Return exact persisted leaf-slot levels, including unused slots as `-1`."""
         return self._cell_depth[: self._leaf_slot_count]
@@ -712,6 +717,11 @@ class Octree:
     def cell_child(self) -> np.ndarray:
         """Return rebuilt runtime 8-child references, with `-1` for missing children."""
         return self._cell_child
+
+    @property
+    def root_cell_ids(self) -> np.ndarray:
+        """Return rebuilt runtime root cell ids."""
+        return self._root_cell_ids
 
     @property
     def cell_parent(self) -> np.ndarray:

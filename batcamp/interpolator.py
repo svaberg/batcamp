@@ -284,7 +284,7 @@ def _interp_cells_xyz(
             cell_bounds,
             corners,
             point_values,
-    )
+        )
     return out
 
 
@@ -433,6 +433,11 @@ class OctreeInterpolator:
     def value_shape(self) -> tuple[int, ...]:
         """Return the trailing shape of one interpolated value."""
         return self._value_shape_tail
+
+    @property
+    def point_values_2d(self) -> np.ndarray:
+        """Return flattened point-aligned values with shape `(n_points, n_components)`."""
+        return self._point_values_2d
 
     def _flatten_point_values(self, values: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
         """Flatten one `(n_points, ...)` value array for interpolation kernels."""
