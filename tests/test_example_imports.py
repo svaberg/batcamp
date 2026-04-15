@@ -57,6 +57,30 @@ def test_benchmark_scripts_run_from_examples(script_name: str) -> None:
     )
 
 
+def test_grid_vs_ray_rejects_resolution_too_small_for_log_radius_colors() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    examples_dir = repo_root / "examples"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "benchmark_grid_vs_ray.py",
+            "--min-resolution",
+            "2",
+            "--max-resolution",
+            "2",
+        ],
+        cwd=examples_dir,
+        env=_env_without_pythonpath(),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "min-resolution must be at least 4" in result.stderr
+
+
 def test_examples_import_repo_editable_install() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     examples_dir = repo_root / "examples"

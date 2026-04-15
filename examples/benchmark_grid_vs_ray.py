@@ -610,8 +610,7 @@ def _save_four_panel_figure(
         y_boundary_transform = blended_transform_factory(axes[1, 0].transData, axes[1, 0].transAxes)
         boundary_frac_zero = 0.015
         boundary_frac_nan = 0.045
-        r_mask = both_pos | plot0_only | plot1_only | plot0_nan | plot1_nan
-        r_norm = _radius_color_norm(pixel_r[r_mask] if np.any(r_mask) else np.array([], dtype=float))
+        r_norm = _radius_color_norm(pixel_r)
         iz, iy = _sample_mask_indices(both_pos, _SCATTER_MAX_POINTS)
         if iz.size > 0:
             axes[1, 0].scatter(
@@ -1164,8 +1163,8 @@ def main() -> None:
     parser.add_argument(
         "--min-resolution",
         type=int,
-        default=2,
-        help="Smallest square plane resolution (default: 2).",
+        default=4,
+        help="Smallest square plane resolution (default: 4).",
     )
     parser.add_argument(
         "--max-resolution",
@@ -1204,6 +1203,8 @@ def main() -> None:
     args = parser.parse_args()
 
     resolutions = _resolution_ramp(int(args.min_resolution), int(args.max_resolution))
+    if int(args.min_resolution) < 4:
+        raise ValueError("min-resolution must be at least 4 for log-radius comparison colors.")
     max_seconds_per_image = float(args.max_seconds_per_image)
     if max_seconds_per_image <= 0.0:
         raise ValueError("max_seconds_per_image must be positive.")
