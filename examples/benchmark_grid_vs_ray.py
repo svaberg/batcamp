@@ -29,7 +29,7 @@ from benchmark_helpers import DatasetCase
 from benchmark_helpers import resolve_data_file
 
 
-_GRID_CACHE_VERSION = 1
+_GRID_CACHE_VERSION = 2
 
 
 def _grid_sum_image(
@@ -64,6 +64,7 @@ def _grid_cache_file(
     out_root: Path,
     *,
     case_label: str,
+    phase: str,
     data_path: Path,
     variable: str,
     n_plane: int,
@@ -74,6 +75,7 @@ def _grid_cache_file(
     key = "|".join(
         (
             str(data_path.resolve()),
+            str(phase),
             str(int(data_stat.st_size)),
             str(int(data_stat.st_mtime_ns)),
             str(variable),
@@ -85,13 +87,14 @@ def _grid_cache_file(
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
     return (
         out_root
-        / f"benchmark_grid_vs_ray_{case_label}_grid_cache_{int(n_plane)}x{int(n_plane)}_{digest}.npz"
+        / f"benchmark_grid_vs_ray_{case_label}_grid_cache_{phase}_{int(n_plane)}x{int(n_plane)}_{digest}.npz"
     )
 
 
 def _grid_cache_matches(
     cache: np.lib.npyio.NpzFile,
     *,
+    phase: str,
     data_path: Path,
     variable: str,
     n_plane: int,
@@ -102,6 +105,7 @@ def _grid_cache_matches(
     return (
         int(cache["version"]) == _GRID_CACHE_VERSION
         and str(cache["data_path"]) == str(data_path.resolve())
+        and str(cache["phase"]) == str(phase)
         and int(cache["data_size"]) == int(data_stat.st_size)
         and int(cache["data_mtime_ns"]) == int(data_stat.st_mtime_ns)
         and str(cache["variable"]) == str(variable)
@@ -119,6 +123,7 @@ def _grid_cache_matches(
 def _read_grid_cache(
     cache_path: Path,
     *,
+    phase: str,
     data_path: Path,
     variable: str,
     n_plane: int,
@@ -130,6 +135,7 @@ def _read_grid_cache(
     with np.load(cache_path, allow_pickle=False) as cache:
         if not _grid_cache_matches(
             cache,
+            phase=phase,
             data_path=data_path,
             variable=variable,
             n_plane=int(n_plane),
@@ -145,6 +151,7 @@ def _write_grid_cache(
     image: np.ndarray,
     *,
     grid_s: float,
+    phase: str,
     data_path: Path,
     variable: str,
     n_plane: int,
@@ -158,6 +165,7 @@ def _write_grid_cache(
         image=np.asarray(image, dtype=float),
         grid_s=np.array(float(grid_s), dtype=float),
         data_path=np.array(str(data_path.resolve())),
+        phase=np.array(str(phase)),
         data_size=np.array(int(data_stat.st_size), dtype=np.int64),
         data_mtime_ns=np.array(int(data_stat.st_mtime_ns), dtype=np.int64),
         variable=np.array(str(variable)),
@@ -171,6 +179,7 @@ def _grid_sum_image_cached(
     interp: OctreeInterpolator,
     *,
     cache_path: Path,
+    phase: str,
     data_path: Path,
     variable: str,
     n_plane: int,
@@ -179,6 +188,7 @@ def _grid_sum_image_cached(
 ) -> tuple[np.ndarray, float, bool]:
     cached = _read_grid_cache(
         cache_path,
+        phase=phase,
         data_path=data_path,
         variable=variable,
         n_plane=int(n_plane),
@@ -200,6 +210,7 @@ def _grid_sum_image_cached(
         cache_path,
         image,
         grid_s=float(grid_s),
+        phase=phase,
         data_path=data_path,
         variable=variable,
         n_plane=int(n_plane),
@@ -925,6 +936,7 @@ def _run_case(
     cold_grid_cache_path = _grid_cache_file(
         out_root,
         case_label=case.label,
+        phase="cold",
         data_path=data_path,
         variable=variable,
         n_plane=warm_n,
@@ -934,6 +946,7 @@ def _run_case(
     _, cold_grid_s, cold_grid_cached = _grid_sum_image_cached(
         interp,
         cache_path=cold_grid_cache_path,
+        phase="cold",
         data_path=data_path,
         variable=variable,
         n_plane=warm_n,
@@ -941,7 +954,7 @@ def _run_case(
         bounds=bounds,
     )
     if cold_grid_cached:
-        progress.note(f"[{case.label}] grid cache hit {warm_n}x{warm_n}")
+        progress.note(f"[{case.label}] grid cache hit cold {warm_n}x{warm_n}")
     cold_ray_s_by_method: dict[str, float] = {}
     for method in ray_methods:
         try:
@@ -973,6 +986,7 @@ def _run_case(
         grid_cache_path = _grid_cache_file(
             out_root,
             case_label=case.label,
+            phase="run",
             data_path=data_path,
             variable=variable,
             n_plane=int(n),
@@ -982,6 +996,7 @@ def _run_case(
         img0, grid_s, grid_cached = _grid_sum_image_cached(
             interp,
             cache_path=grid_cache_path,
+            phase="run",
             data_path=data_path,
             variable=variable,
             n_plane=int(n),
@@ -989,7 +1004,7 @@ def _run_case(
             bounds=bounds,
         )
         if grid_cached:
-            progress.note(f"[{case.label}] grid cache hit {int(n)}x{int(n)}")
+            progress.note(f"[{case.label}] grid cache hit run {int(n)}x{int(n)}")
         pixel_y, pixel_z, pixel_r = _pixel_plane_coordinates(n_plane=int(n), bounds=bounds)
         grid_nan, grid_zero = _array_stats(img0)
         pixels = int(n * n)

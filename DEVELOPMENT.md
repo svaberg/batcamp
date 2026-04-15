@@ -210,8 +210,10 @@ tasks, in this order.
     from this repository. Benchmark scripts and notebooks then import the same
     checkout without any example-side import-path plumbing. The grid-vs-ray
     benchmark caches grid-sum images under its output directory, keyed by dataset
-    file metadata, variable, bounds, resolution, and `nx_sum`, so repeated ray
-    runs do not recompute unchanged grid baselines. A local `32x32` RPA run on
+    file metadata, benchmark phase, variable, bounds, resolution, and `nx_sum`.
+    The cache stores the measured grid runtime with the image, with separate
+    cold-start and plotted-run entries, so repeated ray runs do not recompute
+    unchanged grid baselines or replace grid timings with cache-load timings. A local `32x32` RPA run on
     `3d__var_2_n00060005.plt` measured warmed trace times of `1.465085s` and
     `1.571065s` after scalar cleanup, versus `1.829208s` before that cleanup.
     The same harness on the XYZ sample measured `0.009061s`, so RPA still needs
