@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from pathlib import Path
 import time
 
@@ -26,6 +27,9 @@ from benchmark_helpers import _resolution_ramp
 from benchmark_helpers import _time_call
 from benchmark_helpers import DatasetCase
 from benchmark_helpers import resolve_data_file
+
+
+_GRID_CACHE_VERSION = 1
 
 
 def _grid_sum_image(
@@ -54,6 +58,155 @@ def _grid_sum_image(
     out = np.full_like(summed, np.nan, dtype=float)
     out[any_finite] = summed[any_finite]
     return out.T
+
+
+def _grid_cache_file(
+    out_root: Path,
+    *,
+    case_label: str,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> Path:
+    data_stat = data_path.stat()
+    key = "|".join(
+        (
+            str(data_path.resolve()),
+            str(int(data_stat.st_size)),
+            str(int(data_stat.st_mtime_ns)),
+            str(variable),
+            str(int(n_plane)),
+            str(int(nx_sum)),
+            ",".join(f"{float(value):.17g}" for value in bounds),
+        )
+    )
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return (
+        out_root
+        / f"benchmark_grid_vs_ray_{case_label}_grid_cache_{int(n_plane)}x{int(n_plane)}_{digest}.npz"
+    )
+
+
+def _grid_cache_matches(
+    cache: np.lib.npyio.NpzFile,
+    *,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> bool:
+    data_stat = data_path.stat()
+    return (
+        int(cache["version"]) == _GRID_CACHE_VERSION
+        and str(cache["data_path"]) == str(data_path.resolve())
+        and int(cache["data_size"]) == int(data_stat.st_size)
+        and int(cache["data_mtime_ns"]) == int(data_stat.st_mtime_ns)
+        and str(cache["variable"]) == str(variable)
+        and int(cache["n_plane"]) == int(n_plane)
+        and int(cache["nx_sum"]) == int(nx_sum)
+        and np.allclose(
+            np.asarray(cache["bounds"], dtype=float),
+            np.asarray(bounds, dtype=float),
+            atol=0.0,
+            rtol=0.0,
+        )
+    )
+
+
+def _read_grid_cache(
+    cache_path: Path,
+    *,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> tuple[np.ndarray, float] | None:
+    if not cache_path.exists():
+        return None
+    with np.load(cache_path, allow_pickle=False) as cache:
+        if not _grid_cache_matches(
+            cache,
+            data_path=data_path,
+            variable=variable,
+            n_plane=int(n_plane),
+            nx_sum=int(nx_sum),
+            bounds=bounds,
+        ):
+            return None
+        return np.asarray(cache["image"], dtype=float), float(cache["grid_s"])
+
+
+def _write_grid_cache(
+    cache_path: Path,
+    image: np.ndarray,
+    *,
+    grid_s: float,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> None:
+    data_stat = data_path.stat()
+    np.savez_compressed(
+        cache_path,
+        version=np.array(_GRID_CACHE_VERSION, dtype=np.int64),
+        image=np.asarray(image, dtype=float),
+        grid_s=np.array(float(grid_s), dtype=float),
+        data_path=np.array(str(data_path.resolve())),
+        data_size=np.array(int(data_stat.st_size), dtype=np.int64),
+        data_mtime_ns=np.array(int(data_stat.st_mtime_ns), dtype=np.int64),
+        variable=np.array(str(variable)),
+        n_plane=np.array(int(n_plane), dtype=np.int64),
+        nx_sum=np.array(int(nx_sum), dtype=np.int64),
+        bounds=np.asarray(bounds, dtype=float),
+    )
+
+
+def _grid_sum_image_cached(
+    interp: OctreeInterpolator,
+    *,
+    cache_path: Path,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> tuple[np.ndarray, float, bool]:
+    cached = _read_grid_cache(
+        cache_path,
+        data_path=data_path,
+        variable=variable,
+        n_plane=int(n_plane),
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    if cached is not None:
+        image, grid_s = cached
+        return image, float(grid_s), True
+
+    image, grid_s = _time_call(
+        _grid_sum_image,
+        interp,
+        n_plane=int(n_plane),
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    _write_grid_cache(
+        cache_path,
+        image,
+        grid_s=float(grid_s),
+        data_path=data_path,
+        variable=variable,
+        n_plane=int(n_plane),
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    return image, float(grid_s), False
 
 
 def _plane_axis_points(lo: float, hi: float, n: int) -> np.ndarray:
@@ -769,7 +922,26 @@ def _run_case(
     warm_n = int(resolutions[0])
     progress.start(f"[{case.label}] cold start check")
     t0 = time.perf_counter()
-    _, cold_grid_s = _time_call(_grid_sum_image, interp, n_plane=warm_n, nx_sum=int(nx_sum), bounds=bounds)
+    cold_grid_cache_path = _grid_cache_file(
+        out_root,
+        case_label=case.label,
+        data_path=data_path,
+        variable=variable,
+        n_plane=warm_n,
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    _, cold_grid_s, cold_grid_cached = _grid_sum_image_cached(
+        interp,
+        cache_path=cold_grid_cache_path,
+        data_path=data_path,
+        variable=variable,
+        n_plane=warm_n,
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    if cold_grid_cached:
+        progress.note(f"[{case.label}] grid cache hit {warm_n}x{warm_n}")
     cold_ray_s_by_method: dict[str, float] = {}
     for method in ray_methods:
         try:
@@ -789,7 +961,8 @@ def _run_case(
         f"[{case.label}] cold start check",
         float(time.perf_counter() - t0),
         detail=" ".join(
-            [f"grid={cold_grid_s:.2f}s"] + [f"{method}={cold_ray_s_by_method[method]:.2f}s" for method in ray_methods]
+            [f"grid={cold_grid_s:.2f}s" + (" cached" if cold_grid_cached else "")]
+            + [f"{method}={cold_ray_s_by_method[method]:.2f}s" for method in ray_methods]
         ),
     )
     rows_by_method: dict[str, list[dict[str, float | int]]] = {method: [] for method in ray_methods}
@@ -797,18 +970,31 @@ def _run_case(
         progress.start(f"[{case.label}] run {n}x{n}")
         t_step = time.perf_counter()
 
-        img0, grid_s = _time_call(
-            _grid_sum_image,
-            interp,
+        grid_cache_path = _grid_cache_file(
+            out_root,
+            case_label=case.label,
+            data_path=data_path,
+            variable=variable,
             n_plane=int(n),
             nx_sum=int(nx_sum),
             bounds=bounds,
         )
+        img0, grid_s, grid_cached = _grid_sum_image_cached(
+            interp,
+            cache_path=grid_cache_path,
+            data_path=data_path,
+            variable=variable,
+            n_plane=int(n),
+            nx_sum=int(nx_sum),
+            bounds=bounds,
+        )
+        if grid_cached:
+            progress.note(f"[{case.label}] grid cache hit {int(n)}x{int(n)}")
         pixel_y, pixel_z, pixel_r = _pixel_plane_coordinates(n_plane=int(n), bounds=bounds)
         grid_nan, grid_zero = _array_stats(img0)
         pixels = int(n * n)
         stop_after_resolution = False
-        method_details: list[str] = [f"grid={grid_s:.2f}s"]
+        method_details: list[str] = [f"grid={grid_s:.2f}s" + (" cached" if grid_cached else "")]
         for method in ray_methods:
             ray_label = f"Ray {method}"
             try:
