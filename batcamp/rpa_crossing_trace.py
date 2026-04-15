@@ -516,12 +516,12 @@ def find_exit(
     direction: np.ndarray,
     t_current: float,
     active_faces: np.ndarray,
+    candidate_times: np.ndarray,
+    roots: np.ndarray,
+    candidate_xyz: np.ndarray,
 ) -> tuple[float, int, bool]:
     """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state."""
-    candidate_times = np.empty(6, dtype=np.float64)
     candidate_times[:] = np.nan
-    roots = np.empty(2, dtype=np.float64)
-    candidate_xyz = np.empty(3, dtype=np.float64)
     n_candidate = 0
 
     for face_id in range(6):
@@ -877,10 +877,10 @@ def _start_active_faces(
     t_event: float,
     start_xyz: np.ndarray,
     active_faces_out: np.ndarray,
+    roots: np.ndarray,
 ) -> int:
     """Return faces whose crossing time is snapped to the start time."""
     n_active_face = 0
-    roots = np.empty(2, dtype=np.float64)
     for face_id in range(6):
         n_root = _face_roots(cell_bounds, int(cell_id), int(face_id), origin_xyz, direction_xyz, roots)
         face_at_start = False
@@ -921,6 +921,7 @@ def _start_cell_owner(
     active_face_order: np.ndarray,
     crossing: np.ndarray,
     crossing_rpa: np.ndarray,
+    roots: np.ndarray,
 ) -> int:
     """Return the leaf that owns the immediate open interval after one start point."""
     current_cell = find_cell(start_xyz, cell_child, root_cell_ids, cell_bounds, domain_bounds)
@@ -934,6 +935,7 @@ def _start_cell_owner(
         float(t_event),
         start_xyz,
         active_faces,
+        roots,
     )
     if n_active_face == 0:
         return int(current_cell)
@@ -1052,6 +1054,9 @@ def _trace_ray(
     path = np.empty(3, dtype=np.int64)
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
+    candidate_times = np.empty(6, dtype=np.float64)
+    roots = np.empty(2, dtype=np.float64)
+    candidate_xyz = np.empty(3, dtype=np.float64)
 
     current_cell = _start_cell_owner(
         root_cell_ids,
@@ -1069,6 +1074,7 @@ def _trace_ray(
         active_face_order,
         crossing,
         crossing_rpa,
+        roots,
     )
     if current_cell < 0:
         return -2, -2
@@ -1085,6 +1091,9 @@ def _trace_ray(
             direction,
             t_current,
             active_faces,
+            candidate_times,
+            roots,
+            candidate_xyz,
         )
         if n_active_face < 0:
             return -2, -2

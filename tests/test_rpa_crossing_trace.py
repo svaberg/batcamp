@@ -140,6 +140,9 @@ def _cell_exit_event_rpa(
 ) -> tuple[float, tuple[int, ...], bool]:
     """Compatibility wrapper around the production spherical exit finder."""
     active_faces = np.empty(3, dtype=np.int64)
+    candidate_times = np.empty(6, dtype=np.float64)
+    roots = np.empty(2, dtype=np.float64)
+    candidate_xyz = np.empty(3, dtype=np.float64)
     t_exit, n_active_face, axis_transfer = rpa_crossing_trace.find_exit(
         cell_bounds,
         cell_id,
@@ -147,6 +150,9 @@ def _cell_exit_event_rpa(
         direction_xyz,
         t_current,
         active_faces,
+        candidate_times,
+        roots,
+        candidate_xyz,
     )
     return float(t_exit), tuple(int(active_faces[i]) for i in range(n_active_face)), bool(axis_transfer)
 

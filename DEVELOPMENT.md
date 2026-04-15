@@ -141,7 +141,7 @@ tasks, in this order.
    handling, and packing are owned by the shared ray layer.
 
 5. Rework RPA event solving around fixed scratch arrays.
-   Status: pending.
+   Status: done.
 
    Replace hot-path Python lists, small per-event allocations, and
    exception-driven invalid states with fixed buffers and explicit return codes.
@@ -155,8 +155,8 @@ tasks, in this order.
    ray trace, and batch `trace_buffer()` path. Root solvers write into
    caller-owned two-slot scratch buffers instead of allocating per-face root
    arrays. Coordinate conversion and ray-point evaluation now fill reusable
-   scratch arrays during event resolution. Remaining work is to hoist the last
-   per-event scratch arrays out of `find_exit()` and then time the batch path.
+   scratch arrays during event resolution, and `find_exit()` receives its
+   candidate-time, root, and coordinate buffers from the per-ray trace scratch.
 
 6. Keep RPA seam and pole handling local to owner resolution.
    Status: done.
@@ -202,9 +202,9 @@ tasks, in this order.
     Status: pending.
 
     The RPA batch path is now Numba-compatible, face root solving uses fixed
-    scratch buffers, and event coordinates are filled into reusable scratch
-    arrays. Next, hoist the remaining per-event scratch arrays and compare
-    against the same workloads used for XYZ.
+    scratch buffers, event coordinates are filled into reusable scratch arrays,
+    and `find_exit()` uses per-ray scratch. Next, compare against the same
+    workloads used for XYZ.
 
 ## Explicit non-goals for ray traversal
 Traversal should work directly on the adaptive octree geometry.
