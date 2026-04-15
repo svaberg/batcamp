@@ -154,8 +154,9 @@ tasks, in this order.
    Numba for the scalar root solvers, event selection, owner resolution, single
    ray trace, and batch `trace_buffer()` path. Root solvers write into
    caller-owned two-slot scratch buffers instead of allocating per-face root
-   arrays. Remaining work is to reduce crossing-coordinate allocations inside
-   those compiled kernels and then time the batch path.
+   arrays. Coordinate conversion and ray-point evaluation now fill reusable
+   scratch arrays during event resolution. Remaining work is to hoist the last
+   per-event scratch arrays out of `find_exit()` and then time the batch path.
 
 6. Keep RPA seam and pole handling local to owner resolution.
    Status: done.
@@ -200,9 +201,10 @@ tasks, in this order.
 11. Only optimize RPA after the structure is fixed.
     Status: pending.
 
-    The RPA batch path is now Numba-compatible, and face root solving uses fixed
-    scratch buffers. Next, reduce remaining compiled coordinate allocations in
-    the event solver and compare against the same workloads used for XYZ.
+    The RPA batch path is now Numba-compatible, face root solving uses fixed
+    scratch buffers, and event coordinates are filled into reusable scratch
+    arrays. Next, hoist the remaining per-event scratch arrays and compare
+    against the same workloads used for XYZ.
 
 ## Explicit non-goals for ray traversal
 Traversal should work directly on the adaptive octree geometry.

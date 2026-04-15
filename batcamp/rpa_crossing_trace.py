@@ -71,9 +71,21 @@ def _quadratic_roots(a: float, b: float, c: float, roots_out: np.ndarray) -> int
 
 
 @njit(cache=True)
-def _xyz_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: float) -> np.ndarray:
-    """Return the Cartesian point on one straight ray at one parameter time."""
-    return np.asarray(origin_xyz, dtype=np.float64) + float(time) * np.asarray(direction_xyz, dtype=np.float64)
+def _fill_xyz_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: float, out: np.ndarray) -> None:
+    """Fill one Cartesian point on one straight ray at one parameter time."""
+    t = float(time)
+    out[0] = float(origin_xyz[0]) + t * float(direction_xyz[0])
+    out[1] = float(origin_xyz[1]) + t * float(direction_xyz[1])
+    out[2] = float(origin_xyz[2]) + t * float(direction_xyz[2])
+
+
+@njit(cache=True)
+def _fill_rpa_from_xyz(xyz: np.ndarray, out: np.ndarray) -> None:
+    """Fill spherical coordinates for one Cartesian point."""
+    radius, polar, azimuth = xyz_to_rpa_components(float(xyz[0]), float(xyz[1]), float(xyz[2]))
+    out[0] = radius
+    out[1] = polar
+    out[2] = azimuth
 
 
 @njit(cache=True)
@@ -470,10 +482,8 @@ def find_cell(
     """Resolve one Cartesian query to its exact half-open RPA owner."""
     if not np.all(np.isfinite(query)):
         return -1
-    query_rpa = np.array(
-        xyz_to_rpa_components(float(query[0]), float(query[1]), float(query[2])),
-        dtype=np.float64,
-    )
+    query_rpa = np.empty(3, dtype=np.float64)
+    _fill_rpa_from_xyz(query, query_rpa)
     if not _contains_box(query_rpa, domain_bounds, domain_bounds):
         return -1
     current = -1
@@ -511,6 +521,7 @@ def find_exit(
     candidate_times = np.empty(6, dtype=np.float64)
     candidate_times[:] = np.nan
     roots = np.empty(2, dtype=np.float64)
+    candidate_xyz = np.empty(3, dtype=np.float64)
     n_candidate = 0
 
     for face_id in range(6):
@@ -518,7 +529,7 @@ def find_exit(
         candidate_time = _next_time_after(roots, n_root, float(t_current))
         if math.isinf(candidate_time):
             continue
-        candidate_xyz = _xyz_at_time(origin, direction, float(candidate_time))
+        _fill_xyz_at_time(origin, direction, float(candidate_time), candidate_xyz)
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(candidate_xyz, direction, axis)
@@ -779,11 +790,8 @@ def _fill_crossing_scratch(
     crossing_rpa: np.ndarray,
 ) -> None:
     """Fill scratch coordinates derived from one crossing time."""
-    crossing[:] = _xyz_at_time(origin, direction, float(t_event))
-    crossing_rpa[:] = np.array(
-        xyz_to_rpa_components(float(crossing[0]), float(crossing[1]), float(crossing[2])),
-        dtype=np.float64,
-    )
+    _fill_xyz_at_time(origin, direction, float(t_event), crossing)
+    _fill_rpa_from_xyz(crossing, crossing_rpa)
     bounds = cell_bounds[int(cell_id)]
     for face_pos in range(n_active_face):
         face_id = int(active_faces[face_pos])
@@ -1036,7 +1044,8 @@ def _trace_ray(
     if not (start_t < stop_t):
         return 0, 0
 
-    start = _xyz_at_time(origin, direction, float(start_t))
+    start = np.empty(3, dtype=np.float64)
+    _fill_xyz_at_time(origin, direction, float(start_t), start)
     crossing = np.empty(3, dtype=np.float64)
     crossing_rpa = np.empty(3, dtype=np.float64)
     active_faces = np.empty(3, dtype=np.int64)
@@ -1088,12 +1097,12 @@ def _trace_ray(
             n_time += 1
             break
         if axis_transfer:
-            crossing_xyz = _xyz_at_time(origin, direction, float(t_exit))
+            _fill_xyz_at_time(origin, direction, float(t_exit), crossing)
             next_cell = _axis_transfer_destination_cell(
                 cell_depth,
                 cell_child,
                 cell_bounds,
-                crossing_xyz,
+                crossing,
                 direction,
             )
             if next_cell == -2:
