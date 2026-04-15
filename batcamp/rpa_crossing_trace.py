@@ -345,7 +345,11 @@ def _axis_transfer_destination_cell(
     x_crossing = float(crossing_xyz[0])
     y_crossing = float(crossing_xyz[1])
     z_crossing = float(crossing_xyz[2])
-    r_crossing = float(np.linalg.norm(crossing_xyz))
+    r_crossing = math.sqrt(
+        x_crossing * x_crossing
+        + y_crossing * y_crossing
+        + z_crossing * z_crossing
+    )
     if not (_times_close(x_crossing, 0.0) and _times_close(y_crossing, 0.0)):
         return -1
     if _times_close(z_crossing, 0.0):
@@ -480,7 +484,11 @@ def find_cell(
     domain_bounds: np.ndarray,
 ) -> int:
     """Resolve one Cartesian query to its exact half-open RPA owner."""
-    if not np.all(np.isfinite(query)):
+    if not (
+        math.isfinite(float(query[0]))
+        and math.isfinite(float(query[1]))
+        and math.isfinite(float(query[2]))
+    ):
         return -1
     query_rpa = np.empty(3, dtype=np.float64)
     _fill_rpa_from_xyz(query, query_rpa)
@@ -521,7 +529,7 @@ def find_exit(
     candidate_xyz: np.ndarray,
 ) -> tuple[float, int, bool]:
     """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state."""
-    candidate_times[:] = np.nan
+    candidate_times[:] = math.inf
     n_candidate = 0
 
     for face_id in range(6):
@@ -549,8 +557,6 @@ def find_exit(
     t_exit = math.inf
     for face_id in range(6):
         candidate_time = float(candidate_times[face_id])
-        if np.isnan(candidate_time):
-            continue
         if candidate_time < t_exit:
             t_exit = candidate_time
     if has_axis_transfer:
@@ -559,7 +565,7 @@ def find_exit(
     n_active_face = 0
     for face_id in range(6):
         candidate_time = float(candidate_times[face_id])
-        if np.isnan(candidate_time):
+        if math.isinf(candidate_time):
             continue
         if _times_close(candidate_time, float(t_exit)):
             active_faces[n_active_face] = int(face_id)
