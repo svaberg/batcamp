@@ -16,12 +16,17 @@ from matplotlib.transforms import blended_transform_factory
 import numpy as np
 from batread.dataset import Dataset
 
+if __package__ in {None, ""}:
+    _EXAMPLES_DIR = Path(__file__).resolve().parent
+    _REPO_ROOT = _EXAMPLES_DIR.parent
+    sys.path.insert(0, str(_REPO_ROOT))
+    sys.path.insert(0, str(_EXAMPLES_DIR))
+
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp.constants import XYZ_VARS
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from benchmark_helpers import _build_octree
     from benchmark_helpers import _configure_builder_logging
     from benchmark_helpers import _configure_progress_logging
