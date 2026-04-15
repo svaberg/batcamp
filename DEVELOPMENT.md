@@ -223,7 +223,8 @@ tasks, in this order.
     environment should contain exactly one `batcamp` install: an editable install
     from this repository. Benchmark scripts and notebooks then import the same
     checkout without any example-side import-path plumbing. The grid-vs-ray
-    benchmark caches grid-sum images under its output directory, keyed by dataset
+    benchmark uses trilinear ray accumulation by default for both XYZ and RPA
+    trees and caches grid-sum images under its output directory, keyed by dataset
     file metadata, benchmark phase, variable, bounds, resolution, and `nx_sum`.
     The cache stores the measured grid runtime with the image, with separate
     cold-start and plotted-run entries, so repeated ray runs do not recompute
