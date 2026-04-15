@@ -37,8 +37,8 @@ def _times_close(left: float, right: float) -> bool:
 
 
 @njit(cache=True)
-def _quadratic_roots(a: float, b: float, c: float) -> np.ndarray:
-    """Return sorted real roots of one quadratic or linear polynomial."""
+def _quadratic_roots(a: float, b: float, c: float, roots_out: np.ndarray) -> int:
+    """Write sorted real roots of one quadratic or linear polynomial."""
     qa = float(a)
     qb = float(b)
     qc = float(c)
@@ -46,11 +46,12 @@ def _quadratic_roots(a: float, b: float, c: float) -> np.ndarray:
     tol = _TIME_ATOL + _TIME_RTOL * scale
     if abs(qa) <= tol:
         if abs(qb) <= tol:
-            return np.empty(0, dtype=np.float64)
-        return np.array([-qc / qb], dtype=np.float64)
+            return 0
+        roots_out[0] = -qc / qb
+        return 1
     disc = qb * qb - 4.0 * qa * qc
     if disc < -tol:
-        return np.empty(0, dtype=np.float64)
+        return 0
     if disc < 0.0:
         disc = 0.0
     sqrt_disc = math.sqrt(disc)
@@ -58,8 +59,15 @@ def _quadratic_roots(a: float, b: float, c: float) -> np.ndarray:
     root0 = (-qb - sqrt_disc) / denom
     root1 = (-qb + sqrt_disc) / denom
     if _times_close(root0, root1):
-        return np.array([0.5 * (root0 + root1)], dtype=np.float64)
-    return np.array(sorted((root0, root1)), dtype=np.float64)
+        roots_out[0] = 0.5 * (root0 + root1)
+        return 1
+    if root0 < root1:
+        roots_out[0] = root0
+        roots_out[1] = root1
+    else:
+        roots_out[0] = root1
+        roots_out[1] = root0
+    return 2
 
 
 @njit(cache=True)
@@ -69,26 +77,27 @@ def _xyz_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: float)
 
 
 @njit(cache=True)
-def _sphere_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, radius: float) -> np.ndarray:
-    """Return ray parameters where one line meets one sphere centered at the origin."""
+def _sphere_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, radius: float, roots_out: np.ndarray) -> int:
+    """Write ray parameters where one line meets one sphere centered at the origin."""
     radius_value = float(radius)
     a = float(np.dot(direction_xyz, direction_xyz))
     b = 2.0 * float(np.dot(origin_xyz, direction_xyz))
     c = float(np.dot(origin_xyz, origin_xyz)) - radius_value * radius_value
-    return _quadratic_roots(a, b, c)
+    return _quadratic_roots(a, b, c, roots_out)
 
 
 @njit(cache=True)
-def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float) -> np.ndarray:
-    """Return ray parameters where one line meets one constant-polar cone."""
+def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float, roots_out: np.ndarray) -> int:
+    """Write ray parameters where one line meets one constant-polar cone."""
     polar_value = float(polar)
     if polar_value <= 0.0 or polar_value >= _PI:
-        return np.empty(0, dtype=np.float64)
+        return 0
     if _times_close(polar_value, 0.5 * _PI):
         dz = float(direction_xyz[2])
         if abs(dz) <= (_TIME_ATOL + _TIME_RTOL):
-            return np.empty(0, dtype=np.float64)
-        return np.array([-float(origin_xyz[2]) / dz], dtype=np.float64)
+            return 0
+        roots_out[0] = -float(origin_xyz[2]) / dz
+        return 1
 
     cos_polar = math.cos(polar_value)
     sin_polar = math.sin(polar_value)
@@ -99,39 +108,46 @@ def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float
     zd = float(direction_xyz[2])
     cos_sq = cos_polar * cos_polar
     sin_sq = sin_polar * sin_polar
-    roots = _quadratic_roots(
+    n_root = _quadratic_roots(
         cos_sq * xyd - sin_sq * zd * zd,
         2.0 * (cos_sq * xy_cross - sin_sq * z0 * zd),
         cos_sq * xy0 - sin_sq * z0 * z0,
+        roots_out,
     )
-    if roots.size == 0:
-        return roots
+    if n_root == 0:
+        return 0
 
-    valid = np.empty(int(roots.shape[0]), dtype=np.float64)
     n_valid = 0
-    for root_pos in range(int(roots.shape[0])):
-        root = float(roots[root_pos])
-        point_xyz = _xyz_at_time(origin_xyz, direction_xyz, float(root))
-        radius = float(np.linalg.norm(point_xyz))
+    for root_pos in range(n_root):
+        root = float(roots_out[root_pos])
+        point_x = float(origin_xyz[0]) + root * float(direction_xyz[0])
+        point_y = float(origin_xyz[1]) + root * float(direction_xyz[1])
+        point_z = float(origin_xyz[2]) + root * float(direction_xyz[2])
+        radius = math.sqrt(point_x * point_x + point_y * point_y + point_z * point_z)
         if radius <= (_TIME_ATOL + _TIME_RTOL):
             continue
-        if float(point_xyz[2]) * cos_polar < -(_TIME_ATOL + _TIME_RTOL):
+        if point_z * cos_polar < -(_TIME_ATOL + _TIME_RTOL):
             continue
-        z_over_radius = float(point_xyz[2]) / radius
+        z_over_radius = point_z / radius
         if z_over_radius < -1.0:
             z_over_radius = -1.0
         elif z_over_radius > 1.0:
             z_over_radius = 1.0
         polar_here = math.acos(z_over_radius)
         if _times_close(polar_here, polar_value):
-            valid[n_valid] = float(root)
+            roots_out[n_valid] = root
             n_valid += 1
-    return valid[:n_valid]
+    return int(n_valid)
 
 
 @njit(cache=True)
-def _azimuth_plane_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, azimuth: float) -> np.ndarray:
-    """Return the ray parameter where one line meets one constant-azimuth plane."""
+def _azimuth_plane_roots(
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    azimuth: float,
+    roots_out: np.ndarray,
+) -> int:
+    """Write the ray parameter where one line meets one constant-azimuth plane."""
     azimuth_value = float(azimuth)
     normal_x = math.sin(azimuth_value)
     normal_y = -math.cos(azimuth_value)
@@ -139,8 +155,9 @@ def _azimuth_plane_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, azim
     denominator = normal_x * float(direction_xyz[0]) + normal_y * float(direction_xyz[1])
     tol = _TIME_ATOL + _TIME_RTOL * max(abs(numerator), abs(denominator), 1.0)
     if abs(denominator) <= tol:
-        return np.empty(0, dtype=np.float64)
-    return np.array([-numerator / denominator], dtype=np.float64)
+        return 0
+    roots_out[0] = -numerator / denominator
+    return 1
 
 
 @njit(cache=True)
@@ -149,14 +166,15 @@ def _rpa_coordinate_roots(
     direction_xyz: np.ndarray,
     axis: int,
     value: float,
-) -> np.ndarray:
-    """Return ray times where one RPA coordinate equals one value."""
+    roots_out: np.ndarray,
+) -> int:
+    """Write ray times where one RPA coordinate equals one value."""
     if int(axis) == 0:
-        return _sphere_roots(origin_xyz, direction_xyz, float(value))
+        return _sphere_roots(origin_xyz, direction_xyz, float(value), roots_out)
     if int(axis) == 1:
-        return _polar_roots(origin_xyz, direction_xyz, float(value))
+        return _polar_roots(origin_xyz, direction_xyz, float(value), roots_out)
     if int(axis) == 2:
-        return _azimuth_plane_roots(origin_xyz, direction_xyz, float(value))
+        return _azimuth_plane_roots(origin_xyz, direction_xyz, float(value), roots_out)
     raise ValueError("RPA axis id must be 0, 1, or 2.")
 
 
@@ -167,22 +185,23 @@ def _face_roots(
     face_id: int,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
-) -> np.ndarray:
-    """Return ray times where one RPA trajectory meets one cell face."""
+    roots_out: np.ndarray,
+) -> int:
+    """Write ray times where one RPA trajectory meets one cell face."""
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_AXIS[int(face_id)])
     side = int(_FACE_SIDE[int(face_id)])
     face_value = float(bounds[axis, START]) + float(side) * float(bounds[axis, WIDTH])
-    return _rpa_coordinate_roots(origin_xyz, direction_xyz, axis, face_value)
+    return _rpa_coordinate_roots(origin_xyz, direction_xyz, axis, face_value, roots_out)
 
 
 @njit(cache=True)
-def _next_time_after(roots: np.ndarray, time: float) -> float:
+def _next_time_after(roots: np.ndarray, n_root: int, time: float) -> float:
     """Return the nearest root strictly after one ray time, or infinity when absent."""
     best = math.inf
     time_value = float(time)
-    for root in np.asarray(roots, dtype=np.float64):
-        root_value = float(root)
+    for root_pos in range(n_root):
+        root_value = float(roots[root_pos])
         if root_value <= time_value or _times_close(root_value, time_value):
             continue
         if root_value < best:
@@ -429,11 +448,12 @@ def find_domain_interval(
 ) -> tuple[bool, float, float]:
     """Return whether one ray intersects the spherical domain plus the clipped parameter interval."""
     r_max = float(domain_bounds[0, START] + domain_bounds[0, WIDTH])
-    roots = _sphere_roots(origin, direction, r_max)
-    if roots.size < 2:
+    roots = np.empty(2, dtype=np.float64)
+    n_root = _sphere_roots(origin, direction, r_max, roots)
+    if n_root < 2:
         return False, 0.0, 0.0
     t_enter = float(roots[0])
-    t_exit = float(roots[-1])
+    t_exit = float(roots[n_root - 1])
     if not t_enter < t_exit:
         return False, 0.0, 0.0
     return True, t_enter, t_exit
@@ -490,11 +510,12 @@ def find_exit(
     """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state."""
     candidate_times = np.empty(6, dtype=np.float64)
     candidate_times[:] = np.nan
+    roots = np.empty(2, dtype=np.float64)
     n_candidate = 0
 
     for face_id in range(6):
-        roots = _face_roots(cell_bounds, int(cell_id), int(face_id), origin, direction)
-        candidate_time = _next_time_after(roots, float(t_current))
+        n_root = _face_roots(cell_bounds, int(cell_id), int(face_id), origin, direction, roots)
+        candidate_time = _next_time_after(roots, n_root, float(t_current))
         if math.isinf(candidate_time):
             continue
         candidate_xyz = _xyz_at_time(origin, direction, float(candidate_time))
@@ -851,11 +872,12 @@ def _start_active_faces(
 ) -> int:
     """Return faces whose crossing time is snapped to the start time."""
     n_active_face = 0
+    roots = np.empty(2, dtype=np.float64)
     for face_id in range(6):
-        roots = _face_roots(cell_bounds, int(cell_id), int(face_id), origin_xyz, direction_xyz)
+        n_root = _face_roots(cell_bounds, int(cell_id), int(face_id), origin_xyz, direction_xyz, roots)
         face_at_start = False
-        for root in np.asarray(roots, dtype=np.float64):
-            if _times_close(float(root), float(t_event)):
+        for root_pos in range(n_root):
+            if _times_close(float(roots[root_pos]), float(t_event)):
                 face_at_start = True
                 break
         if not face_at_start:
