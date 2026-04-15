@@ -284,8 +284,18 @@ def trilinear_image(
         raise TypeError("trilinear_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
-    if str(tree.tree_coord) != "xyz":
-        raise NotImplementedError("trilinear_image currently supports only tree_coord='xyz'.")
+    tree_coord = str(tree.tree_coord)
+    if tree_coord == "xyz":
+        tracer = cartesian_crossing_trace
+        accumulator = interpolator_module.accumulate_exact_cells_xyz
+    elif tree_coord == "rpa":
+        tracer = spherical_crossing_trace
+        accumulator = interpolator_module.accumulate_trilinear_cells_rpa
+    else:
+        raise NotImplementedError(
+            "trilinear_image supports only "
+            f"tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
+        )
 
     o_flat = np.asarray(origins, dtype=np.float64)
     d_flat = np.asarray(directions, dtype=np.float64)
@@ -298,7 +308,7 @@ def trilinear_image(
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         cell_counts, _time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
-            cartesian_crossing_trace,
+            tracer,
             tree,
             chunk_origins,
             chunk_directions,
@@ -306,7 +316,7 @@ def trilinear_image(
             t_max=t_max,
         )
         cell_counts_out[chunk_lo:chunk_hi] = cell_counts
-        accum[chunk_lo:chunk_hi] = interpolator_module.accumulate_exact_cells_xyz(
+        accum[chunk_lo:chunk_hi] = accumulator(
             chunk_origins,
             chunk_directions,
             cell_counts,

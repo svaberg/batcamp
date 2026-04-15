@@ -1063,12 +1063,41 @@ def test_trace_sc_benchmark_corner_artifact_ray_matches_lookup_oracle() -> None:
     _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))
 
 
-def test_rpa_trilinear_image_is_not_yet_supported() -> None:
+def test_rpa_trilinear_image_matches_midpoint_for_constant_field() -> None:
     tree = _build_uniform_rpa_tree()
     tracer = OctreeRayTracer(tree)
     interpolator = OctreeInterpolator(tree, np.ones(int(np.max(tree.corners)) + 1, dtype=float))
-    origin = np.array((1.5, 0.0, 0.0), dtype=float)
-    direction = np.array((1.0, 0.0, 0.0), dtype=float)
+    origins = np.array([[[2.0, 0.5, 0.25]]], dtype=float)
+    directions = np.array([[[-1.0, 0.0, 0.0]]], dtype=float)
 
-    with pytest.raises(NotImplementedError, match="tree_coord='xyz'"):
-        tracer.trilinear_image(interpolator, origin, direction)
+    image_trilinear, counts_trilinear = tracer.trilinear_image(interpolator, origins, directions)
+    image_midpoint, counts_midpoint = tracer.midpoint_image(interpolator, origins, directions)
+
+    np.testing.assert_array_equal(counts_trilinear, counts_midpoint)
+    np.testing.assert_allclose(image_trilinear, image_midpoint, atol=1.0e-10, rtol=0.0)
+
+
+def test_rpa_trilinear_image_integrates_radial_field_on_radial_ray() -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    point_radii = np.linalg.norm(np.asarray(tree._points, dtype=float), axis=1)
+    interpolator = OctreeInterpolator(tree, point_radii)
+    radius_start = 1.25
+    segment_span = 1.5
+    polar = 0.95
+    azimuth = 0.55
+    origins = _rpa_to_xyz((radius_start, polar, azimuth)).reshape(1, 1, 3)
+    directions = _rpa_to_xyz((1.0, polar, azimuth)).reshape(1, 1, 3)
+
+    image, counts = tracer.trilinear_image(
+        interpolator,
+        origins,
+        directions,
+        t_min=0.0,
+        t_max=segment_span,
+    )
+
+    expected = radius_start * segment_span + 0.5 * segment_span * segment_span
+
+    np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
+    np.testing.assert_allclose(image, np.array([[expected]], dtype=float), atol=1.0e-10, rtol=0.0)

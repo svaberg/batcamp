@@ -195,11 +195,15 @@ tasks, in this order.
    intervals. Coordinate-specific interpolation details belong below that
    boundary.
 
-9. Do not add trilinear RPA image accumulation until RPA traversal is structurally stable.
+9. Add trilinear RPA image accumulation only after RPA traversal is structurally stable.
    Status: done.
 
-   First make RPA produce the same kind of reliable time intervals as XYZ; only
-   then design trilinear integration for spherical-coordinate cells.
+   RPA now produces the same kind of reliable time intervals as XYZ. Its
+   trilinear image path keeps those traced times and integrates the
+   spherical-coordinate cell interpolant by treating each traced RPA slab
+   segment as straight in local `(r, polar, azimuth)` coordinates. This is an
+   RPA-local slab approximation, not an exact Cartesian-ray solution inside the
+   curved cell.
 
 10. Add or preserve tests around the shared invariants.
     Status: done.
