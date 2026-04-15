@@ -12,21 +12,12 @@ from batread.dataset import Dataset
 
 from batcamp import OctreeRayTracer
 from batcamp.constants import XYZ_VARS
-
-if __package__ in {None, ""}:
-    from benchmark_helpers import _build_octree
-    from benchmark_helpers import _configure_builder_logging
-    from benchmark_helpers import _configure_progress_logging
-    from benchmark_helpers import _ProgressReporter
-    from benchmark_helpers import _time_call
-    from benchmark_helpers import resolve_data_file
-else:
-    from .benchmark_helpers import _build_octree
-    from .benchmark_helpers import _configure_builder_logging
-    from .benchmark_helpers import _configure_progress_logging
-    from .benchmark_helpers import _ProgressReporter
-    from .benchmark_helpers import _time_call
-    from .benchmark_helpers import resolve_data_file
+from benchmark_helpers import _build_octree
+from benchmark_helpers import _configure_builder_logging
+from benchmark_helpers import _configure_progress_logging
+from benchmark_helpers import _ProgressReporter
+from benchmark_helpers import _time_call
+from benchmark_helpers import resolve_data_file
 
 
 def _plane_axis_points(lo: float, hi: float, n: int) -> np.ndarray:
