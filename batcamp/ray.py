@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
+from numba import njit
+from numba import prange
 
 from . import cartesian_crossing_trace
 from . import rpa_crossing_trace
@@ -37,6 +39,30 @@ def normalize_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndar
     return o.reshape(-1, 3), d_flat, shape
 
 
+@njit(cache=True, parallel=True)
+def _pack_crossing_buffer(
+    cell_counts: np.ndarray,
+    time_counts: np.ndarray,
+    cell_ids_scratch: np.ndarray,
+    times_scratch: np.ndarray,
+    cell_offsets: np.ndarray,
+    time_offsets: np.ndarray,
+    cell_ids_out: np.ndarray,
+    times_out: np.ndarray,
+) -> None:
+    """Pack scratch-traced crossing rows into flat output arrays."""
+    n_rays = int(cell_counts.shape[0])
+    for ray_id in prange(n_rays):
+        cell_count = int(cell_counts[ray_id])
+        cell_lo = int(cell_offsets[ray_id])
+        for cell_pos in range(cell_count):
+            cell_ids_out[cell_lo + cell_pos] = int(cell_ids_scratch[ray_id, cell_pos])
+        time_count = int(time_counts[ray_id])
+        time_lo = int(time_offsets[ray_id])
+        for time_pos in range(time_count):
+            times_out[time_lo + time_pos] = float(times_scratch[ray_id, time_pos])
+
+
 def trace_segments(
     tree: Octree,
     origins: np.ndarray,
@@ -51,6 +77,11 @@ def trace_segments(
     d_flat = np.asarray(directions, dtype=np.float64)
     n_rays = int(o_flat.shape[0])
     tree_coord = str(tree.tree_coord)
+    if tree_coord not in {"xyz", "rpa"}:
+        raise NotImplementedError(
+            "trace_segments supports only "
+            f"tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
+        )
     ray_offsets = np.empty(n_rays + 1, dtype=np.int64)
     time_offsets = np.empty(n_rays + 1, dtype=np.int64)
     ray_offsets[0] = 0
@@ -81,33 +112,16 @@ def trace_segments(
         chunk_time_total = int(chunk_time_offsets[-1])
         chunk_cells = np.empty(chunk_cell_total, dtype=np.int64)
         chunk_times = np.empty(chunk_time_total, dtype=np.float64)
-        if tree_coord == "xyz":
-            cartesian_crossing_trace.pack_buffer(
-                cell_counts,
-                time_counts,
-                cell_buffer,
-                time_buffer,
-                chunk_cell_offsets,
-                chunk_time_offsets,
-                chunk_cells,
-                chunk_times,
-            )
-        elif tree_coord == "rpa":
-            rpa_crossing_trace.pack_buffer(
-                cell_counts,
-                time_counts,
-                cell_buffer,
-                time_buffer,
-                chunk_cell_offsets,
-                chunk_time_offsets,
-                chunk_cells,
-                chunk_times,
-            )
-        else:
-            raise NotImplementedError(
-                "trace_segments supports only "
-                f"tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
-            )
+        _pack_crossing_buffer(
+            cell_counts,
+            time_counts,
+            cell_buffer,
+            time_buffer,
+            chunk_cell_offsets,
+            chunk_time_offsets,
+            chunk_cells,
+            chunk_times,
+        )
         cell_chunks.append(chunk_cells)
         time_chunks.append(chunk_times)
         n_cell += chunk_cell_total
