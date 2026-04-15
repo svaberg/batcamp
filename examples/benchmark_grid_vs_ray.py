@@ -29,7 +29,8 @@ from benchmark_helpers import DatasetCase
 from benchmark_helpers import resolve_data_file
 
 
-_GRID_CACHE_VERSION = 2
+_GRID_CACHE_VERSION = 3
+_GRID_SUM_PIXEL_CHUNK_SIZE = 4096
 
 
 def _grid_sum_image(
@@ -44,20 +45,28 @@ def _grid_sum_image(
     x = np.linspace(xmin, xmax, int(nx_sum), dtype=float)
     y = _plane_axis_points(ymin, ymax, int(n_plane))
     z = _plane_axis_points(zmin, zmax, int(n_plane))
-
-    xg, yg, zg = np.meshgrid(x, y, z, indexing="ij")
-    query = np.column_stack((xg.ravel(), yg.ravel(), zg.ravel()))
-    vals = np.asarray(
-        interp(query, query_coord="xyz", log_outside_domain=False),
-        dtype=float,
-    ).reshape(x.size, y.size, z.size)
-
-    finite = np.isfinite(vals)
-    summed = np.trapezoid(np.where(finite, vals, 0.0), x=x, axis=0)
-    any_finite = np.any(finite, axis=0)
-    out = np.full_like(summed, np.nan, dtype=float)
-    out[any_finite] = summed[any_finite]
-    return out.T
+    yg, zg = np.meshgrid(y, z, indexing="xy")
+    y_flat = yg.reshape(-1)
+    z_flat = zg.reshape(-1)
+    out = np.full(y_flat.shape, np.nan, dtype=float)
+    chunk_size = int(_GRID_SUM_PIXEL_CHUNK_SIZE)
+    for pixel_lo in range(0, y_flat.size, chunk_size):
+        pixel_hi = min(pixel_lo + chunk_size, y_flat.size)
+        n_pixel = int(pixel_hi - pixel_lo)
+        query = np.empty((x.size * n_pixel, 3), dtype=float)
+        query[:, 0] = np.repeat(x, n_pixel)
+        query[:, 1] = np.tile(y_flat[pixel_lo:pixel_hi], x.size)
+        query[:, 2] = np.tile(z_flat[pixel_lo:pixel_hi], x.size)
+        vals = np.asarray(
+            interp(query, query_coord="xyz", log_outside_domain=False),
+            dtype=float,
+        ).reshape(x.size, n_pixel)
+        finite = np.isfinite(vals)
+        summed = np.trapezoid(np.where(finite, vals, 0.0), x=x, axis=0)
+        active = np.any(finite, axis=0)
+        out_chunk = out[pixel_lo:pixel_hi]
+        out_chunk[active] = summed[active]
+    return out.reshape(z.size, y.size)
 
 
 def _grid_cache_file(
