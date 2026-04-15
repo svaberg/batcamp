@@ -196,7 +196,7 @@ def _trace_chunk_to_scratch(
         return cell_counts, time_counts, cell_buffer, time_buffer
 
 
-def reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_shape: tuple[int, ...]) -> np.ndarray:
+def _reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_shape: tuple[int, ...]) -> np.ndarray:
     """Reshape one flat image onto the requested ray/value shape."""
     out = image_flat.reshape(tuple(ray_shape) + tuple(value_shape))
     if value_shape:
@@ -266,7 +266,7 @@ def accumulate_midpoints(
             tree.corners,
             interpolator.point_values_2d,
         )
-    return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
+    return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
 
 def accumulate_exact(
@@ -316,7 +316,7 @@ def accumulate_exact(
             tree.corners,
             interpolator.point_values_2d,
         )
-    return reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
+    return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
 
 @dataclass(frozen=True)
