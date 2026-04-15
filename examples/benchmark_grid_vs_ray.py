@@ -329,6 +329,19 @@ def _sample_mask_indices(mask: np.ndarray, max_points: int) -> tuple[np.ndarray,
     return np.unravel_index(flat, mask.shape)
 
 
+def _radius_color_norm(radius_values: np.ndarray):
+    """Return a log radius color norm when possible."""
+    r_vals = np.asarray(radius_values, dtype=float).reshape(-1)
+    positive = r_vals[np.isfinite(r_vals) & (r_vals > 0.0)]
+    if positive.size == 0:
+        return Normalize(vmin=0.0, vmax=1.0)
+    r_lo = float(np.min(positive))
+    r_hi = float(np.max(positive))
+    if r_hi <= r_lo:
+        return Normalize(vmin=r_lo, vmax=max(r_lo + 1.0, 1.0))
+    return LogNorm(vmin=r_lo, vmax=r_hi)
+
+
 def _equality_deviation(
     img0: np.ndarray,
     img1: np.ndarray,
@@ -598,13 +611,7 @@ def _save_four_panel_figure(
         boundary_frac_zero = 0.015
         boundary_frac_nan = 0.045
         r_mask = both_pos | plot0_only | plot1_only | plot0_nan | plot1_nan
-        r_vals = pixel_r[r_mask].reshape(-1) if np.any(r_mask) else np.array([0.0], dtype=float)
-        r_lo = float(np.min(r_vals))
-        r_hi = float(np.max(r_vals))
-        if not np.isfinite(r_lo) or not np.isfinite(r_hi) or r_hi <= r_lo:
-            r_lo = 0.0
-            r_hi = max(r_lo + 1.0, r_hi)
-        r_norm = Normalize(vmin=r_lo, vmax=r_hi)
+        r_norm = _radius_color_norm(pixel_r[r_mask] if np.any(r_mask) else np.array([], dtype=float))
         iz, iy = _sample_mask_indices(both_pos, _SCATTER_MAX_POINTS)
         if iz.size > 0:
             axes[1, 0].scatter(

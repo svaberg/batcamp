@@ -115,6 +115,25 @@ def test_grid_vs_ray_sample_mask_indices_bounds_scatter_points() -> None:
     np.testing.assert_array_equal(iy, np.array([0, 3, 2, 1, 0, 4], dtype=np.int64))
 
 
+def test_grid_vs_ray_radius_color_norm_uses_log_when_possible() -> None:
+    module = _load_benchmark_grid_vs_ray_module()
+
+    norm = module._radius_color_norm(np.array([1.0, 10.0, 100.0], dtype=float))
+
+    assert isinstance(norm, module.LogNorm)
+    assert norm.vmin == 1.0
+    assert norm.vmax == 100.0
+
+
+def test_grid_vs_ray_radius_color_norm_falls_back_for_degenerate_radius() -> None:
+    module = _load_benchmark_grid_vs_ray_module()
+
+    norm = module._radius_color_norm(np.array([0.0, 0.0], dtype=float))
+
+    assert isinstance(norm, module.Normalize)
+    assert not isinstance(norm, module.LogNorm)
+
+
 def test_grid_vs_ray_discrepancy_rows_bounds_category_rows() -> None:
     module = _load_benchmark_grid_vs_ray_module()
     img0 = np.ones((4, 4), dtype=float)
