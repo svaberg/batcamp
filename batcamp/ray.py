@@ -11,6 +11,7 @@ from numba import njit
 from numba import prange
 
 from . import cartesian_crossing_trace
+from . import interpolator as interpolator_module
 from . import spherical_crossing_trace
 from .octree import Octree
 
@@ -214,10 +215,7 @@ def accumulate_midpoints(
     ray_shape: tuple[int, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
     """Trace rays and accumulate midpoint samples without packing segments."""
-    from .interpolator import OctreeInterpolator
-    from . import interpolator as interpolator_module
-
-    if not isinstance(interpolator, OctreeInterpolator):
+    if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
         raise TypeError("accumulate_midpoint_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
@@ -282,10 +280,7 @@ def accumulate_exact(
     ray_shape: tuple[int, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
     """Trace rays and accumulate exact trilinear cell integrals without packing segments."""
-    from .interpolator import OctreeInterpolator
-    from . import interpolator as interpolator_module
-
-    if not isinstance(interpolator, OctreeInterpolator):
+    if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
         raise TypeError("accumulate_exact_image requires one OctreeInterpolator.")
     if interpolator.tree is not tree:
         raise ValueError("interpolator.tree must match the tracer octree.")
@@ -489,9 +484,7 @@ def render_midpoint_image(
     segments: RaySegments,
 ) -> np.ndarray:
     """Render one midpoint-sampled line integral from packed crossing segments."""
-    from .interpolator import OctreeInterpolator
-
-    if not isinstance(interpolator, OctreeInterpolator):
+    if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
     o_flat, d_flat, ray_shape = normalize_rays(origins, directions)
     if tuple(ray_shape) != tuple(segments.ray_shape):
