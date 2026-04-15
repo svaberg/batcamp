@@ -204,9 +204,11 @@ tasks, in this order.
     The RPA batch path is now Numba-compatible, face root solving uses fixed
     scratch buffers, event coordinates are filled into reusable scratch arrays,
     and `find_exit()` uses per-ray scratch. The public ray-step benchmark now
-    supports both XYZ and RPA trees. Benchmark and notebook checks are run from
-    the repository root in the `environment.yml` environment rather than carrying
-    import-path plumbing in examples. A local `32x32` RPA run on
+    supports both XYZ and RPA trees. Benchmark checks are run from the repository
+    root in the `environment.yml` environment, using module commands such as
+    `python -m examples.benchmark_grid_vs_ray`. Notebook execution tests supply
+    the repo root to the kernel environment so notebooks stay free of import-path
+    plumbing. A local `32x32` RPA run on
     `3d__var_2_n00060005.plt` measured warmed trace times of `1.465085s` and
     `1.571065s` after scalar cleanup, versus `1.829208s` before that cleanup.
     The same harness on the XYZ sample measured `0.009061s`, so RPA still needs

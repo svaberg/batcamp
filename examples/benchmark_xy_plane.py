@@ -21,14 +21,25 @@ from scipy.interpolate import NearestNDInterpolator
 
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
-from benchmark_helpers import _configure_progress_logging
-from benchmark_helpers import _configure_builder_logging
-from benchmark_helpers import _build_octree
-from benchmark_helpers import _ProgressReporter
-from benchmark_helpers import _resolution_ramp
-from benchmark_helpers import _time_call
-from benchmark_helpers import DatasetCase
-from benchmark_helpers import resolve_data_file
+
+if __package__ in {None, ""}:
+    from benchmark_helpers import _configure_progress_logging
+    from benchmark_helpers import _configure_builder_logging
+    from benchmark_helpers import _build_octree
+    from benchmark_helpers import _ProgressReporter
+    from benchmark_helpers import _resolution_ramp
+    from benchmark_helpers import _time_call
+    from benchmark_helpers import DatasetCase
+    from benchmark_helpers import resolve_data_file
+else:
+    from .benchmark_helpers import _configure_progress_logging
+    from .benchmark_helpers import _configure_builder_logging
+    from .benchmark_helpers import _build_octree
+    from .benchmark_helpers import _ProgressReporter
+    from .benchmark_helpers import _resolution_ramp
+    from .benchmark_helpers import _time_call
+    from .benchmark_helpers import DatasetCase
+    from .benchmark_helpers import resolve_data_file
 
 
 def _xy_plane_image(
