@@ -77,7 +77,11 @@ def trace_segments(
     d_flat = np.asarray(directions, dtype=np.float64)
     n_rays = int(o_flat.shape[0])
     tree_coord = str(tree.tree_coord)
-    if tree_coord not in {"xyz", "rpa"}:
+    if tree_coord == "xyz":
+        tracer = cartesian_crossing_trace
+    elif tree_coord == "rpa":
+        tracer = spherical_crossing_trace
+    else:
         raise NotImplementedError(
             "trace_segments supports only "
             f"tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
@@ -96,6 +100,7 @@ def trace_segments(
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         chunk_n_rays = int(chunk_hi - chunk_lo)
         cell_counts, time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
+            tracer,
             tree,
             chunk_origins,
             chunk_directions,
@@ -146,6 +151,7 @@ def trace_segments(
 
 
 def _trace_chunk_to_scratch(
+    tracer,
     tree: Octree,
     origins: np.ndarray,
     directions: np.ndarray,
@@ -159,15 +165,6 @@ def _trace_chunk_to_scratch(
     `-1` for invalid crossings.
     """
     chunk_n_rays = int(origins.shape[0])
-    tree_coord = str(tree.tree_coord)
-    if tree_coord == "xyz":
-        tracer = cartesian_crossing_trace
-    elif tree_coord == "rpa":
-        tracer = spherical_crossing_trace
-    else:
-        raise NotImplementedError(
-            f"trace supports only tree_coord='xyz' or 'rpa', got {tree.tree_coord!r}."
-        )
     crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
     while True:
         cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
@@ -253,6 +250,7 @@ def accumulate_midpoints(
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         cell_counts, _time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
+            cartesian_crossing_trace,
             tree,
             chunk_origins,
             chunk_directions,
@@ -305,6 +303,7 @@ def accumulate_exact(
         chunk_origins = o_flat[chunk_lo:chunk_hi]
         chunk_directions = d_flat[chunk_lo:chunk_hi]
         cell_counts, _time_counts, cell_buffer, time_buffer = _trace_chunk_to_scratch(
+            cartesian_crossing_trace,
             tree,
             chunk_origins,
             chunk_directions,
