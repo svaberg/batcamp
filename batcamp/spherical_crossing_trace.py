@@ -600,14 +600,14 @@ def is_on_face(
     cell_bounds: np.ndarray,
     cell_id: int,
     face_id: int,
-    crossing_rpa: np.ndarray,
+    crossing: np.ndarray,
 ) -> bool:
     """Return whether one snapped spherical event lies on one cell face."""
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_AXIS[int(face_id)])
     width = float(bounds[axis, WIDTH])
-    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, START]), width, float(crossing_rpa[axis]))
-    value_u = _axis_value_unwrapped(axis, float(crossing_rpa[axis]), float(crossing_rpa[axis]))
+    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, START]), width, float(crossing[axis]))
+    value_u = _axis_value_unwrapped(axis, float(crossing[axis]), float(crossing[axis]))
     face_value = start_u if int(_FACE_SIDE[int(face_id)]) == 0 else stop_u
     scale = max(abs(face_value), abs(value_u), 1.0)
     if abs(value_u - face_value) > (_TIME_ATOL + _TIME_RTOL * scale):
@@ -620,12 +620,12 @@ def is_on_face(
             tangential_axis,
             tangential_start,
             tangential_width,
-            float(crossing_rpa[tangential_axis]),
+            float(crossing[tangential_axis]),
         )
         tangential_value_u = _axis_value_unwrapped(
             tangential_axis,
-            float(crossing_rpa[tangential_axis]),
-            float(crossing_rpa[tangential_axis]),
+            float(crossing[tangential_axis]),
+            float(crossing[tangential_axis]),
         )
         scale = max(abs(tangential_start_u), abs(tangential_stop_u), abs(tangential_value_u), 1.0)
         tol = _TIME_ATOL + _TIME_RTOL * scale
@@ -645,8 +645,8 @@ def find_subface(
     active_face_order: np.ndarray,
     current_face_order: int,
     crossing: np.ndarray,
-    crossing_rpa: np.ndarray,
     direction: np.ndarray,
+    crossing_rpa: np.ndarray,
 ) -> int:
     """Return the destination-side owning face patch for one spherical face crossing."""
     row = cell_neighbor[int(cell_id), int(face_id)]
@@ -817,14 +817,14 @@ def walk_faces(
     start_cell_id: int,
     active_faces: np.ndarray,
     n_active_face: int,
-    origin: np.ndarray,
-    direction: np.ndarray,
-    t_event: float,
     crossing: np.ndarray,
-    crossing_rpa: np.ndarray,
+    direction: np.ndarray,
     path: np.ndarray,
     active_face_by_axis: np.ndarray,
     active_face_order: np.ndarray,
+    origin: np.ndarray,
+    t_event: float,
+    crossing_rpa: np.ndarray,
 ) -> int:
     """Walk one time-defined spherical crossing through the face/subface neighbor graph."""
     _write_crossing(
@@ -863,8 +863,8 @@ def walk_faces(
             active_face_order,
             current_face_order,
             crossing,
-            crossing_rpa,
             direction,
+            crossing_rpa,
         )
         if subface_id < 0:
             return -1
@@ -952,14 +952,14 @@ def _start_cell_owner(
         current_cell,
         active_faces,
         n_active_face,
-        origin_xyz,
-        direction_xyz,
-        float(t_event),
         crossing,
-        crossing_rpa,
+        direction_xyz,
         path,
         active_face_by_axis,
         active_face_order,
+        origin_xyz,
+        float(t_event),
+        crossing_rpa,
     )
     if path_count <= 0:
         return -1
@@ -1146,14 +1146,14 @@ def _trace_ray(
             current_cell,
             active_faces,
             n_active_face,
-            origin,
-            direction,
-            float(t_exit),
             crossing,
-            crossing_rpa,
+            direction,
             path,
             active_face_by_axis,
             active_face_order,
+            origin,
+            float(t_exit),
+            crossing_rpa,
         )
         if path_count < 0:
             return -2, -2

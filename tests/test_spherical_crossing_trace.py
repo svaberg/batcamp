@@ -183,8 +183,8 @@ def _event_subface_id_rpa(
     active_face_order: np.ndarray,
     current_face_order: int,
     scratch_xyz: np.ndarray,
-    scratch_rpa: np.ndarray,
     direction_xyz: np.ndarray,
+    scratch_rpa: np.ndarray,
 ) -> int:
     """Test wrapper around the production subface selector."""
     return int(
@@ -198,8 +198,8 @@ def _event_subface_id_rpa(
             active_face_order,
             current_face_order,
             scratch_xyz,
-            scratch_rpa,
             direction_xyz,
+            scratch_rpa,
         )
     )
 
@@ -275,14 +275,14 @@ def walk_faces_rpa(
         start_cell_id,
         active_faces_array,
         int(active_faces_array.size),
-        origin_xyz,
-        direction_xyz,
-        t_event,
         crossing,
-        crossing_rpa,
+        direction_xyz,
         path,
         active_face_by_axis,
         active_face_order,
+        origin_xyz,
+        t_event,
+        crossing_rpa,
     )
     if path_count < 0:
         raise ValueError("Spherical event face patch is ambiguous under destination-side ownership.")
@@ -866,8 +866,8 @@ def test_event_subface_id_rpa_uses_destination_side_rpa_intervals() -> None:
         active_face_order,
         int(active_face_order[1]),
         np.asarray(scratch_xyz, dtype=float),
-        scratch_rpa,
         direction_xyz,
+        scratch_rpa,
     )
 
     assert subface_id == 2

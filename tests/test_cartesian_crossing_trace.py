@@ -827,9 +827,9 @@ def _assert_trace(
     direction = np.array(direction_xyz, dtype=float)
     cell_ids, times = trace_ray(
         tree,
-        start_cell_id,
         origin,
         direction,
+        start_cell_id,
         t_min=float(t_min),
         t_max=float(t_max),
     )
@@ -963,9 +963,9 @@ def _assert_full_trace_matches_lookup_oracle(
     direction = np.asarray(direction_xyz, dtype=float)
     cell_ids, times = trace_ray(
         tree,
-        int(start_cell_id),
         origin,
         direction,
+        int(start_cell_id),
         t_min=float(t_min),
         t_max=float(t_max),
     )
@@ -1078,7 +1078,7 @@ def _assert_first_event_matches_lookup(
     t_exit, active_faces = _exit_result(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     event_xyz = origin + t_exit * direction
     path = _walk_faces_result(tree, start_cell_id, active_faces, event_xyz, direction)
-    full_cell_ids, full_times = trace_ray(tree, start_cell_id, origin, direction)
+    full_cell_ids, full_times = trace_ray(tree, origin, direction, start_cell_id)
     expected_faces = _active_faces_from_signs(sign_triplet)
     expected_owner = _lookup_after_first_event(tree, origin, direction)
 
@@ -1123,7 +1123,7 @@ def _assert_multiface_event_is_order_invariant(
     origin, direction = _center_origin_and_direction(tree, start_cell_id, sign_triplet)
     t_exit, active_faces = _exit_result(tree.cell_bounds, start_cell_id, origin, direction, 0.0)
     event_xyz = origin + t_exit * direction
-    full_cell_ids, full_times = trace_ray(tree, start_cell_id, origin, direction)
+    full_cell_ids, full_times = trace_ray(tree, origin, direction, start_cell_id)
     finals = {
         int(_walk_faces_result(tree, start_cell_id, permutation, event_xyz, direction)[-1])
         for permutation in itertools.permutations(active_faces)
@@ -1493,9 +1493,9 @@ def test_refined_toy_returns_empty_on_cartesian_miss(tree_builder) -> None:
     tree = tree_builder()
     cell_ids, times = trace_ray(
         tree,
-        0,
         np.array((-0.25, 1.25, 0.125), dtype=float),
         np.array((0.25, 0.0, 0.0), dtype=float),
+        0,
     )
     assert cell_ids.size == 0
     assert times.size == 0
@@ -1507,9 +1507,9 @@ def test_refined_toy_returns_empty_when_clipping_removes_the_interval(tree_build
     tree = tree_builder()
     cell_ids, times = trace_ray(
         tree,
-        0,
         np.array((0.25, 0.125, 0.125), dtype=float),
         np.array((0.25, 0.0, 0.0), dtype=float),
+        0,
         t_min=3.0,
         t_max=4.0,
     )

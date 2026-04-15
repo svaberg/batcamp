@@ -178,6 +178,11 @@ tasks, in this order.
    RPA owner resolution should use RPA face ids, the octree neighbor table, and
    destination-side RPA interval containment.
 
+   The Cartesian and spherical crossing modules keep matching traversal role
+   names and shared argument order where the coordinate geometry has the same
+   role; coordinate-specific scratch and ownership inputs stay local to their
+   branch.
+
 8. Keep accumulation branch-independent above traced segments.
    Status: done.
 

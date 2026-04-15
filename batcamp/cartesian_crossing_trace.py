@@ -22,9 +22,9 @@ _DEFAULT_CROSSING_BUFFER_SIZE = 256
 
 def trace_ray(
     tree: Octree,
-    start_cell_id: int,
     origin: np.ndarray,
     direction: np.ndarray,
+    start_cell_id: int,
     *,
     t_min: float = 0.0,
     t_max: float = np.inf,
@@ -33,9 +33,9 @@ def trace_ray(
 
     Args:
         tree (const): Built Cartesian octree.
-        start_cell_id (const): Fallback start cell if the clipped entry lookup lands outside.
         origin (const): Ray origin with shape `(3,)`.
         direction (const): Nonzero ray direction with shape `(3,)`.
+        start_cell_id (const): Fallback start cell if the clipped entry lookup lands outside.
         t_min (const): Lower parameter clip.
         t_max (const): Upper parameter clip.
 
