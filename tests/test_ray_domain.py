@@ -555,6 +555,42 @@ def test_render_midpoint_image_uses_segment_cell_ids(monkeypatch) -> None:
     np.testing.assert_allclose(image, np.array([[2.0]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
+def test_render_midpoint_image_preserves_vector_components() -> None:
+    tree = _build_xyz_tree()
+    tracer = OctreeRayTracer(tree)
+    n_points = int(np.max(tree.corners)) + 1
+    interp = OctreeInterpolator(
+        tree,
+        np.column_stack((np.ones(n_points, dtype=float), np.full(n_points, 3.0, dtype=float))),
+    )
+    origins = np.array([[[-2.0, -0.3, -0.2]]], dtype=float)
+    directions = np.array([[[1.0, 0.0, 0.0]]], dtype=float)
+    segments = tracer.trace(origins, directions)
+
+    image = render_midpoint_image(interp, origins, directions, segments)
+
+    assert image.shape == (1, 1, 2)
+    np.testing.assert_allclose(image, np.array([[[2.0, 6.0]]], dtype=float), atol=1.0e-12, rtol=0.0)
+
+
+def test_midpoint_image_preserves_vector_components() -> None:
+    tree = _build_xyz_tree()
+    tracer = OctreeRayTracer(tree)
+    n_points = int(np.max(tree.corners)) + 1
+    interp = OctreeInterpolator(
+        tree,
+        np.column_stack((np.ones(n_points, dtype=float), np.full(n_points, 3.0, dtype=float))),
+    )
+    origins = np.array([[[-2.0, -0.3, -0.2]]], dtype=float)
+    directions = np.array([[[1.0, 0.0, 0.0]]], dtype=float)
+
+    image, counts = tracer.midpoint_image(interp, origins, directions)
+
+    assert image.shape == (1, 1, 2)
+    np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
+    np.testing.assert_allclose(image, np.array([[[2.0, 6.0]]], dtype=float), atol=1.0e-12, rtol=0.0)
+
+
 def test_trilinear_image_integrates_bilinear_slanted_ray() -> None:
     tree = _build_unit_tree()
     tracer = OctreeRayTracer(tree)
@@ -568,6 +604,24 @@ def test_trilinear_image_integrates_bilinear_slanted_ray() -> None:
 
     np.testing.assert_array_equal(counts_trilinear, np.array([[1]], dtype=np.int64))
     np.testing.assert_allclose(image_trilinear, np.array([[7.0 / 24.0]], dtype=float), atol=1.0e-12, rtol=0.0)
+
+
+def test_trilinear_image_preserves_vector_components() -> None:
+    tree = _build_xyz_tree()
+    tracer = OctreeRayTracer(tree)
+    n_points = int(np.max(tree.corners)) + 1
+    interp = OctreeInterpolator(
+        tree,
+        np.column_stack((np.ones(n_points, dtype=float), np.full(n_points, 3.0, dtype=float))),
+    )
+    origins = np.array([[[-2.0, -0.3, -0.2]]], dtype=float)
+    directions = np.array([[[1.0, 0.0, 0.0]]], dtype=float)
+
+    image, counts = tracer.trilinear_image(interp, origins, directions)
+
+    assert image.shape == (1, 1, 2)
+    np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
+    np.testing.assert_allclose(image, np.array([[[2.0, 6.0]]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
 @pytest.mark.parametrize("direction", _CARDINAL_DIRECTION_PARAMS)

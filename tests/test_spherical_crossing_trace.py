@@ -1021,6 +1021,57 @@ def test_rpa_render_midpoint_image_matches_standalone_midpoint_render() -> None:
     np.testing.assert_allclose(image, expected, atol=1.0e-10, rtol=0.0)
 
 
+def test_rpa_render_midpoint_image_preserves_vector_components() -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    n_points = int(np.max(tree.corners)) + 1
+    interpolator = OctreeInterpolator(
+        tree,
+        np.column_stack((np.ones(n_points, dtype=float), np.full(n_points, 3.0, dtype=float))),
+    )
+    origins = np.array([[[2.0, 0.5, 0.25]]], dtype=float)
+    directions = np.array([[[-1.0, 0.0, 0.0]]], dtype=float)
+    segments = tracer.trace(origins, directions)
+    _cell_ids, times = _ray_slice(segments, 0)
+    total_length = float(np.sum(np.diff(np.asarray(times, dtype=float)), dtype=float))
+
+    image = render_midpoint_image(interpolator, origins, directions, segments)
+
+    assert image.shape == (1, 1, 2)
+    np.testing.assert_allclose(
+        image,
+        np.array([[[total_length, 3.0 * total_length]]], dtype=float),
+        atol=1.0e-10,
+        rtol=0.0,
+    )
+
+
+def test_rpa_midpoint_image_preserves_vector_components() -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    n_points = int(np.max(tree.corners)) + 1
+    interpolator = OctreeInterpolator(
+        tree,
+        np.column_stack((np.ones(n_points, dtype=float), np.full(n_points, 3.0, dtype=float))),
+    )
+    origins = np.array([[[2.0, 0.5, 0.25]]], dtype=float)
+    directions = np.array([[[-1.0, 0.0, 0.0]]], dtype=float)
+    segments = tracer.trace(origins, directions)
+    _cell_ids, times = _ray_slice(segments, 0)
+    total_length = float(np.sum(np.diff(np.asarray(times, dtype=float)), dtype=float))
+
+    image, counts = tracer.midpoint_image(interpolator, origins, directions)
+
+    assert image.shape == (1, 1, 2)
+    np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
+    np.testing.assert_allclose(
+        image,
+        np.array([[[total_length, 3.0 * total_length]]], dtype=float),
+        atol=1.0e-10,
+        rtol=0.0,
+    )
+
+
 def test_rpa_trace_chunk_uses_spherical_initial_crossing_capacity(monkeypatch) -> None:
     tree = _build_uniform_rpa_tree()
     monkeypatch.setattr(spherical_crossing_trace, "DEFAULT_CROSSING_BUFFER_SIZE", 1)
@@ -1110,3 +1161,29 @@ def test_rpa_trilinear_image_integrates_radial_field_on_radial_ray() -> None:
 
     np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
     np.testing.assert_allclose(image, np.array([[expected]], dtype=float), atol=1.0e-10, rtol=0.0)
+
+
+def test_rpa_trilinear_image_preserves_vector_components() -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    n_points = int(np.max(tree.corners)) + 1
+    interpolator = OctreeInterpolator(
+        tree,
+        np.column_stack((np.ones(n_points, dtype=float), np.full(n_points, 3.0, dtype=float))),
+    )
+    origins = np.array([[[2.0, 0.5, 0.25]]], dtype=float)
+    directions = np.array([[[-1.0, 0.0, 0.0]]], dtype=float)
+    segments = tracer.trace(origins, directions)
+    _cell_ids, times = _ray_slice(segments, 0)
+    total_length = float(np.sum(np.diff(np.asarray(times, dtype=float)), dtype=float))
+
+    image, counts = tracer.trilinear_image(interpolator, origins, directions)
+
+    assert image.shape == (1, 1, 2)
+    np.testing.assert_array_equal(counts, np.array([[2]], dtype=np.int64))
+    np.testing.assert_allclose(
+        image,
+        np.array([[[total_length, 3.0 * total_length]]], dtype=float),
+        atol=1.0e-10,
+        rtol=0.0,
+    )
