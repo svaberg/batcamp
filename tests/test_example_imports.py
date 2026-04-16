@@ -210,7 +210,7 @@ def test_star_movie_view_angles_render_for_all_available_files() -> None:
         for frame in range(96):
             azimuth_deg = module._frame_azimuth_deg(frame, 96)
             origin = module._orbit_origin(
-                radius=module.DEFAULT_DISTANCE_MULTIPLIER * domain_radius,
+                radius=2.0 * domain_radius,
                 azimuth_deg=azimuth_deg,
                 elevation_deg=module.DEFAULT_ELEVATION_DEG,
             )
@@ -223,8 +223,8 @@ def test_star_movie_view_angles_render_for_all_available_files() -> None:
                     up=np.array([0.0, 0.0, 1.0], dtype=float),
                     nx=32,
                     ny=32,
-                    width=module.DEFAULT_VIEW_WIDTH_MULTIPLIER * domain_radius,
-                    height=module.DEFAULT_VIEW_WIDTH_MULTIPLIER * domain_radius,
+                    width=1.5 * domain_radius,
+                    height=1.5 * domain_radius,
                 )
             except ValueError as exc:
                 raise AssertionError(
@@ -232,6 +232,50 @@ def test_star_movie_view_angles_render_for_all_available_files() -> None:
                 ) from exc
             assert image.shape == (32, 32), case.label
             assert counts.shape == (32, 32), case.label
+
+
+@pytest.mark.parametrize(
+    ("case_label", "file_name", "azimuth_deg"),
+    [
+        pytest.param(case_label, file_name, azimuth_deg, id=f"{case_label}_{azimuth_deg:.3f}")
+        for case_label, file_name, azimuth_deg in (
+            ("local_example", "3d__var_1_n00000000.plt", 1.875),
+            ("local_rpa", "3d__var_2_n00060005.plt", 5.625),
+            ("sc", "3d__var_4_n00044000.plt", 5.625),
+        )
+    ],
+)
+def test_star_movie_diagnostic_angles_expose_known_failures(
+    case_label: str, file_name: str, azimuth_deg: float
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_diagnostic_for_test")
+    case = module.DatasetCase(case_label, file_name)
+    data_path = module.resolve_data_file(repo_root, case.file_name)
+    ds = module.Dataset.from_file(str(data_path))
+    tree = module._build_octree(ds)
+    interp = module.OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))
+    tracer = module.OctreeRayTracer(tree)
+    domain_radius = module._domain_radius(tree)
+    distance_multiplier, view_width_multiplier = module._case_camera_settings(case)
+    origin = module._orbit_origin(
+        radius=distance_multiplier * domain_radius,
+        azimuth_deg=float(azimuth_deg),
+        elevation_deg=module.DEFAULT_ELEVATION_DEG,
+    )
+
+    with pytest.raises(ValueError):
+        module._render_frame(
+            tracer,
+            interp,
+            origin=origin,
+            target=np.zeros(3, dtype=float),
+            up=np.array([0.0, 0.0, 1.0], dtype=float),
+            nx=16,
+            ny=16,
+            width=view_width_multiplier * domain_radius,
+            height=view_width_multiplier * domain_radius,
+        )
 
 
 def test_grid_vs_ray_rejects_resolution_too_small_for_symlog_height_colors() -> None:

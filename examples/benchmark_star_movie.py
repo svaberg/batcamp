@@ -32,8 +32,15 @@ MOVIE_CASES = (
     DatasetCase("sc", "3d__var_4_n00044000.plt"),
     DatasetCase("ih", "3d__var_4_n00005000.plt"),
 )
-DEFAULT_DISTANCE_MULTIPLIER = 2.0
-DEFAULT_VIEW_WIDTH_MULTIPLIER = 1.5
+DIAGNOSTIC_CASE_SETTINGS = {
+    "local_example": (3.0, 1.8),
+    "local_xyz": (3.0, 2.0),
+    "local_rpa": (3.0, 1.5),
+    "sc": (3.0, 1.8),
+    "ih": (3.0, 2.0),
+}
+DEFAULT_DISTANCE_MULTIPLIER = 3.0
+DEFAULT_VIEW_WIDTH_MULTIPLIER = 1.8
 DEFAULT_ELEVATION_DEG = 15.0
 
 
@@ -89,6 +96,12 @@ def _frame_azimuth_deg(frame: int, n_frames: int) -> float:
     return 360.0 * (float(frame) + 0.5) / float(n_frames)
 
 
+def _case_camera_settings(case: DatasetCase) -> tuple[float, float]:
+    """Return the diagnostic camera settings for one case."""
+    distance_multiplier, view_width_multiplier = DIAGNOSTIC_CASE_SETTINGS[str(case.label)]
+    return float(distance_multiplier), float(view_width_multiplier)
+
+
 def _render_frame(
     tracer: OctreeRayTracer,
     interp: OctreeInterpolator,
@@ -134,6 +147,14 @@ def _save_frame(path: Path, image: np.ndarray, *, norm: LogNorm) -> None:
     out = np.array(image, dtype=float, copy=True)
     out[~np.isfinite(out) | (out <= 0.0)] = np.nan
     rgba = cmap(norm(np.ma.masked_invalid(out)))
+    plt.imsave(path, rgba, origin="lower")
+
+
+def _save_failure_frame(path: Path, *, nx: int, ny: int) -> None:
+    """Save one obvious failure placeholder frame."""
+    rgba = np.zeros((int(ny), int(nx), 4), dtype=np.float32)
+    rgba[..., 0] = 1.0
+    rgba[..., 3] = 1.0
     plt.imsave(path, rgba, origin="lower")
 
 
@@ -188,14 +209,15 @@ def _write_report(
         f"- interp_s: `{float(interp_s):.6f}`",
         f"- tracer_s: `{float(tracer_s):.6f}`",
         f"- encode_s: `{float(encode_s):.6f}`",
+        f"- failed_frames: `{sum(int(row['status'] == 'fail') for row in rows)}`",
         f"- movie: `{movie_path.name}`",
         "",
-        "| frame | azimuth_deg | ray_s | count_median | count_max |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        "| frame | azimuth_deg | status | ray_s | count_median | count_max |",
+        "| --- | ---: | --- | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            f"| {int(row['frame'])} | {float(row['azimuth_deg']):.3f} | "
+            f"| {int(row['frame'])} | {float(row['azimuth_deg']):.3f} | {row['status']} | "
             f"{float(row['ray_s']):.6f} | {float(row['count_median']):.1f} | {int(row['count_max'])} |"
         )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -249,39 +271,10 @@ def _run_case(
     csv_path.unlink(missing_ok=True)
     report_path.unlink(missing_ok=True)
 
-    warm_azimuth_deg = _frame_azimuth_deg(0, int(n_frames))
-    warm_origin = _orbit_origin(
-        radius=camera_radius,
-        azimuth_deg=warm_azimuth_deg,
-        elevation_deg=elevation_deg,
-    )
-    progress.start(f"[{case.label}] warm frame")
-    try:
-        (warm_image, warm_counts), warm_s = _time_call(
-            _render_frame,
-            tracer,
-            interp,
-            origin=warm_origin,
-            target=target,
-            up=up,
-            nx=int(nx),
-            ny=int(ny),
-            width=float(view_width),
-            height=float(view_height),
-        )
-    except ValueError as exc:
-        raise ValueError(
-            f"{case.label} warm frame failed at azimuth_deg={float(warm_azimuth_deg):.3f}"
-        ) from exc
-    norm = _display_norm(warm_image)
-    progress.complete(
-        f"[{case.label}] warm frame",
-        warm_s,
-        detail=f"norm=[{float(norm.vmin):.3e}, {float(norm.vmax):.3e}]",
-    )
-
     rows: list[dict[str, float | int | str]] = []
     csv_rows: list[list[str]] = []
+    failed_frames: list[tuple[int, float]] = []
+    norm: LogNorm | None = None
     progress.note(
         f"[{case.label}] orbit frames={int(n_frames)} nx={int(nx)} ny={int(ny)} "
         f"radius={camera_radius:.3f} width={view_width:.3f} elevation_deg={float(elevation_deg):.3f}"
@@ -306,15 +299,45 @@ def _run_case(
                 width=float(view_width),
                 height=float(view_height),
             )
-        except ValueError as exc:
-            raise ValueError(
-                f"{case.label} frame={int(frame)} azimuth_deg={float(azimuth_deg):.3f} failed"
-            ) from exc
+        except ValueError:
+            frame_path = frame_dir / f"frame_{frame:04d}.png"
+            _save_failure_frame(frame_path, nx=int(nx), ny=int(ny))
+            failed_frames.append((int(frame), float(azimuth_deg)))
+            row = {
+                "frame": int(frame),
+                "azimuth_deg": float(azimuth_deg),
+                "status": "fail",
+                "ray_s": float("nan"),
+                "count_median": -1.0,
+                "count_max": -1,
+                "frame_path": frame_path.name,
+            }
+            rows.append(row)
+            csv_rows.append(
+                [
+                    str(int(row["frame"])),
+                    f"{float(row['azimuth_deg']):.6f}",
+                    str(row["status"]),
+                    "nan",
+                    "-1.0",
+                    "-1",
+                    str(row["frame_path"]),
+                ]
+            )
+            progress.note(
+                f"[{case.label}] frame {frame + 1}/{int(n_frames)} failed azimuth_deg={float(azimuth_deg):.3f}"
+            )
+            continue
+
+        if norm is None:
+            norm = _display_norm(image)
+
         frame_path = frame_dir / f"frame_{frame:04d}.png"
         _save_frame(frame_path, image, norm=norm)
         row = {
             "frame": int(frame),
             "azimuth_deg": float(azimuth_deg),
+            "status": "ok",
             "ray_s": float(ray_s),
             "count_median": float(np.median(np.asarray(counts, dtype=float))),
             "count_max": int(np.max(np.asarray(counts, dtype=np.int64))),
@@ -325,6 +348,7 @@ def _run_case(
             [
                 str(int(row["frame"])),
                 f"{float(row['azimuth_deg']):.6f}",
+                str(row["status"]),
                 f"{float(row['ray_s']):.6f}",
                 f"{float(row['count_median']):.1f}",
                 str(int(row["count_max"])),
@@ -338,7 +362,7 @@ def _run_case(
             )
 
     csv_path.write_text(
-        "frame,azimuth_deg,ray_s,count_median,count_max,frame_path\n"
+        "frame,azimuth_deg,status,ray_s,count_median,count_max,frame_path\n"
         + "\n".join(",".join(row) for row in csv_rows)
         + "\n",
         encoding="utf-8",
@@ -362,6 +386,9 @@ def _run_case(
         movie_path=movie_path,
     )
     progress.note(f"[{case.label}] done -> benchmark_star_movie_{case.label}_*")
+    if failed_frames:
+        preview = ", ".join(f"{azimuth_deg:.3f}" for _frame, azimuth_deg in failed_frames[:12])
+        raise ValueError(f"{case.label} failed_frames={len(failed_frames)} azimuth_deg=[{preview}]")
 
 
 def main() -> None:
@@ -391,18 +418,6 @@ def main() -> None:
         help="Movie frames per second (default: 24).",
     )
     parser.add_argument(
-        "--distance-multiplier",
-        type=float,
-        default=DEFAULT_DISTANCE_MULTIPLIER,
-        help=f"Camera radius as a multiple of the dataset outer radius (default: {DEFAULT_DISTANCE_MULTIPLIER:.1f}).",
-    )
-    parser.add_argument(
-        "--view-width-multiplier",
-        type=float,
-        default=DEFAULT_VIEW_WIDTH_MULTIPLIER,
-        help=f"Image-plane width as a multiple of the dataset outer radius (default: {DEFAULT_VIEW_WIDTH_MULTIPLIER:.1f}).",
-    )
-    parser.add_argument(
         "--elevation-deg",
         type=float,
         default=DEFAULT_ELEVATION_DEG,
@@ -426,10 +441,6 @@ def main() -> None:
         raise ValueError("nx and ny must be positive.")
     if int(args.fps) <= 0:
         raise ValueError("fps must be positive.")
-    if float(args.distance_multiplier) <= 0.0:
-        raise ValueError("distance_multiplier must be positive.")
-    if float(args.view_width_multiplier) <= 0.0:
-        raise ValueError("view_width_multiplier must be positive.")
 
     repo_root = Path(__file__).resolve().parent.parent
     out_root = (repo_root / args.output_dir).resolve()
@@ -441,21 +452,28 @@ def main() -> None:
     progress = _ProgressReporter(log_path=progress_log_path)
 
     progress.note(f"output_dir={out_root}")
+    failures: list[str] = []
     for case in MOVIE_CASES:
-        _run_case(
-            case=case,
-            repo_root=repo_root,
-            out_root=out_root,
-            progress=progress,
-            n_frames=int(args.frames),
-            nx=int(args.nx),
-            ny=int(args.ny),
-            fps=int(args.fps),
-            distance_multiplier=float(args.distance_multiplier),
-            view_width_multiplier=float(args.view_width_multiplier),
-            elevation_deg=float(args.elevation_deg),
-            variable=str(args.variable),
-        )
+        case_distance_multiplier, case_view_width_multiplier = _case_camera_settings(case)
+        try:
+            _run_case(
+                case=case,
+                repo_root=repo_root,
+                out_root=out_root,
+                progress=progress,
+                n_frames=int(args.frames),
+                nx=int(args.nx),
+                ny=int(args.ny),
+                fps=int(args.fps),
+                distance_multiplier=case_distance_multiplier,
+                view_width_multiplier=case_view_width_multiplier,
+                elevation_deg=float(args.elevation_deg),
+                variable=str(args.variable),
+            )
+        except ValueError as exc:
+            failures.append(str(exc))
+    if failures:
+        raise RuntimeError("\n".join(failures))
 
 
 if __name__ == "__main__":
