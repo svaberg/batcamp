@@ -178,6 +178,29 @@ def test_grid_vs_ray_style_horizontal_colorbar_top_enables_top_ticks_and_minors(
         module.plt.close(fig)
 
 
+def test_grid_vs_ray_style_horizontal_colorbar_top_uses_sparse_symlog_ticks() -> None:
+    module = _load_benchmark_grid_vs_ray_module()
+    fig = module.plt.figure()
+    try:
+        ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+        cax = fig.add_axes([0.1, 0.92, 0.8, 0.04])
+        mappable = module.plt.cm.ScalarMappable(
+            norm=module.SymLogNorm(linthresh=1.0e-3, vmin=-1.0, vmax=10.0),
+            cmap="cividis",
+        )
+        mappable.set_array([])
+        cbar = fig.colorbar(mappable, cax=cax, orientation="horizontal")
+
+        module._style_horizontal_colorbar_top(cbar, "height over surface (R-1)", labelsize=7, tick_labelsize=6)
+        fig.canvas.draw()
+
+        np.testing.assert_allclose(cbar.get_ticks(), np.array([-1.0, 0.0, 10.0], dtype=float))
+        assert [tick.get_text() for tick in cbar.ax.xaxis.get_majorticklabels()] == ["-1", "0", "10"]
+        assert all(tick.get_text() == "" for tick in cbar.ax.xaxis.get_minorticklabels())
+    finally:
+        module.plt.close(fig)
+
+
 def test_grid_vs_ray_discrepancy_rows_bounds_category_rows() -> None:
     module = _load_benchmark_grid_vs_ray_module()
     img0 = np.ones((4, 4), dtype=float)

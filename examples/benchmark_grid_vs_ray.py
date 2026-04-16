@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 
 import matplotlib.pyplot as plt
+from matplotlib import ticker
 from matplotlib.colors import LogNorm
 from matplotlib.colors import Normalize
 from matplotlib.colors import SymLogNorm
@@ -348,7 +349,31 @@ def _style_horizontal_colorbar_top(cbar, label: str, *, labelsize: int, tick_lab
     cbar.set_label(label, fontsize=labelsize)
     cbar.ax.xaxis.set_label_position("top")
     cbar.ax.xaxis.set_ticks_position("top")
+    if isinstance(cbar.norm, SymLogNorm):
+        vmin = float(cbar.norm.vmin)
+        vmax = float(cbar.norm.vmax)
+        linthresh = float(cbar.norm.linthresh)
+        if vmin >= linthresh:
+            major_ticks = np.geomspace(vmin, vmax, num=3)
+            cbar.ax.xaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2.0, 10.0)))
+        elif vmax <= -linthresh:
+            major_ticks = -np.geomspace(abs(vmin), abs(vmax), num=3)
+            major_ticks = np.sort(major_ticks)
+            cbar.ax.xaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2.0, 10.0)))
+        else:
+            major_ticks = np.array([vmin, 0.0, vmax], dtype=float)
+            cbar.ax.xaxis.set_minor_locator(
+                ticker.SymmetricalLogLocator(
+                    base=10.0,
+                    linthresh=linthresh,
+                    subs=np.arange(2.0, 10.0),
+                )
+            )
+        cbar.set_ticks(major_ticks)
+        cbar.ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _pos: f"{x:.3g}"))
+        cbar.ax.xaxis.set_minor_formatter(ticker.NullFormatter())
     cbar.minorticks_on()
+    cbar.outline.set_linewidth(0.6)
     cbar.ax.tick_params(
         axis="x",
         which="both",
@@ -701,7 +726,11 @@ def _save_four_panel_figure(
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
-        height_cax = axes[1, 0].inset_axes([0.55, 0.075, 0.38, 0.035])
+        height_cax = axes[1, 0].inset_axes([0.36, 0.05, 0.56, 0.12], zorder=6)
+        height_cax.set_facecolor((1.0, 1.0, 1.0, 0.92))
+        for spine in height_cax.spines.values():
+            spine.set_edgecolor((0.0, 0.0, 0.0, 0.35))
+            spine.set_linewidth(0.6)
         height_mappable = plt.cm.ScalarMappable(norm=height_norm, cmap=height_cmap)
         height_mappable.set_array([])
         height_cbar = fig.colorbar(height_mappable, cax=height_cax, orientation="horizontal")
