@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import numpy as np
 import pytest
@@ -460,14 +461,15 @@ def test_trace_broadcasts_one_direction_vector_over_batched_origins() -> None:
     np.testing.assert_array_equal(_ray_slice(segments, 2)[1], np.empty(0, dtype=float))
 
 
-def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch) -> None:
+def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch, caplog) -> None:
     tree = _build_long_x_tree()
-    tracer = OctreeRayTracer(tree)
     monkeypatch.setattr(cartesian_crossing_trace, "DEFAULT_CROSSING_BUFFER_SIZE", 32)
+    tracer = OctreeRayTracer(tree)
 
     origin = np.array([-1.0, 0.5, 0.5], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    segments = tracer.trace(origin, direction)
+    with caplog.at_level(logging.DEBUG, logger="batcamp.ray"):
+        segments = tracer.trace(origin, direction)
 
     positive_cell_ids, positive_times = _positive_trace(*_ray_slice(segments, 0))
     assert positive_cell_ids.size == 40
@@ -475,6 +477,12 @@ def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small
     np.testing.assert_allclose(positive_times[-1], 41.0, atol=0.0, rtol=0.0)
     np.testing.assert_allclose(np.diff(positive_times), np.ones(40, dtype=float), atol=0.0, rtol=0.0)
     _assert_positive_trace_forms_one_ray(tree, origin, direction, *_ray_slice(segments, 0))
+    assert tracer._crossing_buffer_size == 64
+    assert any("grow crossing buffer" in record.getMessage() for record in caplog.records)
+    assert any("_trace_segments" in record.getMessage() for record in caplog.records)
+
+    tracer.trace(origin, direction, t_max=5.5)
+    assert tracer._crossing_buffer_size == 64
 
 
 def test_trace_positive_corner_crossing_matches_expected_path() -> None:

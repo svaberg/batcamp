@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
 
 import numpy as np
@@ -14,6 +15,8 @@ from . import cartesian_crossing_trace
 from . import interpolator as interpolator_module
 from . import spherical_crossing_trace
 from .octree import Octree
+
+logger = logging.getLogger(__name__)
 
 TRACE_CHUNK_SIZE = 256
 
@@ -135,13 +138,23 @@ class OctreeRayTracer:
         """Bind one tracer to one built octree."""
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
-        if str(tree.tree_coord) not in {"xyz", "rpa"}:
+        tree_coord = str(tree.tree_coord)
+        if tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError("OctreeRayTracer currently supports only tree_coord='xyz' or 'rpa'.")
         self.tree = tree
+        if tree_coord == "xyz":
+            self._trace_module = cartesian_crossing_trace
+        else:
+            self._trace_module = spherical_crossing_trace
+        self._crossing_buffer_size = int(self._trace_module.DEFAULT_CROSSING_BUFFER_SIZE)
+        logger.info(
+            "OctreeRayTracer.__init__: coord=%s crossing_buffer_size=%d",
+            tree_coord,
+            self._crossing_buffer_size,
+        )
 
     def _trace_chunk_to_scratch(
         self,
-        tracer,
         origins: np.ndarray,
         directions: np.ndarray,
         *,
@@ -150,13 +163,20 @@ class OctreeRayTracer:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Trace one chunk into scratch buffers, growing capacity on overflow."""
         chunk_n_rays = int(origins.shape[0])
-        crossing_capacity = tracer.DEFAULT_CROSSING_BUFFER_SIZE
+        crossing_capacity = int(self._crossing_buffer_size)
+        logger.debug(
+            "_trace_chunk_to_scratch: coord=%s n_rays=%d crossing_buffer_size=%d default=%d",
+            self.tree.tree_coord,
+            chunk_n_rays,
+            crossing_capacity,
+            int(self._trace_module.DEFAULT_CROSSING_BUFFER_SIZE),
+        )
         while True:
             cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
             time_counts = np.empty(chunk_n_rays, dtype=np.int64)
             cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
             time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-            tracer.trace_buffer(
+            self._trace_module.trace_buffer(
                 self.tree.root_cell_ids,
                 self.tree.cell_child,
                 self.tree.cell_bounds,
@@ -173,10 +193,25 @@ class OctreeRayTracer:
                 time_buffer,
             )
             if np.any(cell_counts == -1) or np.any(time_counts == -1):
+                next_capacity = 2 * crossing_capacity
+                logger.info(
+                    "grow crossing buffer: coord=%s n_rays=%d %d -> %d",
+                    self.tree.tree_coord,
+                    chunk_n_rays,
+                    crossing_capacity,
+                    next_capacity,
+                )
                 crossing_capacity *= 2
                 continue
             if np.any(cell_counts < 0) or np.any(time_counts < 0):
                 raise ValueError("Ray trace encountered an invalid crossing.")
+            self._crossing_buffer_size = int(crossing_capacity)
+            logger.debug(
+                "_trace_chunk_to_scratch complete: coord=%s n_rays=%d crossing_buffer_size=%d",
+                self.tree.tree_coord,
+                chunk_n_rays,
+                self._crossing_buffer_size,
+            )
             return cell_counts, time_counts, cell_buffer, time_buffer
 
     def _trace_segments(
@@ -192,16 +227,13 @@ class OctreeRayTracer:
         o_flat = np.asarray(origins, dtype=np.float64)
         d_flat = np.asarray(directions, dtype=np.float64)
         n_rays = int(o_flat.shape[0])
-        tree_coord = str(self.tree.tree_coord)
-        if tree_coord == "xyz":
-            tracer = cartesian_crossing_trace
-        elif tree_coord == "rpa":
-            tracer = spherical_crossing_trace
-        else:
-            raise NotImplementedError(
-                "OctreeRayTracer currently supports only "
-                f"tree_coord='xyz' or 'rpa', got {self.tree.tree_coord!r}."
-            )
+        logger.debug(
+            "_trace_segments: coord=%s n_rays=%d ray_shape=%s chunk_size=%d",
+            self.tree.tree_coord,
+            n_rays,
+            tuple(int(v) for v in ray_shape),
+            TRACE_CHUNK_SIZE,
+        )
         ray_offsets = np.empty(n_rays + 1, dtype=np.int64)
         time_offsets = np.empty(n_rays + 1, dtype=np.int64)
         ray_offsets[0] = 0
@@ -215,8 +247,14 @@ class OctreeRayTracer:
             chunk_origins = o_flat[chunk_lo:chunk_hi]
             chunk_directions = d_flat[chunk_lo:chunk_hi]
             chunk_n_rays = int(chunk_hi - chunk_lo)
+            logger.debug(
+                "_trace_segments chunk: coord=%s ray_lo=%d ray_hi=%d chunk_n_rays=%d",
+                self.tree.tree_coord,
+                chunk_lo,
+                chunk_hi,
+                chunk_n_rays,
+            )
             cell_counts, time_counts, cell_buffer, time_buffer = self._trace_chunk_to_scratch(
-                tracer,
                 chunk_origins,
                 chunk_directions,
                 t_min=t_min,
@@ -256,6 +294,12 @@ class OctreeRayTracer:
             times_out = np.concatenate(time_chunks).astype(np.float64, copy=False)
         else:
             times_out = np.empty(0, dtype=np.float64)
+        logger.debug(
+            "_trace_segments complete: coord=%s packed_cells=%d packed_times=%d",
+            self.tree.tree_coord,
+            n_cell,
+            n_time,
+        )
         return RaySegments(
             ray_offsets=ray_offsets,
             time_offsets=time_offsets,
@@ -279,7 +323,13 @@ class OctreeRayTracer:
             raise TypeError("midpoint_image requires one OctreeInterpolator.")
         if interpolator.tree is not self.tree:
             raise ValueError("interpolator.tree must match the tracer octree.")
+        logger.debug(
+            "_midpoint_image: coord=%s ray_shape=%s",
+            self.tree.tree_coord,
+            tuple(int(v) for v in ray_shape),
+        )
         if str(self.tree.tree_coord) != "xyz":
+            logger.debug("_midpoint_image: using packed-segment render path for coord=%s", self.tree.tree_coord)
             segments = self._trace_segments(
                 origins,
                 directions,
@@ -300,6 +350,7 @@ class OctreeRayTracer:
         d_flat = np.asarray(directions, dtype=np.float64)
         n_rays = int(o_flat.shape[0])
         n_components = int(interpolator.n_components)
+        logger.debug("_midpoint_image: using cartesian chunk accumulation for %d rays", n_rays)
         accum = np.zeros((n_rays, n_components), dtype=np.float64)
         cell_counts_out = np.zeros(n_rays, dtype=np.int64)
         for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
@@ -307,7 +358,6 @@ class OctreeRayTracer:
             chunk_origins = o_flat[chunk_lo:chunk_hi]
             chunk_directions = d_flat[chunk_lo:chunk_hi]
             cell_counts, _time_counts, cell_buffer, time_buffer = self._trace_chunk_to_scratch(
-                cartesian_crossing_trace,
                 chunk_origins,
                 chunk_directions,
                 t_min=t_min,
@@ -342,11 +392,14 @@ class OctreeRayTracer:
         if interpolator.tree is not self.tree:
             raise ValueError("interpolator.tree must match the tracer octree.")
         tree_coord = str(self.tree.tree_coord)
+        logger.debug(
+            "_trilinear_image: coord=%s ray_shape=%s",
+            tree_coord,
+            tuple(int(v) for v in ray_shape),
+        )
         if tree_coord == "xyz":
-            tracer = cartesian_crossing_trace
             accumulator = interpolator_module.accumulate_exact_cells_xyz
         elif tree_coord == "rpa":
-            tracer = spherical_crossing_trace
             accumulator = interpolator_module.accumulate_trilinear_cells_rpa
         else:
             raise NotImplementedError(
@@ -358,6 +411,7 @@ class OctreeRayTracer:
         d_flat = np.asarray(directions, dtype=np.float64)
         n_rays = int(o_flat.shape[0])
         n_components = int(interpolator.n_components)
+        logger.debug("_trilinear_image: using %s for %d rays", accumulator.__name__, n_rays)
         accum = np.zeros((n_rays, n_components), dtype=np.float64)
         cell_counts_out = np.zeros(n_rays, dtype=np.int64)
         for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
@@ -365,7 +419,6 @@ class OctreeRayTracer:
             chunk_origins = o_flat[chunk_lo:chunk_hi]
             chunk_directions = d_flat[chunk_lo:chunk_hi]
             cell_counts, _time_counts, cell_buffer, time_buffer = self._trace_chunk_to_scratch(
-                tracer,
                 chunk_origins,
                 chunk_directions,
                 t_min=t_min,
