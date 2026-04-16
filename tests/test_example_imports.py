@@ -157,6 +157,27 @@ def test_grid_vs_ray_height_color_norm_rejects_degenerate_height() -> None:
         module._height_color_norm(np.array([0.0, 0.0], dtype=float))
 
 
+def test_grid_vs_ray_style_horizontal_colorbar_top_enables_top_ticks_and_minors() -> None:
+    module = _load_benchmark_grid_vs_ray_module()
+    fig = module.plt.figure()
+    try:
+        ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+        cax = fig.add_axes([0.1, 0.92, 0.8, 0.04])
+        mappable = module.plt.cm.ScalarMappable(norm=module.Normalize(vmin=1.0, vmax=10.0), cmap="viridis")
+        mappable.set_array([])
+        cbar = fig.colorbar(mappable, cax=cax, orientation="horizontal")
+
+        module._style_horizontal_colorbar_top(cbar, "test label", labelsize=7, tick_labelsize=6)
+        fig.canvas.draw()
+
+        assert cbar.ax.xaxis.get_label_position() == "top"
+        assert cbar.ax.xaxis.get_ticks_position() == "top"
+        assert cbar.ax.xaxis.label.get_text() == "test label"
+        assert len(cbar.ax.xaxis.get_minorticklines()) > 0
+    finally:
+        module.plt.close(fig)
+
+
 def test_grid_vs_ray_discrepancy_rows_bounds_category_rows() -> None:
     module = _load_benchmark_grid_vs_ray_module()
     img0 = np.ones((4, 4), dtype=float)

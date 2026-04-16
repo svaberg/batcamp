@@ -343,6 +343,25 @@ def _height_color_norm(height_values: np.ndarray) -> SymLogNorm:
     return SymLogNorm(linthresh=1.0e-3, vmin=h_lo, vmax=h_hi)
 
 
+def _style_horizontal_colorbar_top(cbar, label: str, *, labelsize: int, tick_labelsize: int) -> None:
+    """Place one horizontal colorbar label and ticks on the top edge with minor ticks enabled."""
+    cbar.set_label(label, fontsize=labelsize)
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.ax.xaxis.set_ticks_position("top")
+    cbar.minorticks_on()
+    cbar.ax.tick_params(
+        axis="x",
+        which="both",
+        top=True,
+        bottom=False,
+        labeltop=True,
+        labelbottom=False,
+        pad=1,
+    )
+    cbar.ax.tick_params(axis="x", which="major", labelsize=tick_labelsize, length=4)
+    cbar.ax.tick_params(axis="x", which="minor", length=2)
+
+
 def _equality_deviation(
     img0: np.ndarray,
     img1: np.ndarray,
@@ -686,8 +705,12 @@ def _save_four_panel_figure(
         height_mappable = plt.cm.ScalarMappable(norm=height_norm, cmap=height_cmap)
         height_mappable.set_array([])
         height_cbar = fig.colorbar(height_mappable, cax=height_cax, orientation="horizontal")
-        height_cbar.set_label("height over surface (R-1)", fontsize=7)
-        height_cbar.ax.tick_params(labelsize=6, pad=1)
+        _style_horizontal_colorbar_top(
+            height_cbar,
+            "height over surface (R-1)",
+            labelsize=7,
+            tick_labelsize=6,
+        )
         axes[1, 0].set_xlim(lo, hi)
         axes[1, 0].set_ylim(lo, hi)
         axes[1, 0].set_xscale("log")
