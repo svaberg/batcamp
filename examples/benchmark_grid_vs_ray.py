@@ -348,6 +348,7 @@ def _style_horizontal_colorbar_top(cbar, label: str, *, labelsize: int, tick_lab
     """Place one horizontal colorbar label and ticks on the top edge with minor ticks enabled."""
     cbar.set_label(label, fontsize=labelsize)
     cbar.ax.xaxis.set_label_position("top")
+    cbar.ax.xaxis.labelpad = -2
     cbar.ax.xaxis.set_ticks_position("top")
     if isinstance(cbar.norm, SymLogNorm):
         vmin = float(cbar.norm.vmin)
@@ -381,10 +382,10 @@ def _style_horizontal_colorbar_top(cbar, label: str, *, labelsize: int, tick_lab
         bottom=False,
         labeltop=True,
         labelbottom=False,
-        pad=1,
+        pad=-1,
     )
-    cbar.ax.tick_params(axis="x", which="major", labelsize=tick_labelsize, length=4)
-    cbar.ax.tick_params(axis="x", which="minor", length=2)
+    cbar.ax.tick_params(axis="x", which="major", labelsize=tick_labelsize, length=2)
+    cbar.ax.tick_params(axis="x", which="minor", length=1)
 
 
 def _equality_deviation(
@@ -726,15 +727,15 @@ def _save_four_panel_figure(
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
-        height_cax = axes[1, 0].inset_axes([0.55, 0.075, 0.38, 0.035])
+        height_cax = axes[1, 0].inset_axes([0.56, 0.03, 0.37, 0.015])
         height_mappable = plt.cm.ScalarMappable(norm=height_norm, cmap=height_cmap)
         height_mappable.set_array([])
         height_cbar = fig.colorbar(height_mappable, cax=height_cax, orientation="horizontal")
         _style_horizontal_colorbar_top(
             height_cbar,
             "height over surface (R-1)",
-            labelsize=7,
-            tick_labelsize=6,
+            labelsize=5,
+            tick_labelsize=4,
         )
         axes[1, 0].set_xlim(lo, hi)
         axes[1, 0].set_ylim(lo, hi)
