@@ -726,11 +726,7 @@ def _save_four_panel_figure(
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
-        height_cax = axes[1, 0].inset_axes([0.36, 0.05, 0.56, 0.12], zorder=6)
-        height_cax.set_facecolor((1.0, 1.0, 1.0, 0.92))
-        for spine in height_cax.spines.values():
-            spine.set_edgecolor((0.0, 0.0, 0.0, 0.35))
-            spine.set_linewidth(0.6)
+        height_cax = axes[1, 0].inset_axes([0.55, 0.075, 0.38, 0.035])
         height_mappable = plt.cm.ScalarMappable(norm=height_norm, cmap=height_cmap)
         height_mappable.set_array([])
         height_cbar = fig.colorbar(height_mappable, cax=height_cax, orientation="horizontal")
