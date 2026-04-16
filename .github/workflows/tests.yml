@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
 
+env:
+  XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -82,6 +85,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Restore pooch cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.XDG_CACHE_HOME }}/pooch
+          key: pooch-${{ runner.os }}-${{ hashFiles('examples/benchmark_helpers.py', 'tests/sample_data_helper.py') }}
+          restore-keys: |
+            pooch-${{ runner.os }}-
+
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
@@ -102,6 +113,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Restore pooch cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.XDG_CACHE_HOME }}/pooch
+          key: pooch-${{ runner.os }}-${{ hashFiles('examples/benchmark_helpers.py', 'tests/sample_data_helper.py') }}
+          restore-keys: |
+            pooch-${{ runner.os }}-
 
       - uses: mamba-org/setup-micromamba@v3
         with:
