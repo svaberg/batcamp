@@ -195,6 +195,45 @@ def test_star_movie_benchmark_runs_one_example_case() -> None:
     assert "[sc] done -> benchmark_star_movie_sc_*" in log_text
 
 
+def test_star_movie_view_angles_render_for_all_available_files() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_angles_for_test")
+
+    for case in module.MOVIE_CASES:
+        data_path = module.resolve_data_file(repo_root, case.file_name)
+        ds = module.Dataset.from_file(str(data_path))
+        tree = module._build_octree(ds)
+        interp = module.OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))
+        tracer = module.OctreeRayTracer(tree)
+        domain_radius = module._domain_radius(tree)
+
+        for frame in range(96):
+            azimuth_deg = module._frame_azimuth_deg(frame, 96)
+            origin = module._orbit_origin(
+                radius=module.DEFAULT_DISTANCE_MULTIPLIER * domain_radius,
+                azimuth_deg=azimuth_deg,
+                elevation_deg=module.DEFAULT_ELEVATION_DEG,
+            )
+            try:
+                image, counts = module._render_frame(
+                    tracer,
+                    interp,
+                    origin=origin,
+                    target=np.zeros(3, dtype=float),
+                    up=np.array([0.0, 0.0, 1.0], dtype=float),
+                    nx=32,
+                    ny=32,
+                    width=module.DEFAULT_VIEW_WIDTH_MULTIPLIER * domain_radius,
+                    height=module.DEFAULT_VIEW_WIDTH_MULTIPLIER * domain_radius,
+                )
+            except ValueError as exc:
+                raise AssertionError(
+                    f"star movie angle failed for {case.label} at azimuth_deg={azimuth_deg:.3f}"
+                ) from exc
+            assert image.shape == (32, 32), case.label
+            assert counts.shape == (32, 32), case.label
+
+
 def test_grid_vs_ray_rejects_resolution_too_small_for_symlog_height_colors() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     examples_dir = repo_root / "examples"

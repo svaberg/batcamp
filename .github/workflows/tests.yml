@@ -103,10 +103,10 @@ jobs:
           name: benchmark-star-movie-artifacts
           path: |
             artifacts/test_example_imports/benchmark_star_movie.log
-            artifacts/test_example_imports/benchmark_star_movie_sc.mp4
-            artifacts/test_example_imports/benchmark_star_movie_sc_timing_report.md
-            artifacts/test_example_imports/benchmark_star_movie_sc_frame_times.csv
-            artifacts/test_example_imports/benchmark_star_movie_sc_frames/frame_*.png
+            artifacts/test_example_imports/benchmark_star_movie_*.mp4
+            artifacts/test_example_imports/benchmark_star_movie_*_timing_report.md
+            artifacts/test_example_imports/benchmark_star_movie_*_frame_times.csv
+            artifacts/test_example_imports/benchmark_star_movie_*_frames/frame_*.png
           if-no-files-found: warn
 
       - name: Codacy Coverage Reporter

@@ -25,6 +25,17 @@ from benchmark_helpers import _time_call
 from benchmark_helpers import DatasetCase
 from benchmark_helpers import resolve_data_file
 
+MOVIE_CASES = (
+    DatasetCase("local_example", "3d__var_1_n00000000.plt"),
+    DatasetCase("local_xyz", "3d__var_2_n00006003.plt"),
+    DatasetCase("local_rpa", "3d__var_2_n00060005.plt"),
+    DatasetCase("sc", "3d__var_4_n00044000.plt"),
+    DatasetCase("ih", "3d__var_4_n00005000.plt"),
+)
+DEFAULT_DISTANCE_MULTIPLIER = 2.0
+DEFAULT_VIEW_WIDTH_MULTIPLIER = 1.5
+DEFAULT_ELEVATION_DEG = 15.0
+
 
 def _xyz_box_corners(domain_bounds: np.ndarray) -> np.ndarray:
     """Return the eight Cartesian box corners for one xyz domain."""
@@ -71,6 +82,11 @@ def _frame_paths(out_root: Path, *, case_label: str) -> tuple[Path, Path, Path, 
     csv_path = out_root / f"benchmark_star_movie_{case_label}_frame_times.csv"
     report_path = out_root / f"benchmark_star_movie_{case_label}_timing_report.md"
     return frame_dir, movie_path, csv_path, report_path
+
+
+def _frame_azimuth_deg(frame: int, n_frames: int) -> float:
+    """Return one orbit azimuth for one frame index."""
+    return 360.0 * (float(frame) + 0.5) / float(n_frames)
 
 
 def _render_frame(
@@ -233,25 +249,30 @@ def _run_case(
     csv_path.unlink(missing_ok=True)
     report_path.unlink(missing_ok=True)
 
-    warm_azimuth_deg = 360.0 * 0.5 / float(n_frames)
+    warm_azimuth_deg = _frame_azimuth_deg(0, int(n_frames))
     warm_origin = _orbit_origin(
         radius=camera_radius,
         azimuth_deg=warm_azimuth_deg,
         elevation_deg=elevation_deg,
     )
     progress.start(f"[{case.label}] warm frame")
-    (warm_image, warm_counts), warm_s = _time_call(
-        _render_frame,
-        tracer,
-        interp,
-        origin=warm_origin,
-        target=target,
-        up=up,
-        nx=int(nx),
-        ny=int(ny),
-        width=float(view_width),
-        height=float(view_height),
-    )
+    try:
+        (warm_image, warm_counts), warm_s = _time_call(
+            _render_frame,
+            tracer,
+            interp,
+            origin=warm_origin,
+            target=target,
+            up=up,
+            nx=int(nx),
+            ny=int(ny),
+            width=float(view_width),
+            height=float(view_height),
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"{case.label} warm frame failed at azimuth_deg={float(warm_azimuth_deg):.3f}"
+        ) from exc
     norm = _display_norm(warm_image)
     progress.complete(
         f"[{case.label}] warm frame",
@@ -266,24 +287,29 @@ def _run_case(
         f"radius={camera_radius:.3f} width={view_width:.3f} elevation_deg={float(elevation_deg):.3f}"
     )
     for frame in range(int(n_frames)):
-        azimuth_deg = 360.0 * (float(frame) + 0.5) / float(n_frames)
+        azimuth_deg = _frame_azimuth_deg(frame, int(n_frames))
         origin = _orbit_origin(
             radius=camera_radius,
             azimuth_deg=azimuth_deg,
             elevation_deg=elevation_deg,
         )
-        (image, counts), ray_s = _time_call(
-            _render_frame,
-            tracer,
-            interp,
-            origin=origin,
-            target=target,
-            up=up,
-            nx=int(nx),
-            ny=int(ny),
-            width=float(view_width),
-            height=float(view_height),
-        )
+        try:
+            (image, counts), ray_s = _time_call(
+                _render_frame,
+                tracer,
+                interp,
+                origin=origin,
+                target=target,
+                up=up,
+                nx=int(nx),
+                ny=int(ny),
+                width=float(view_width),
+                height=float(view_height),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"{case.label} frame={int(frame)} azimuth_deg={float(azimuth_deg):.3f} failed"
+            ) from exc
         frame_path = frame_dir / f"frame_{frame:04d}.png"
         _save_frame(frame_path, image, norm=norm)
         row = {
@@ -367,20 +393,20 @@ def main() -> None:
     parser.add_argument(
         "--distance-multiplier",
         type=float,
-        default=2.0,
-        help="Camera radius as a multiple of the dataset outer radius (default: 2.0).",
+        default=DEFAULT_DISTANCE_MULTIPLIER,
+        help=f"Camera radius as a multiple of the dataset outer radius (default: {DEFAULT_DISTANCE_MULTIPLIER:.1f}).",
     )
     parser.add_argument(
         "--view-width-multiplier",
         type=float,
-        default=1.5,
-        help="Image-plane width as a multiple of the dataset outer radius (default: 1.5).",
+        default=DEFAULT_VIEW_WIDTH_MULTIPLIER,
+        help=f"Image-plane width as a multiple of the dataset outer radius (default: {DEFAULT_VIEW_WIDTH_MULTIPLIER:.1f}).",
     )
     parser.add_argument(
         "--elevation-deg",
         type=float,
-        default=15.0,
-        help="Orbit elevation in degrees (default: 15.0).",
+        default=DEFAULT_ELEVATION_DEG,
+        help=f"Orbit elevation in degrees (default: {DEFAULT_ELEVATION_DEG:.1f}).",
     )
     parser.add_argument(
         "--variable",
@@ -414,23 +440,22 @@ def main() -> None:
     _configure_builder_logging(log_path=progress_log_path)
     progress = _ProgressReporter(log_path=progress_log_path)
 
-    case = DatasetCase("sc", "3d__var_4_n00044000.plt")
-
     progress.note(f"output_dir={out_root}")
-    _run_case(
-        case=case,
-        repo_root=repo_root,
-        out_root=out_root,
-        progress=progress,
-        n_frames=int(args.frames),
-        nx=int(args.nx),
-        ny=int(args.ny),
-        fps=int(args.fps),
-        distance_multiplier=float(args.distance_multiplier),
-        view_width_multiplier=float(args.view_width_multiplier),
-        elevation_deg=float(args.elevation_deg),
-        variable=str(args.variable),
-    )
+    for case in MOVIE_CASES:
+        _run_case(
+            case=case,
+            repo_root=repo_root,
+            out_root=out_root,
+            progress=progress,
+            n_frames=int(args.frames),
+            nx=int(args.nx),
+            ny=int(args.ny),
+            fps=int(args.fps),
+            distance_multiplier=float(args.distance_multiplier),
+            view_width_multiplier=float(args.view_width_multiplier),
+            elevation_deg=float(args.elevation_deg),
+            variable=str(args.variable),
+        )
 
 
 if __name__ == "__main__":
