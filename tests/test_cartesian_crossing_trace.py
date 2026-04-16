@@ -1164,6 +1164,74 @@ def _assert_center_trace_matches_lookup_oracle(
     _assert_full_trace_matches_lookup_oracle(tree, start_cell_id, origin, direction, t_min=t_min, t_max=t_max)
 
 
+def _assert_first_event_sweep_matches_lookup(
+    tree: Octree,
+    start_cell_ids: tuple[int, ...],
+    sign_triplets: tuple[tuple[int, int, int], ...],
+    *,
+    min_path_length: int,
+    max_path_length: int | None = None,
+) -> None:
+    """Check one whole start/sign sweep of first-event cases against lookup."""
+    for start_cell_id in start_cell_ids:
+        for sign_triplet in sign_triplets:
+            try:
+                _assert_first_event_matches_lookup(
+                    tree,
+                    start_cell_id,
+                    sign_triplet,
+                    min_path_length=min_path_length,
+                    max_path_length=max_path_length,
+                )
+            except AssertionError as exc:
+                raise AssertionError(f"start_cell_id={int(start_cell_id)} sign_triplet={sign_triplet}") from exc
+
+
+def _assert_multiface_event_sweep_is_order_invariant(
+    tree: Octree,
+    start_cell_ids: tuple[int, ...],
+    sign_triplets: tuple[tuple[int, int, int], ...],
+) -> None:
+    """Check one whole start/sign sweep of multiface cases for order invariance."""
+    for start_cell_id in start_cell_ids:
+        for sign_triplet in sign_triplets:
+            try:
+                _assert_multiface_event_is_order_invariant(tree, start_cell_id, sign_triplet)
+            except AssertionError as exc:
+                raise AssertionError(f"start_cell_id={int(start_cell_id)} sign_triplet={sign_triplet}") from exc
+
+
+def _assert_center_trace_sweep_matches_lookup_oracle(
+    tree: Octree,
+    start_cell_ids: tuple[int, ...],
+    sign_triplets: tuple[tuple[int, int, int], ...],
+    *,
+    t_min: float = 0.0,
+    t_max: float = np.inf,
+) -> None:
+    """Check one whole center-origin sweep against the independent interval oracle."""
+    for start_cell_id in start_cell_ids:
+        for sign_triplet in sign_triplets:
+            try:
+                _assert_center_trace_matches_lookup_oracle(
+                    tree,
+                    start_cell_id,
+                    sign_triplet,
+                    t_min=t_min,
+                    t_max=t_max,
+                )
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"start_cell_id={int(start_cell_id)} sign_triplet={sign_triplet} "
+                    f"t_min={float(t_min)!r} t_max={float(t_max)!r}"
+                ) from exc
+
+
+def _tree_builder_name(tree_builder) -> str:
+    """Return one stable readable name for one toy-tree builder."""
+    return str(getattr(tree_builder, "__name__", repr(tree_builder)))
+
+
 def _assert_relative_origin_trace_matches_lookup_oracle(
     tree: Octree,
     start_cell_id: int,
@@ -1183,168 +1251,173 @@ def _regular_cell_id(ix: int, iy: int, iz: int) -> int:
     return ix * 9 + iy * 3 + iz
 
 
-@pytest.mark.parametrize("tree_builder", _REGULAR_TREE_BUILDERS)
-def test_regular_neighbor_table_invariants_hold(tree_builder) -> None:
+def test_regular_neighbor_table_invariants_hold() -> None:
     """The regular toy neighbor graph should satisfy the structural Cartesian invariants."""
-    tree = tree_builder()
-    _assert_neighbor_table_shape_and_range(tree)
-    _assert_boundary_iff_missing_neighbor(tree)
-    _assert_same_level_face_neighbors_match_ijk(tree)
-    _assert_face_patch_compatibility(tree)
+    for tree_builder in (_build_xyz_regular_tree, _build_xyz_regular_tree_nondyadic):
+        tree = tree_builder()
+        try:
+            _assert_neighbor_table_shape_and_range(tree)
+            _assert_boundary_iff_missing_neighbor(tree)
+            _assert_same_level_face_neighbors_match_ijk(tree)
+            _assert_face_patch_compatibility(tree)
+        except AssertionError as exc:
+            raise AssertionError(f"tree_builder={_tree_builder_name(tree_builder)}") from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REGULAR_TREE_BUILDERS)
-@pytest.mark.parametrize("sign_triplet", _SIGN_CASES)
-def test_regular_interior_first_event_matches_lookup(tree_builder, sign_triplet: tuple[int, int, int]) -> None:
+def test_regular_interior_first_event_matches_lookup() -> None:
     """Every same-level interior first event should match independent point lookup after the event."""
-    tree = tree_builder()
     start_cell_id = _regular_cell_id(1, 1, 1)
-    _assert_first_event_matches_lookup(
-        tree,
-        start_cell_id,
-        sign_triplet,
-        min_path_length=len(_active_faces_from_signs(sign_triplet)),
-        max_path_length=len(_active_faces_from_signs(sign_triplet)),
-    )
+    for tree_builder in (_build_xyz_regular_tree, _build_xyz_regular_tree_nondyadic):
+        tree = tree_builder()
+        try:
+            for sign_triplet in _SIGN_CASES:
+                _assert_first_event_matches_lookup(
+                    tree,
+                    start_cell_id,
+                    sign_triplet,
+                    min_path_length=len(_active_faces_from_signs(sign_triplet)),
+                    max_path_length=len(_active_faces_from_signs(sign_triplet)),
+                )
+        except AssertionError as exc:
+            raise AssertionError(f"tree_builder={_tree_builder_name(tree_builder)}") from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REGULAR_TREE_BUILDERS)
-@pytest.mark.parametrize("sign_triplet", _MULTIFACE_SIGN_CASES)
-def test_regular_interior_multiface_events_are_order_invariant(tree_builder, sign_triplet: tuple[int, int, int]) -> None:
+def test_regular_interior_multiface_events_are_order_invariant() -> None:
     """Same-level interior edge and corner events should not depend on face order."""
-    tree = tree_builder()
-    _assert_multiface_event_is_order_invariant(tree, _regular_cell_id(1, 1, 1), sign_triplet)
+    start_cell_id = _regular_cell_id(1, 1, 1)
+    for tree_builder in (_build_xyz_regular_tree, _build_xyz_regular_tree_nondyadic):
+        tree = tree_builder()
+        try:
+            _assert_multiface_event_sweep_is_order_invariant(tree, (start_cell_id,), _MULTIFACE_SIGN_CASES)
+        except AssertionError as exc:
+            raise AssertionError(f"tree_builder={_tree_builder_name(tree_builder)}") from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REGULAR_WHOLE_TRACE_TREE_BUILDERS)
-@pytest.mark.parametrize("start_cell_id", _REGULAR_CELL_IDS)
-@pytest.mark.parametrize("sign_triplet", _SIGN_CASES)
-def test_regular_whole_center_traces_match_lookup_oracle(
-    tree_builder,
-    start_cell_id: int,
-    sign_triplet: tuple[int, int, int],
-) -> None:
+def test_regular_whole_center_traces_match_lookup_oracle() -> None:
     """Every regular center-origin whole trace should match independent interval ownership."""
-    tree = tree_builder()
-    _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet)
+    for tree_builder in (_build_xyz_regular_tree, _build_xyz_regular_tree_nondyadic):
+        tree = tree_builder()
+        try:
+            _assert_center_trace_sweep_matches_lookup_oracle(tree, _REGULAR_CELL_IDS, _SIGN_CASES)
+        except AssertionError as exc:
+            raise AssertionError(f"tree_builder={_tree_builder_name(tree_builder)}") from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REGULAR_WHOLE_TRACE_TREE_BUILDERS)
-@pytest.mark.parametrize("start_cell_id", _REGULAR_CELL_IDS)
-@pytest.mark.parametrize("sign_triplet", _SIGN_CASES)
-def test_regular_clipped_center_traces_match_lookup_oracle(
-    tree_builder,
-    start_cell_id: int,
-    sign_triplet: tuple[int, int, int],
-) -> None:
+def test_regular_clipped_center_traces_match_lookup_oracle() -> None:
     """Regular center-origin traces should still match the oracle after clipping."""
-    tree = tree_builder()
-    _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet, t_min=0.5, t_max=2.5)
+    for tree_builder in (_build_xyz_regular_tree, _build_xyz_regular_tree_nondyadic):
+        tree = tree_builder()
+        try:
+            _assert_center_trace_sweep_matches_lookup_oracle(tree, _REGULAR_CELL_IDS, _SIGN_CASES, t_min=0.5, t_max=2.5)
+        except AssertionError as exc:
+            raise AssertionError(f"tree_builder={_tree_builder_name(tree_builder)}") from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REGULAR_TREE_BUILDERS)
-def test_regular_off_center_whole_traces_match_lookup_oracle(tree_builder) -> None:
+def test_regular_off_center_whole_traces_match_lookup_oracle() -> None:
     """Regular off-center rays from all eight interior octants should match the oracle."""
-    tree = tree_builder()
-    for start_cell_id in _REGULAR_CELL_IDS:
-        for relative_origin_xyz in _INTERIOR_OCTANT_RELATIVE_ORIGINS:
-            for sign_triplet in _SIGN_CASES:
-                _assert_relative_origin_trace_matches_lookup_oracle(
-                    tree,
-                    start_cell_id,
-                    relative_origin_xyz,
-                    sign_triplet,
-                )
+    for tree_builder in (_build_xyz_regular_tree, _build_xyz_regular_tree_nondyadic):
+        tree = tree_builder()
+        try:
+            for start_cell_id in _REGULAR_CELL_IDS:
+                for relative_origin_xyz in _INTERIOR_OCTANT_RELATIVE_ORIGINS:
+                    for sign_triplet in _SIGN_CASES:
+                        _assert_relative_origin_trace_matches_lookup_oracle(
+                            tree,
+                            start_cell_id,
+                            relative_origin_xyz,
+                            sign_triplet,
+                        )
+        except AssertionError as exc:
+            raise AssertionError(f"tree_builder={_tree_builder_name(tree_builder)}") from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REFINED_TREE_BUILDERS)
-@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
-def test_refined_neighbor_table_invariants_hold(tree_builder, refined_half: tuple[int, int, int]) -> None:
+def test_refined_neighbor_table_invariants_hold() -> None:
     """Every refined-octant toy neighbor graph should satisfy the structural Cartesian invariants."""
-    tree = tree_builder(refined_half)
-    _assert_neighbor_table_shape_and_range(tree)
-    _assert_boundary_iff_missing_neighbor(tree)
-    _assert_same_level_face_neighbors_match_ijk(tree)
-    _assert_face_patch_compatibility(tree)
+    for tree_builder in (_build_xyz_coarse_fine_tree, _build_xyz_coarse_fine_tree_nondyadic):
+        for refined_half in _REFINED_OCTANTS:
+            tree = tree_builder(refined_half)
+            try:
+                _assert_neighbor_table_shape_and_range(tree)
+                _assert_boundary_iff_missing_neighbor(tree)
+                _assert_same_level_face_neighbors_match_ijk(tree)
+                _assert_face_patch_compatibility(tree)
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"tree_builder={_tree_builder_name(tree_builder)} refined_half={refined_half}"
+                ) from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REFINED_TREE_BUILDERS)
-@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
-@pytest.mark.parametrize("start_cell_id", _REFINED_CELL_IDS)
-@pytest.mark.parametrize("sign_triplet", _SIGN_CASES)
-def test_refined_leaf_first_event_matches_lookup(
-    tree_builder,
-    refined_half: tuple[int, int, int],
-    start_cell_id: int,
-    sign_triplet: tuple[int, int, int],
-) -> None:
+def test_refined_leaf_first_event_matches_lookup() -> None:
     """Every coarse/fine leaf-center first event should match independent point lookup after the event."""
-    tree = tree_builder(refined_half)
-    _assert_first_event_matches_lookup(tree, start_cell_id, sign_triplet, min_path_length=1)
+    for tree_builder in (_build_xyz_coarse_fine_tree, _build_xyz_coarse_fine_tree_nondyadic):
+        for refined_half in _REFINED_OCTANTS:
+            tree = tree_builder(refined_half)
+            try:
+                _assert_first_event_sweep_matches_lookup(tree, _REFINED_CELL_IDS, _SIGN_CASES, min_path_length=1)
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"tree_builder={_tree_builder_name(tree_builder)} refined_half={refined_half}"
+                ) from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REFINED_TREE_BUILDERS)
-@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
-@pytest.mark.parametrize("start_cell_id", _REFINED_CELL_IDS)
-@pytest.mark.parametrize("sign_triplet", _MULTIFACE_SIGN_CASES)
-def test_refined_multiface_events_are_order_invariant(
-    tree_builder,
-    refined_half: tuple[int, int, int],
-    start_cell_id: int,
-    sign_triplet: tuple[int, int, int],
-) -> None:
+def test_refined_multiface_events_are_order_invariant() -> None:
     """Every refined multi-face first event should end in the same cell for any face order."""
-    tree = tree_builder(refined_half)
-    _assert_multiface_event_is_order_invariant(tree, start_cell_id, sign_triplet)
+    for tree_builder in (_build_xyz_coarse_fine_tree, _build_xyz_coarse_fine_tree_nondyadic):
+        for refined_half in _REFINED_OCTANTS:
+            tree = tree_builder(refined_half)
+            try:
+                _assert_multiface_event_sweep_is_order_invariant(tree, _REFINED_CELL_IDS, _MULTIFACE_SIGN_CASES)
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"tree_builder={_tree_builder_name(tree_builder)} refined_half={refined_half}"
+                ) from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REFINED_WHOLE_TRACE_TREE_BUILDERS)
-@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
-@pytest.mark.parametrize("start_cell_id", _REFINED_CELL_IDS)
-@pytest.mark.parametrize("sign_triplet", _SIGN_CASES)
-def test_refined_whole_center_traces_match_lookup_oracle(
-    tree_builder,
-    refined_half: tuple[int, int, int],
-    start_cell_id: int,
-    sign_triplet: tuple[int, int, int],
-) -> None:
+def test_refined_whole_center_traces_match_lookup_oracle() -> None:
     """Refined whole traces should match normalized independent interval ownership."""
-    tree = tree_builder(refined_half)
-    _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet)
+    for tree_builder in (_build_xyz_coarse_fine_tree, _build_xyz_coarse_fine_tree_nondyadic):
+        for refined_half in _REFINED_OCTANTS:
+            tree = tree_builder(refined_half)
+            try:
+                _assert_center_trace_sweep_matches_lookup_oracle(tree, _REFINED_CELL_IDS, _SIGN_CASES)
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"tree_builder={_tree_builder_name(tree_builder)} refined_half={refined_half}"
+                ) from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REFINED_WHOLE_TRACE_TREE_BUILDERS)
-@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
-@pytest.mark.parametrize("start_cell_id", _REFINED_CELL_IDS)
-@pytest.mark.parametrize("sign_triplet", _SIGN_CASES)
-def test_refined_clipped_center_traces_match_lookup_oracle(
-    tree_builder,
-    refined_half: tuple[int, int, int],
-    start_cell_id: int,
-    sign_triplet: tuple[int, int, int],
-) -> None:
+def test_refined_clipped_center_traces_match_lookup_oracle() -> None:
     """Refined traces should still match normalized midpoint-probe ownership after clipping."""
-    tree = tree_builder(refined_half)
-    _assert_center_trace_matches_lookup_oracle(tree, start_cell_id, sign_triplet, t_min=0.5, t_max=2.5)
+    for tree_builder in (_build_xyz_coarse_fine_tree, _build_xyz_coarse_fine_tree_nondyadic):
+        for refined_half in _REFINED_OCTANTS:
+            tree = tree_builder(refined_half)
+            try:
+                _assert_center_trace_sweep_matches_lookup_oracle(tree, _REFINED_CELL_IDS, _SIGN_CASES, t_min=0.5, t_max=2.5)
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"tree_builder={_tree_builder_name(tree_builder)} refined_half={refined_half}"
+                ) from exc
 
 
-@pytest.mark.parametrize("tree_builder", _REFINED_TREE_BUILDERS)
-@pytest.mark.parametrize("refined_half", _REFINED_OCTANTS)
-def test_refined_off_center_whole_traces_match_lookup_oracle(
-    tree_builder,
-    refined_half: tuple[int, int, int],
-) -> None:
+def test_refined_off_center_whole_traces_match_lookup_oracle() -> None:
     """Refined off-center rays from all eight interior octants should match the oracle."""
-    tree = tree_builder(refined_half)
-    for start_cell_id in _REFINED_CELL_IDS:
-        for relative_origin_xyz in _INTERIOR_OCTANT_RELATIVE_ORIGINS:
-            for sign_triplet in _SIGN_CASES:
-                _assert_relative_origin_trace_matches_lookup_oracle(
-                    tree,
-                    start_cell_id,
-                    relative_origin_xyz,
-                    sign_triplet,
-                )
+    for tree_builder in (_build_xyz_coarse_fine_tree, _build_xyz_coarse_fine_tree_nondyadic):
+        for refined_half in _REFINED_OCTANTS:
+            tree = tree_builder(refined_half)
+            try:
+                for start_cell_id in _REFINED_CELL_IDS:
+                    for relative_origin_xyz in _INTERIOR_OCTANT_RELATIVE_ORIGINS:
+                        for sign_triplet in _SIGN_CASES:
+                            _assert_relative_origin_trace_matches_lookup_oracle(
+                                tree,
+                                start_cell_id,
+                                relative_origin_xyz,
+                                sign_triplet,
+                            )
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"tree_builder={_tree_builder_name(tree_builder)} refined_half={refined_half}"
+                ) from exc
 
 
 @pytest.mark.parametrize(

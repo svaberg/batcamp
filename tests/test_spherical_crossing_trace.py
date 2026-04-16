@@ -535,6 +535,47 @@ def _assert_trace_matches_lookup_oracle(
     np.testing.assert_array_equal(owners, traced_cell_ids)
 
 
+def _assert_trace_sweep_matches_lookup_oracle_rpa(
+    tree: Octree,
+    origins_rpa: tuple[tuple[float, float, float], ...],
+    direction_xyz: tuple[float, float, float],
+    *,
+    clipped: bool = False,
+) -> None:
+    """Check one whole origin sweep for one direction against the independent oracle."""
+    direction = _normalize_direction(direction_xyz)
+    for origin_rpa in origins_rpa:
+        origin = _rpa_to_xyz(origin_rpa)
+        try:
+            if clipped:
+                _full_cell_ids, full_times = _lookup_oracle_trace(tree, origin, direction)
+                assert full_times.size >= 2
+                clip_lo = float(full_times[0] + 0.173 * (full_times[-1] - full_times[0]))
+                clip_hi = float(full_times[0] + 0.781 * (full_times[-1] - full_times[0]))
+                _assert_trace_matches_lookup_oracle(tree, origin, direction, t_min=clip_lo, t_max=clip_hi)
+            else:
+                _assert_trace_matches_lookup_oracle(tree, origin, direction)
+        except AssertionError as exc:
+            raise AssertionError(
+                f"origin_rpa={origin_rpa} direction_xyz={direction_xyz} clipped={bool(clipped)}"
+            ) from exc
+
+
+def _assert_direction_sweep_matches_lookup_oracle_rpa(
+    tree: Octree,
+    origins_rpa: tuple[tuple[float, float, float], ...],
+    directions_xyz: tuple[tuple[float, float, float], ...],
+    *,
+    clipped: bool = False,
+) -> None:
+    """Check one whole direction/origin sweep against the independent oracle."""
+    for direction_xyz in directions_xyz:
+        try:
+            _assert_trace_sweep_matches_lookup_oracle_rpa(tree, origins_rpa, direction_xyz, clipped=clipped)
+        except AssertionError as exc:
+            raise AssertionError(f"direction_xyz={direction_xyz} clipped={bool(clipped)}") from exc
+
+
 def _render_standalone_midpoint_image(
     interpolator: OctreeInterpolator,
     origins: np.ndarray,
@@ -693,72 +734,29 @@ def _sc_benchmark_ray(
     return tree, np.asarray(origins[iz, iy], dtype=float), np.asarray(directions[iz, iy], dtype=float), float(t_end)
 
 
-@pytest.mark.parametrize("origin_rpa", _INTERIOR_ORIGINS, ids=lambda origin: f"rpa={origin}")
-@pytest.mark.parametrize("direction_xyz", _RAY_DIRECTIONS, ids=lambda direction: f"direction={direction}")
-def test_trace_rpa_test_path_matches_lookup_oracle_for_many_interior_rays(
-    origin_rpa: tuple[float, float, float],
-    direction_xyz: tuple[float, float, float],
-) -> None:
+def test_trace_rpa_test_path_matches_lookup_oracle_for_many_interior_rays() -> None:
     tree = _build_uniform_rpa_tree()
-    origin = _rpa_to_xyz(origin_rpa)
-    direction = _normalize_direction(direction_xyz)
-    _assert_trace_matches_lookup_oracle(tree, origin, direction)
+    _assert_direction_sweep_matches_lookup_oracle_rpa(tree, _INTERIOR_ORIGINS, _RAY_DIRECTIONS)
 
 
-@pytest.mark.parametrize("origin_rpa", _INTERIOR_ORIGINS, ids=lambda origin: f"rpa={origin}")
-@pytest.mark.parametrize("direction_xyz", _RAY_DIRECTIONS, ids=lambda direction: f"direction={direction}")
-def test_trace_rpa_test_path_matches_lookup_oracle_for_clipped_interior_rays(
-    origin_rpa: tuple[float, float, float],
-    direction_xyz: tuple[float, float, float],
-) -> None:
+def test_trace_rpa_test_path_matches_lookup_oracle_for_clipped_interior_rays() -> None:
     tree = _build_uniform_rpa_tree()
-    origin = _rpa_to_xyz(origin_rpa)
-    direction = _normalize_direction(direction_xyz)
-    _full_cell_ids, full_times = _lookup_oracle_trace(tree, origin, direction)
-    assert full_times.size >= 2
-    clip_lo = float(full_times[0] + 0.173 * (full_times[-1] - full_times[0]))
-    clip_hi = float(full_times[0] + 0.781 * (full_times[-1] - full_times[0]))
-    _assert_trace_matches_lookup_oracle(tree, origin, direction, t_min=clip_lo, t_max=clip_hi)
+    _assert_direction_sweep_matches_lookup_oracle_rpa(tree, _INTERIOR_ORIGINS, _RAY_DIRECTIONS, clipped=True)
 
 
-@pytest.mark.parametrize("origin_rpa", _SEAM_ORIGINS, ids=lambda origin: f"rpa={origin}")
-@pytest.mark.parametrize("direction_xyz", _SEAM_DIRECTIONS, ids=lambda direction: f"direction={direction}")
-def test_trace_rpa_test_path_matches_lookup_oracle_for_many_seam_rays(
-    origin_rpa: tuple[float, float, float],
-    direction_xyz: tuple[float, float, float],
-) -> None:
+def test_trace_rpa_test_path_matches_lookup_oracle_for_many_seam_rays() -> None:
     tree = _build_uniform_rpa_tree()
-    origin = _rpa_to_xyz(origin_rpa)
-    direction = _normalize_direction(direction_xyz)
-    _assert_trace_matches_lookup_oracle(tree, origin, direction)
+    _assert_direction_sweep_matches_lookup_oracle_rpa(tree, _SEAM_ORIGINS, _SEAM_DIRECTIONS)
 
 
-@pytest.mark.parametrize("origin_rpa", _SEAM_STRESS_ORIGINS)
-@pytest.mark.parametrize("direction_xyz", _SEAM_STRESS_DIRECTIONS)
-def test_trace_rpa_test_path_matches_lookup_oracle_for_dense_seam_starts(
-    origin_rpa: tuple[float, float, float],
-    direction_xyz: tuple[float, float, float],
-) -> None:
+def test_trace_rpa_test_path_matches_lookup_oracle_for_dense_seam_starts() -> None:
     tree = _build_uniform_rpa_tree()
-    origin = _rpa_to_xyz(origin_rpa)
-    direction = _normalize_direction(direction_xyz)
-    _assert_trace_matches_lookup_oracle(tree, origin, direction)
+    _assert_direction_sweep_matches_lookup_oracle_rpa(tree, _SEAM_STRESS_ORIGINS, _SEAM_STRESS_DIRECTIONS)
 
 
-@pytest.mark.parametrize("origin_rpa", _SEAM_ORIGINS, ids=lambda origin: f"rpa={origin}")
-@pytest.mark.parametrize("direction_xyz", _SEAM_DIRECTIONS, ids=lambda direction: f"direction={direction}")
-def test_trace_rpa_test_path_matches_lookup_oracle_for_clipped_seam_rays(
-    origin_rpa: tuple[float, float, float],
-    direction_xyz: tuple[float, float, float],
-) -> None:
+def test_trace_rpa_test_path_matches_lookup_oracle_for_clipped_seam_rays() -> None:
     tree = _build_uniform_rpa_tree()
-    origin = _rpa_to_xyz(origin_rpa)
-    direction = _normalize_direction(direction_xyz)
-    _full_cell_ids, full_times = _lookup_oracle_trace(tree, origin, direction)
-    assert full_times.size >= 2
-    clip_lo = float(full_times[0] + 0.173 * (full_times[-1] - full_times[0]))
-    clip_hi = float(full_times[0] + 0.781 * (full_times[-1] - full_times[0]))
-    _assert_trace_matches_lookup_oracle(tree, origin, direction, t_min=clip_lo, t_max=clip_hi)
+    _assert_direction_sweep_matches_lookup_oracle_rpa(tree, _SEAM_ORIGINS, _SEAM_DIRECTIONS, clipped=True)
 
 
 @pytest.mark.parametrize(
@@ -873,28 +871,24 @@ def test_event_subface_id_rpa_uses_destination_side_rpa_intervals() -> None:
     assert subface_id == 2
 
 
-@pytest.mark.parametrize(
-    ("origin_rpa", "target_rpa", "expected_active_faces"),
-    _FIRST_EVENT_SINGLE_FACE_CASES + _FIRST_EVENT_MULTIFACE_CASES,
-)
-def test_rpa_first_event_matches_lookup_after_the_event(
-    origin_rpa: tuple[float, float, float],
-    target_rpa: tuple[float, float, float],
-    expected_active_faces: tuple[int, ...],
-) -> None:
-    _assert_first_event_matches_lookup_rpa(origin_rpa, target_rpa, expected_active_faces)
+def test_rpa_first_event_matches_lookup_after_the_event() -> None:
+    for origin_rpa, target_rpa, expected_active_faces in _FIRST_EVENT_SINGLE_FACE_CASES + _FIRST_EVENT_MULTIFACE_CASES:
+        try:
+            _assert_first_event_matches_lookup_rpa(origin_rpa, target_rpa, expected_active_faces)
+        except AssertionError as exc:
+            raise AssertionError(
+                f"origin_rpa={origin_rpa} target_rpa={target_rpa} expected_active_faces={expected_active_faces}"
+            ) from exc
 
 
-@pytest.mark.parametrize(
-    ("origin_rpa", "target_rpa", "expected_active_faces"),
-    _FIRST_EVENT_MULTIFACE_CASES,
-)
-def test_rpa_multiface_first_events_are_order_invariant(
-    origin_rpa: tuple[float, float, float],
-    target_rpa: tuple[float, float, float],
-    expected_active_faces: tuple[int, ...],
-) -> None:
-    _assert_multiface_event_is_order_invariant_rpa(origin_rpa, target_rpa, expected_active_faces)
+def test_rpa_multiface_first_events_are_order_invariant() -> None:
+    for origin_rpa, target_rpa, expected_active_faces in _FIRST_EVENT_MULTIFACE_CASES:
+        try:
+            _assert_multiface_event_is_order_invariant_rpa(origin_rpa, target_rpa, expected_active_faces)
+        except AssertionError as exc:
+            raise AssertionError(
+                f"origin_rpa={origin_rpa} target_rpa={target_rpa} expected_active_faces={expected_active_faces}"
+            ) from exc
 
 
 def test_trace_rpa_test_path_handles_one_outside_entry_start() -> None:
