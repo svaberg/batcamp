@@ -1021,6 +1021,20 @@ def test_rpa_render_midpoint_image_matches_standalone_midpoint_render() -> None:
     np.testing.assert_allclose(image, expected, atol=1.0e-10, rtol=0.0)
 
 
+def test_rpa_trace_chunk_uses_spherical_initial_crossing_capacity(monkeypatch) -> None:
+    tree = _build_uniform_rpa_tree()
+    tracer = OctreeRayTracer(tree)
+    monkeypatch.setattr(spherical_crossing_trace, "DEFAULT_CROSSING_BUFFER_SIZE", 1)
+
+    segments = tracer.trace(
+        np.array([[[2.0, 0.5, 0.25]]], dtype=float),
+        np.array([[[-1.0, 0.0, 0.0]]], dtype=float),
+    )
+
+    np.testing.assert_array_equal(np.diff(segments.ray_offsets), np.array([2], dtype=np.int64))
+    np.testing.assert_array_equal(np.diff(segments.time_offsets), np.array([3], dtype=np.int64))
+
+
 def test_sc_benchmark_artifact_rays_render_match_standalone_midpoint_image() -> None:
     ds, tree, origins, directions, t_end = _build_sc_benchmark_trace_case()
     tracer = OctreeRayTracer(tree)

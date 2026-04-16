@@ -17,13 +17,14 @@ from .octree import _FACE_SIDE
 from .octree import _FACE_TANGENTIAL_AXES
 from .spherical import xyz_to_rpa_components
 
-_DEFAULT_CROSSING_BUFFER_SIZE = 32
+DEFAULT_CROSSING_BUFFER_SIZE = 32
 _PI = math.pi
 _TWO_PI = 2.0 * math.pi
 _TIME_ATOL = 1.0e-12
 _TIME_RTOL = 64.0 * np.finfo(np.float64).eps
 
 __all__ = [
+    "DEFAULT_CROSSING_BUFFER_SIZE",
     "trace_ray",
     "trace_buffer",
 ]
@@ -994,7 +995,7 @@ def trace_ray(
     if not (start_t < stop_t):
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
 
-    crossing_capacity = _DEFAULT_CROSSING_BUFFER_SIZE
+    crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
     while True:
         cell_ids = np.empty(crossing_capacity, dtype=np.int64)
         times = np.empty(crossing_capacity + 1, dtype=np.float64)
