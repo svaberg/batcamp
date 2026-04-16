@@ -33,6 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Restore benchmark grid cache
+        uses: actions/cache@v4
+        with:
+          path: artifacts/test_example_imports/benchmark_grid_vs_ray_*_grid_cache_*.npz
+          key: grid-vs-ray-npz-${{ runner.os }}-${{ hashFiles('examples/benchmark_grid_vs_ray.py', 'examples/benchmark_helpers.py', 'tests/test_example_imports.py') }}
+
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
