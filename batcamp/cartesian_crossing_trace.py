@@ -17,7 +17,7 @@ from .octree import _FACE_AXIS
 from .octree import _FACE_SIDE
 from .octree import _FACE_TANGENTIAL_AXES
 
-_DEFAULT_CROSSING_BUFFER_SIZE = 256
+DEFAULT_CROSSING_BUFFER_SIZE = 256
 
 
 def trace_ray(
@@ -56,7 +56,7 @@ def trace_ray(
     if not np.any(direction != 0.0):
         raise ValueError("direction must be nonzero.")
 
-    crossing_capacity = _DEFAULT_CROSSING_BUFFER_SIZE
+    crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
     while True:
         cell_ids = np.empty(crossing_capacity, dtype=np.int64)
         times = np.empty(crossing_capacity + 1, dtype=np.float64)
@@ -134,9 +134,27 @@ def _trace_ray(
     for axis in range(3):
         start[axis] = float(origin[axis]) + float(start_t) * float(direction[axis])
         current[axis] = float(start[axis])
+    if float(start_t) == float(domain_enter):
+        for axis in range(3):
+            direction_value = float(direction[axis])
+            if direction_value == 0.0:
+                continue
+            lo_value = float(domain_bounds[axis, START])
+            hi_value = lo_value + float(domain_bounds[axis, WIDTH])
+            if direction_value > 0.0:
+                t0 = (lo_value - float(origin[axis])) / direction_value
+                face_value = lo_value
+            else:
+                t0 = (hi_value - float(origin[axis])) / direction_value
+                face_value = hi_value
+            if float(t0) == float(domain_enter):
+                start[axis] = face_value
+                current[axis] = face_value
     current_cell = find_cell(start, cell_child, root_cell_ids, cell_bounds, domain_bounds)
     if current_cell < 0:
         current_cell = int(start_cell_id)
+    if current_cell < 0:
+        return 0, 0
     n_cell = 0
     n_time = 1
     times_out[0] = float(start_t)

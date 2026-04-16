@@ -5,12 +5,11 @@ import numpy as np
 import pytest
 from batread import Dataset
 
-import batcamp.ray as ray_module
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
+from batcamp import cartesian_crossing_trace
 from batcamp import render_midpoint_image
-from batcamp.constants import XYZ_VARS
 from fake_dataset import build_cartesian_hex_mesh
 from sample_data_helper import data_file
 
@@ -106,46 +105,125 @@ def _build_unit_tree() -> Octree:
     return Octree(points, corners, tree_coord="xyz")
 
 
-def _real_file_image_rays(ds: Dataset, *, resolution: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return one Cartesian image grid spanning the file's `y/z` bounds."""
-    xyz = np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in XYZ_VARS))
-    dmin = np.min(xyz, axis=0)
-    dmax = np.max(xyz, axis=0)
-    y_coords = np.linspace(float(dmin[1]), float(dmax[1]), int(resolution), dtype=float)
-    z_coords = np.linspace(float(dmin[2]), float(dmax[2]), int(resolution), dtype=float)
-    y, z = np.meshgrid(y_coords, z_coords, indexing="xy")
-    x_pad = 0.1 * float(dmax[0] - dmin[0])
-    origins = np.stack((np.full_like(y, float(dmin[0]) - x_pad), y, z), axis=-1)
-    directions = np.array([1.0, 0.0, 0.0], dtype=float)
-    return origins, directions, y, z
+def _direction_id(signs: tuple[int, int, int]) -> str:
+    """Return one compact pytest id for one `{-1,0,1}^3` direction."""
+    labels = []
+    for sign, axis in zip(signs, ("x", "y", "z"), strict=True):
+        if sign == 0:
+            continue
+        labels.append(("+" if sign > 0 else "-") + axis)
+    return "".join(labels)
 
 
-def _expected_constant_density_path_lengths(tree: Octree, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-    """Return expected traced path lengths for `+x` rays through one file domain."""
+_CARDINAL_DIRECTION_PARAMS = [
+    pytest.param(
+        np.array(signs, dtype=float) / np.linalg.norm(np.array(signs, dtype=float)),
+        id=_direction_id(signs),
+    )
+    for signs in (
+        (ix, iy, iz)
+        for ix in (-1, 0, 1)
+        for iy in (-1, 0, 1)
+        for iz in (-1, 0, 1)
+        if (ix, iy, iz) != (0, 0, 0)
+    )
+]
+
+
+def _orthonormal_plane_basis(direction: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return one orthonormal basis for the plane perpendicular to `direction`."""
+    axis = int(np.argmin(np.abs(direction)))
+    seed = np.zeros(3, dtype=float)
+    seed[axis] = 1.0
+    plane_u = np.cross(direction, seed)
+    plane_u /= np.linalg.norm(plane_u)
+    plane_v = np.cross(direction, plane_u)
+    return plane_u, plane_v
+
+
+def _xyz_box_corners(tree: Octree) -> np.ndarray:
+    """Return the eight Cartesian box corners for one `xyz` tree domain."""
+    domain_lo = np.asarray(tree.packed_domain_bounds[:, 0], dtype=float)
+    domain_hi = domain_lo + np.asarray(tree.packed_domain_bounds[:, 1], dtype=float)
+    return np.array(
+        [
+            [x, y, z]
+            for x in (float(domain_lo[0]), float(domain_hi[0]))
+            for y in (float(domain_lo[1]), float(domain_hi[1]))
+            for z in (float(domain_lo[2]), float(domain_hi[2]))
+        ],
+        dtype=float,
+    )
+
+
+def _pixel_centers(start: float, stop: float, resolution: int) -> np.ndarray:
+    """Return one evenly spaced run of pixel-center coordinates."""
+    edges = np.linspace(float(start), float(stop), int(resolution) + 1, dtype=float)
+    return np.asarray((edges[:-1] + edges[1:]) / 2.0, dtype=float)
+
+
+def _real_file_chord_rays(
+    tree: Octree,
+    direction: np.ndarray,
+    *,
+    resolution: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return one ray plane for one real file and one normalized direction."""
+    plane_u, plane_v = _orthonormal_plane_basis(direction)
     if str(tree.tree_coord) == "xyz":
-        x0, wx = tree.packed_domain_bounds[0]
-        y0, wy = tree.packed_domain_bounds[1]
-        z0, wz = tree.packed_domain_bounds[2]
-        inside = (
-            (y >= float(y0))
-            & (y <= float(y0 + wy))
-            & (z >= float(z0))
-            & (z <= float(z0 + wz))
-        )
-        out = np.zeros_like(y, dtype=float)
-        out[inside] = float(wx)
+        corners = _xyz_box_corners(tree)
+        along = np.asarray(corners @ direction, dtype=float)
+        coords_u = np.asarray(corners @ plane_u, dtype=float)
+        coords_v = np.asarray(corners @ plane_v, dtype=float)
+        pad = 0.1 * float(np.max(along) - np.min(along))
+        start_t = float(np.min(along) - pad)
+        u_coords = _pixel_centers(float(np.min(coords_u)), float(np.max(coords_u)), int(resolution))
+        v_coords = _pixel_centers(float(np.min(coords_v)), float(np.max(coords_v)), int(resolution))
+    else:
+        domain_rmax = float(np.sum(tree.packed_domain_bounds[0], dtype=float))
+        start_t = -1.1 * domain_rmax
+        u_coords = _pixel_centers(-domain_rmax, domain_rmax, int(resolution))
+        v_coords = _pixel_centers(-domain_rmax, domain_rmax, int(resolution))
+
+    plane_uu, plane_vv = np.meshgrid(u_coords, v_coords, indexing="xy")
+    origins = (
+        plane_uu[..., None] * plane_u[None, None, :]
+        + plane_vv[..., None] * plane_v[None, None, :]
+        + start_t * direction[None, None, :]
+    )
+    return origins, direction, plane_uu, plane_vv
+
+
+def _expected_constant_density_path_lengths(
+    tree: Octree,
+    origins: np.ndarray,
+    direction: np.ndarray,
+    plane_u: np.ndarray,
+    plane_v: np.ndarray,
+) -> np.ndarray:
+    """Return expected traced path lengths for one real-file ray plane."""
+    if str(tree.tree_coord) == "xyz":
+        domain_lo = np.asarray(tree.packed_domain_bounds[:, 0], dtype=float)
+        domain_hi = domain_lo + np.asarray(tree.packed_domain_bounds[:, 1], dtype=float)
+        out = np.zeros(origins.shape[:-1], dtype=float)
+        flat_origins = origins.reshape(-1, 3)
+        for ray_id, origin in enumerate(flat_origins):
+            interval = _domain_interval_xyz(origin, direction, domain_lo, domain_hi)
+            if interval is None:
+                continue
+            out.reshape(-1)[ray_id] = float(interval[1] - interval[0])
         return out
 
-    r_inner = float(tree.packed_domain_bounds[0, 0])
-    r_outer = float(np.sum(tree.packed_domain_bounds[0], dtype=float))
-    impact_sq = y * y + z * z
-    out = np.zeros_like(y, dtype=float)
-    outer_half = np.zeros_like(y, dtype=float)
-    outer = impact_sq < r_outer * r_outer
-    outer_half[outer] = np.sqrt(r_outer * r_outer - impact_sq[outer])
+    domain_rmin = float(tree.packed_domain_bounds[0, 0])
+    domain_rmax = float(np.sum(tree.packed_domain_bounds[0], dtype=float))
+    ray_rmin_sq = plane_u * plane_u + plane_v * plane_v
+    out = np.zeros_like(plane_u, dtype=float)
+    outer_half = np.zeros_like(plane_u, dtype=float)
+    outer = ray_rmin_sq < domain_rmax * domain_rmax
+    outer_half[outer] = np.sqrt(domain_rmax * domain_rmax - ray_rmin_sq[outer])
     out[outer] = 2.0 * outer_half[outer]
-    inner = impact_sq < r_inner * r_inner
-    out[inner] = outer_half[inner] - np.sqrt(r_inner * r_inner - impact_sq[inner])
+    inner = ray_rmin_sq < domain_rmin * domain_rmin
+    out[inner] = outer_half[inner] - np.sqrt(domain_rmin * domain_rmin - ray_rmin_sq[inner])
     return out
 
 
@@ -164,8 +242,9 @@ def _assert_path_lengths_match_expected(
     tree: Octree,
     traced: np.ndarray,
     expected: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
+    plane_u: np.ndarray,
+    plane_v: np.ndarray,
+    direction: np.ndarray,
     *,
     atol: float,
     rtol: float,
@@ -178,9 +257,9 @@ def _assert_path_lengths_match_expected(
     diff = np.abs(traced - expected)
     diff[close] = -1.0
     ij = np.unravel_index(int(np.argmax(diff)), diff.shape)
-    y_ij = float(y[ij])
-    z_ij = float(z[ij])
-    impact = float(np.hypot(y_ij, z_ij))
+    plane_u_ij = float(plane_u[ij])
+    plane_v_ij = float(plane_v[ij])
+    impact = float(np.hypot(plane_u_ij, plane_v_ij))
     traced_ij = float(traced[ij])
     expected_ij = float(expected[ij])
     if str(tree.tree_coord) == "rpa":
@@ -190,7 +269,8 @@ def _assert_path_lengths_match_expected(
         inner_chord = 0.0 if impact >= domain_rmin else 2.0 * math.sqrt(domain_rmin * domain_rmin - impact * impact)
         raise AssertionError(
             "traced path length mismatch "
-            f"at ij={ij}: y={y_ij:g}, z={z_ij:g}, "
+            f"at ij={ij}: direction={tuple(float(value) for value in direction)}, "
+            f"plane_u={plane_u_ij:g}, plane_v={plane_v_ij:g}, "
             f"ray_rmin={impact:g}, domain_rmin={domain_rmin:g}, domain_rmax={domain_rmax:g}, "
             f"outer_chord={outer_chord:g}, inner_chord={inner_chord:g}, "
             f"traced={traced_ij:g}, expected={expected_ij:g}"
@@ -198,7 +278,8 @@ def _assert_path_lengths_match_expected(
 
     raise AssertionError(
         "traced path length mismatch "
-        f"at ij={ij}: y={y_ij}, z={z_ij}, traced={traced_ij}, expected={expected_ij}"
+        f"at ij={ij}: direction={tuple(float(value) for value in direction)}, "
+        f"plane_u={plane_u_ij:g}, plane_v={plane_v_ij:g}, traced={traced_ij:g}, expected={expected_ij:g}"
     )
 
 
@@ -382,7 +463,7 @@ def test_trace_broadcasts_one_direction_vector_over_batched_origins() -> None:
 def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch) -> None:
     tree = _build_long_x_tree()
     tracer = OctreeRayTracer(tree)
-    monkeypatch.setattr(ray_module, "DEFAULT_CROSSING_BUFFER_SIZE", 32)
+    monkeypatch.setattr(cartesian_crossing_trace, "DEFAULT_CROSSING_BUFFER_SIZE", 32)
 
     origin = np.array([-1.0, 0.5, 0.5], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
@@ -481,23 +562,28 @@ def test_trilinear_image_integrates_bilinear_slanted_ray() -> None:
     np.testing.assert_allclose(image_trilinear, np.array([[7.0 / 24.0]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
+@pytest.mark.parametrize("direction", _CARDINAL_DIRECTION_PARAMS)
 @pytest.mark.parametrize("file_name", _REAL_FILE_PARAMS)
-def test_trace_path_lengths_match_constant_density_path_length_on_real_files(file_name: str) -> None:
+def test_trace_path_lengths_match_constant_density_path_length_on_real_files(
+    file_name: str,
+    direction: np.ndarray,
+) -> None:
     ds = Dataset.from_file(str(data_file(file_name)))
     tree = Octree.from_ds(ds)
     tracer = OctreeRayTracer(tree)
-    origins, directions, y, z = _real_file_image_rays(ds, resolution=65)
+    origins, directions, plane_u, plane_v = _real_file_chord_rays(tree, direction, resolution=65)
 
     segments = tracer.trace(origins, directions)
     traced_lengths = _trace_path_lengths(segments)
-    expected = _expected_constant_density_path_lengths(tree, y, z)
+    expected = _expected_constant_density_path_lengths(tree, origins, directions, plane_u, plane_v)
 
     _assert_path_lengths_match_expected(
         tree,
         traced_lengths,
         expected,
-        y,
-        z,
+        plane_u,
+        plane_v,
+        directions,
         atol=1.0e-9,
         rtol=1.0e-9,
     )
