@@ -48,6 +48,14 @@ jobs:
         shell: bash -l {0}
         run: pytest -q -m "not pooch and not perf" --cov=. --cov-report=xml:pytest-cobertura.xml
 
+      - name: Upload benchmark example artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-example-artifacts
+          path: artifacts/test_example_imports
+          if-no-files-found: warn
+
       - name: Codacy Coverage Reporter
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: codacy/codacy-coverage-reporter-action@v1.3.0
