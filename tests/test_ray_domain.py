@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import math
 import numpy as np
+import pytest
+from batread import Dataset
 
 import batcamp.ray as ray_module
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import render_midpoint_image
+from batcamp.constants import XYZ_VARS
 from fake_dataset import build_cartesian_hex_mesh
+from sample_data_helper import data_file
 
 
 def _build_xyz_tree() -> Octree:
@@ -101,6 +106,102 @@ def _build_unit_tree() -> Octree:
     return Octree(points, corners, tree_coord="xyz")
 
 
+def _real_file_image_rays(ds: Dataset, *, resolution: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return one Cartesian image grid spanning the file's `y/z` bounds."""
+    xyz = np.column_stack(tuple(np.asarray(ds[name], dtype=float) for name in XYZ_VARS))
+    dmin = np.min(xyz, axis=0)
+    dmax = np.max(xyz, axis=0)
+    y_coords = np.linspace(float(dmin[1]), float(dmax[1]), int(resolution), dtype=float)
+    z_coords = np.linspace(float(dmin[2]), float(dmax[2]), int(resolution), dtype=float)
+    y, z = np.meshgrid(y_coords, z_coords, indexing="xy")
+    x_pad = 0.1 * float(dmax[0] - dmin[0])
+    origins = np.stack((np.full_like(y, float(dmin[0]) - x_pad), y, z), axis=-1)
+    directions = np.array([1.0, 0.0, 0.0], dtype=float)
+    return origins, directions, y, z
+
+
+def _expected_constant_density_path_lengths(tree: Octree, y: np.ndarray, z: np.ndarray) -> np.ndarray:
+    """Return expected traced path lengths for `+x` rays through one file domain."""
+    if str(tree.tree_coord) == "xyz":
+        x0, wx = tree.packed_domain_bounds[0]
+        y0, wy = tree.packed_domain_bounds[1]
+        z0, wz = tree.packed_domain_bounds[2]
+        inside = (
+            (y >= float(y0))
+            & (y <= float(y0 + wy))
+            & (z >= float(z0))
+            & (z <= float(z0 + wz))
+        )
+        out = np.zeros_like(y, dtype=float)
+        out[inside] = float(wx)
+        return out
+
+    r_inner = float(tree.packed_domain_bounds[0, 0])
+    r_outer = float(np.sum(tree.packed_domain_bounds[0], dtype=float))
+    impact_sq = y * y + z * z
+    out = np.zeros_like(y, dtype=float)
+    outer_half = np.zeros_like(y, dtype=float)
+    outer = impact_sq < r_outer * r_outer
+    outer_half[outer] = np.sqrt(r_outer * r_outer - impact_sq[outer])
+    out[outer] = 2.0 * outer_half[outer]
+    inner = impact_sq < r_inner * r_inner
+    out[inner] = outer_half[inner] - np.sqrt(r_inner * r_inner - impact_sq[inner])
+    return out
+
+
+def _trace_path_lengths(segments) -> np.ndarray:
+    """Return one image of positive traced path lengths."""
+    out = np.zeros(segments.ray_shape, dtype=float)
+    for ray_id in range(int(np.prod(segments.ray_shape, dtype=int))):
+        cell_ids, times = _ray_slice(segments, ray_id)
+        _positive_cell_ids, positive_times = _positive_trace(cell_ids, times)
+        if positive_times.size:
+            out.reshape(-1)[ray_id] = float(np.sum(np.diff(positive_times), dtype=float))
+    return out
+
+
+def _assert_path_lengths_match_expected(
+    tree: Octree,
+    traced: np.ndarray,
+    expected: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    *,
+    atol: float,
+    rtol: float,
+) -> None:
+    """Assert traced path lengths with one detailed first-failure report."""
+    close = np.isclose(traced, expected, atol=atol, rtol=rtol)
+    if np.all(close):
+        return
+
+    diff = np.abs(traced - expected)
+    diff[close] = -1.0
+    ij = np.unravel_index(int(np.argmax(diff)), diff.shape)
+    y_ij = float(y[ij])
+    z_ij = float(z[ij])
+    impact = float(np.hypot(y_ij, z_ij))
+    traced_ij = float(traced[ij])
+    expected_ij = float(expected[ij])
+    if str(tree.tree_coord) == "rpa":
+        domain_rmin = float(tree.packed_domain_bounds[0, 0])
+        domain_rmax = float(np.sum(tree.packed_domain_bounds[0], dtype=float))
+        outer_chord = 0.0 if impact >= domain_rmax else 2.0 * math.sqrt(domain_rmax * domain_rmax - impact * impact)
+        inner_chord = 0.0 if impact >= domain_rmin else 2.0 * math.sqrt(domain_rmin * domain_rmin - impact * impact)
+        raise AssertionError(
+            "traced path length mismatch "
+            f"at ij={ij}: y={y_ij:g}, z={z_ij:g}, "
+            f"ray_rmin={impact:g}, domain_rmin={domain_rmin:g}, domain_rmax={domain_rmax:g}, "
+            f"outer_chord={outer_chord:g}, inner_chord={inner_chord:g}, "
+            f"traced={traced_ij:g}, expected={expected_ij:g}"
+        )
+
+    raise AssertionError(
+        "traced path length mismatch "
+        f"at ij={ij}: y={y_ij}, z={z_ij}, traced={traced_ij}, expected={expected_ij}"
+    )
+
+
 def _ray_slice(segments, ray_id: int) -> tuple[np.ndarray, np.ndarray]:
     """Return one packed crossing-trace slice."""
     cell_lo = int(segments.ray_offsets[ray_id])
@@ -125,6 +226,15 @@ def _positive_trace(cell_ids: np.ndarray, times: np.ndarray) -> tuple[np.ndarray
         positive_cell_ids.append(int(cell_id))
         positive_times.append(float(t_stop))
     return np.array(positive_cell_ids, dtype=np.int64), np.array(positive_times, dtype=float)
+
+
+_REAL_FILE_PARAMS = [
+    pytest.param("3d__var_1_n00000000.plt", id="local_example"),
+    pytest.param("3d__var_2_n00006003.plt", id="local_xyz"),
+    pytest.param("3d__var_2_n00060005.plt", id="local_rpa"),
+    pytest.param("3d__var_4_n00044000.plt", id="pooch_sc", marks=pytest.mark.pooch),
+    pytest.param("3d__var_4_n00005000.plt", id="pooch_ih", marks=pytest.mark.pooch),
+]
 
 
 def _domain_interval_xyz(
@@ -369,3 +479,25 @@ def test_trilinear_image_integrates_bilinear_slanted_ray() -> None:
 
     np.testing.assert_array_equal(counts_trilinear, np.array([[1]], dtype=np.int64))
     np.testing.assert_allclose(image_trilinear, np.array([[7.0 / 24.0]], dtype=float), atol=1.0e-12, rtol=0.0)
+
+
+@pytest.mark.parametrize("file_name", _REAL_FILE_PARAMS)
+def test_trace_path_lengths_match_constant_density_path_length_on_real_files(file_name: str) -> None:
+    ds = Dataset.from_file(str(data_file(file_name)))
+    tree = Octree.from_ds(ds)
+    tracer = OctreeRayTracer(tree)
+    origins, directions, y, z = _real_file_image_rays(ds, resolution=65)
+
+    segments = tracer.trace(origins, directions)
+    traced_lengths = _trace_path_lengths(segments)
+    expected = _expected_constant_density_path_lengths(tree, y, z)
+
+    _assert_path_lengths_match_expected(
+        tree,
+        traced_lengths,
+        expected,
+        y,
+        z,
+        atol=1.0e-9,
+        rtol=1.0e-9,
+    )

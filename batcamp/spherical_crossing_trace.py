@@ -140,15 +140,8 @@ def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float
             continue
         if point_z * cos_polar < -(_TIME_ATOL + _TIME_RTOL):
             continue
-        z_over_radius = point_z / radius
-        if z_over_radius < -1.0:
-            z_over_radius = -1.0
-        elif z_over_radius > 1.0:
-            z_over_radius = 1.0
-        polar_here = math.acos(z_over_radius)
-        if _times_close(polar_here, polar_value):
-            roots_out[n_valid] = root
-            n_valid += 1
+        roots_out[n_valid] = root
+        n_valid += 1
     return int(n_valid)
 
 
