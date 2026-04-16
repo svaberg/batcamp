@@ -33,6 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Restore pooch cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.XDG_CACHE_HOME }}/pooch
+          key: pooch-${{ runner.os }}-${{ hashFiles('examples/benchmark_helpers.py', 'tests/sample_data_helper.py') }}
+          restore-keys: |
+            pooch-${{ runner.os }}-
+
       - name: Restore benchmark grid cache
         uses: actions/cache@v4
         with:
@@ -86,6 +94,19 @@ jobs:
             artifacts/test_example_imports/benchmark_random_points.log
             artifacts/test_example_imports/benchmark_random_points_example_*.png
             artifacts/test_example_imports/benchmark_random_points_example_*.md
+          if-no-files-found: warn
+
+      - name: Upload star-movie benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-star-movie-artifacts
+          path: |
+            artifacts/test_example_imports/benchmark_star_movie.log
+            artifacts/test_example_imports/benchmark_star_movie_sc.mp4
+            artifacts/test_example_imports/benchmark_star_movie_sc_timing_report.md
+            artifacts/test_example_imports/benchmark_star_movie_sc_frame_times.csv
+            artifacts/test_example_imports/benchmark_star_movie_sc_frames/frame_*.png
           if-no-files-found: warn
 
       - name: Codacy Coverage Reporter

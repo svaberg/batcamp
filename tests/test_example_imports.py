@@ -14,6 +14,7 @@ _BENCHMARK_SCRIPTS = [
     "benchmark_grid_vs_ray.py",
     "benchmark_xy_plane.py",
     "benchmark_random_points.py",
+    "benchmark_star_movie.py",
 ]
 
 _BENCHMARK_TEST_MAX_SECONDS = 10.0
@@ -157,6 +158,41 @@ def test_random_points_benchmark_runs_one_example_case() -> None:
     log_text = log_path.read_text(encoding="utf-8")
     assert expected_path.exists()
     assert "[example] done -> benchmark_random_points_example_*" in log_text
+
+
+def test_star_movie_benchmark_runs_one_example_case() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_run_for_test")
+    out_root = _example_benchmark_output_root(repo_root)
+    frame_dir = out_root / "benchmark_star_movie_sc_frames"
+    movie_path = out_root / "benchmark_star_movie_sc.mp4"
+    report_path = out_root / "benchmark_star_movie_sc_timing_report.md"
+    for path in frame_dir.glob("frame_*.png"):
+        path.unlink()
+    movie_path.unlink(missing_ok=True)
+    report_path.unlink(missing_ok=True)
+    progress, log_path = _example_benchmark_progress(module, out_root, "benchmark_star_movie.log")
+
+    module._run_case(
+        case=module.DatasetCase("sc", "3d__var_4_n00044000.plt"),
+        repo_root=repo_root,
+        out_root=out_root,
+        progress=progress,
+        n_frames=4,
+        nx=64,
+        ny=64,
+        fps=8,
+        distance_multiplier=2.0,
+        view_width_multiplier=1.5,
+        elevation_deg=15.0,
+        variable="Rho [g/cm^3]",
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert (frame_dir / "frame_0000.png").exists()
+    assert movie_path.exists()
+    assert report_path.exists()
+    assert "[sc] done -> benchmark_star_movie_sc_*" in log_text
 
 
 def test_grid_vs_ray_rejects_resolution_too_small_for_symlog_height_colors() -> None:
