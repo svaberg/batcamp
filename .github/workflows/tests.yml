@@ -54,12 +54,38 @@ jobs:
         shell: bash -l {0}
         run: pytest -q -m "not pooch and not perf" --cov=. --cov-report=xml:pytest-cobertura.xml
 
-      - name: Upload benchmark example artifacts
+      - name: Upload grid-vs-ray benchmark artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-example-artifacts
-          path: artifacts/test_example_imports
+          name: benchmark-grid-vs-ray-artifacts
+          path: |
+            artifacts/test_example_imports/benchmark_grid_vs_ray.log
+            artifacts/test_example_imports/benchmark_grid_vs_ray_example_trilinear_*.png
+            artifacts/test_example_imports/benchmark_grid_vs_ray_example_trilinear_*.md
+            artifacts/test_example_imports/benchmark_grid_vs_ray_example_trilinear_*.csv
+          if-no-files-found: warn
+
+      - name: Upload xy-plane benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-xy-plane-artifacts
+          path: |
+            artifacts/test_example_imports/benchmark_xy_plane.log
+            artifacts/test_example_imports/benchmark_xy_plane_example_*.png
+            artifacts/test_example_imports/benchmark_xy_plane_example_*.md
+          if-no-files-found: warn
+
+      - name: Upload random-points benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-random-points-artifacts
+          path: |
+            artifacts/test_example_imports/benchmark_random_points.log
+            artifacts/test_example_imports/benchmark_random_points_example_*.png
+            artifacts/test_example_imports/benchmark_random_points_example_*.md
           if-no-files-found: warn
 
       - name: Codacy Coverage Reporter
