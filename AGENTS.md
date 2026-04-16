@@ -58,8 +58,26 @@ Avoid:
 
 ## Executing tests, code and notebooks
 - If you see an `environment.yml` file, assume that the environment exists and use it when running tests, code, and notebooks.
-- When you update notebooks, run them end-to-end and leave them in a run state.
+- On branches other than `main`, commit notebooks unrun: no outputs and no execution counts.
+- On `main`, commit run notebooks only after running them exactly once from a clean kernel.
 - When notebooks generate plots you should check whether they look right.
+- Before committing, run the same flake8 command as CI and do not commit if it fails: `flake8 batcamp tests examples --count --statistics`.
+
+## Execution discipline
+- Verify before claiming. If a statement depends on code, tests, profiling, timings, or artifacts, check it first or say that it has not been checked.
+- If something is not verified, say so plainly and use tentative language. Prefer `I think ...`, `it looks like ...`, or `could it be that ...` over stating guesses as facts.
+- Treat performance claims as experimental results, not impressions. Use controlled before/after comparisons with the same command, the same workload, and no overlapping runs.
+- Prefer the authoritative benchmark or script for the subsystem over ad hoc side measurements. Side profiling may explain a result, but it does not replace the real benchmark.
+- Default to the smallest relevant check:
+  - `py_compile` for syntax
+  - the narrowest relevant `pytest -k ...` selection for behavior
+  - a full suite only when it is truly needed or explicitly requested
+- Do not launch long-running tests or benchmarks when a targeted check is sufficient.
+- When a result is contaminated, noisy, or obviously inconsistent, rerun it properly before drawing a conclusion.
+- Once a change is accepted and the relevant checks are green, commit it promptly. Do not leave accepted work hanging uncommitted.
+- Do not stop halfway through obvious cleanup. If a naming, API, or wording rule is accepted, apply it consistently through the touched code.
+- Do not narrate process when the finished result is available. Report the concrete change, the concrete check, or the concrete blocker.
+- Before tagging, releasing, or talking about branch state, verify the current branch, target commit, and whether the work belongs on that branch at all.
 
 ## Notebook hygiene
 - Notebooks should demonstrate basic use cases, and showcase the speed, precision, and elegance of the library code.
