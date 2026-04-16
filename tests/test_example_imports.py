@@ -12,10 +12,12 @@ import pytest
 
 _BENCHMARK_SCRIPTS = [
     "benchmark_grid_vs_ray.py",
-    "benchmark_ray_step_costs.py",
     "benchmark_xy_plane.py",
     "benchmark_random_points.py",
 ]
+
+_BENCHMARK_TEST_MAX_SECONDS = 10.0
+_BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION = 256
 
 
 def _env_without_pythonpath() -> dict[str, str]:
@@ -24,14 +26,15 @@ def _env_without_pythonpath() -> dict[str, str]:
     return env
 
 
-def _load_benchmark_grid_vs_ray_module():
+def _load_example_module(script_name: str, module_name: str):
     repo_root = Path(__file__).resolve().parents[1]
     examples_dir = repo_root / "examples"
+    os.environ.setdefault("MPLBACKEND", "Agg")
     sys.path.insert(0, str(examples_dir))
     try:
         spec = importlib.util.spec_from_file_location(
-            "benchmark_grid_vs_ray_for_test",
-            examples_dir / "benchmark_grid_vs_ray.py",
+            module_name,
+            examples_dir / script_name,
         )
         assert spec is not None
         assert spec.loader is not None
@@ -40,6 +43,24 @@ def _load_benchmark_grid_vs_ray_module():
         return module
     finally:
         sys.path.remove(str(examples_dir))
+
+
+def _load_benchmark_grid_vs_ray_module():
+    return _load_example_module("benchmark_grid_vs_ray.py", "benchmark_grid_vs_ray_for_test")
+
+
+def _example_benchmark_output_root(repo_root: Path) -> Path:
+    out_root = repo_root / "artifacts" / "test_example_imports"
+    out_root.mkdir(parents=True, exist_ok=True)
+    return out_root
+
+
+def _example_benchmark_progress(module, out_root: Path, log_name: str):
+    log_path = out_root / log_name
+    log_path.write_text("", encoding="utf-8")
+    module._configure_progress_logging(log_path=log_path)
+    module._configure_builder_logging(log_path=log_path)
+    return module._ProgressReporter(log_path=log_path), log_path
 
 
 @pytest.mark.parametrize("script_name", _BENCHMARK_SCRIPTS)
@@ -55,6 +76,87 @@ def test_benchmark_scripts_run_from_examples(script_name: str) -> None:
         text=True,
         capture_output=True,
     )
+
+
+def test_grid_vs_ray_benchmark_runs_one_example_case() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_grid_vs_ray.py", "benchmark_grid_vs_ray_run_for_test")
+    out_root = _example_benchmark_output_root(repo_root)
+    expected_path = out_root / (
+        "benchmark_grid_vs_ray_example_trilinear_"
+        f"resample_grid_vs_ray_{_BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION}x"
+        f"{_BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION}.png"
+    )
+    expected_path.unlink(missing_ok=True)
+    progress, log_path = _example_benchmark_progress(module, out_root, "benchmark_grid_vs_ray.log")
+
+    module._run_case(
+        case=module.DatasetCase("example", "3d__var_1_n00000000.plt"),
+        repo_root=repo_root,
+        out_root=out_root,
+        progress=progress,
+        resolutions=module._resolution_ramp(4, 1024),
+        max_seconds_per_image=_BENCHMARK_TEST_MAX_SECONDS,
+        nx_sum=_BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION,
+        ray_method="trilinear",
+        variable="Rho [g/cm^3]",
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert expected_path.exists()
+    assert "[example] done -> benchmark_grid_vs_ray_example_<method>_*" in log_text
+
+
+def test_xy_plane_benchmark_runs_one_example_case() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_xy_plane.py", "benchmark_xy_plane_run_for_test")
+    out_root = _example_benchmark_output_root(repo_root)
+    expected_path = out_root / (
+        "benchmark_xy_plane_example_"
+        f"xy_plane_{_BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION}x"
+        f"{_BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION}.png"
+    )
+    expected_path.unlink(missing_ok=True)
+    progress, log_path = _example_benchmark_progress(module, out_root, "benchmark_xy_plane.log")
+
+    module._run_case(
+        case=module.DatasetCase("example", "3d__var_1_n00000000.plt"),
+        repo_root=repo_root,
+        out_root=out_root,
+        progress=progress,
+        resolutions=module._resolution_ramp(2, 1024),
+        max_seconds_per_image=_BENCHMARK_TEST_MAX_SECONDS,
+        z_plane=0.0,
+        variable="Rho [g/cm^3]",
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert expected_path.exists()
+    assert "[example] done -> benchmark_xy_plane_example_*" in log_text
+
+
+def test_random_points_benchmark_runs_one_example_case() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_random_points.py", "benchmark_random_points_run_for_test")
+    out_root = _example_benchmark_output_root(repo_root)
+    expected_path = out_root / "benchmark_random_points_example_timing_report.md"
+    expected_path.unlink(missing_ok=True)
+    progress, log_path = _example_benchmark_progress(module, out_root, "benchmark_random_points.log")
+
+    module._run_case(
+        case=module.DatasetCase("example", "3d__var_1_n00000000.plt"),
+        case_index=0,
+        repo_root=repo_root,
+        out_root=out_root,
+        progress=progress,
+        query_counts=module._resolution_ramp(1024, 131072),
+        max_seconds_per_query=_BENCHMARK_TEST_MAX_SECONDS,
+        variable="Rho [g/cm^3]",
+    )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert expected_path.exists()
+    assert "[example] done -> benchmark_random_points_example_*" in log_text
 
 
 def test_grid_vs_ray_rejects_resolution_too_small_for_symlog_height_colors() -> None:
