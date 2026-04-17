@@ -40,7 +40,14 @@ RAY_STATUS_OK = 0
 
 
 def _log_ray_status(label: str, coord: str, n_rays: int, ray_status: np.ndarray) -> None:
-    """Log one summarized raw status-code line when any ray failed."""
+    """Log one summarized raw status-code line when any ray failed.
+
+    Args:
+        label (const): Short label for the calling trace/render path.
+        coord (const): Octree coordinate system name.
+        n_rays (const): Number of traced rays.
+        ray_status (const): Per-ray status codes with `0` for success.
+    """
     failed_status = np.asarray(ray_status[ray_status < 0], dtype=np.int64)
     if failed_status.size == 0:
         return
@@ -124,7 +131,16 @@ def _pack_crossing_buffers(
 
 
 def _reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_shape: tuple[int, ...]) -> np.ndarray:
-    """Reshape one flat image onto the requested ray/value shape."""
+    """Reshape one flat image onto the requested ray/value shape.
+
+    Args:
+        image_flat (const): Flat image array with one leading ray axis.
+        ray_shape (const): Target ray-grid shape.
+        value_shape (const): Per-ray value shape.
+
+    Returns:
+        Image reshaped onto `ray_shape + value_shape`.
+    """
     out = image_flat.reshape(tuple(ray_shape) + tuple(value_shape))
     if value_shape:
         return out
@@ -202,7 +218,11 @@ class OctreeRayTracer:
     """
 
     def __init__(self, tree: Octree) -> None:
-        """Bind one tracer to one built octree."""
+        """Bind one tracer to one built octree.
+
+        Args:
+            tree (const): Built octree whose coordinate system selects the tracing backend.
+        """
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
         tree_coord = str(tree.tree_coord)
@@ -213,7 +233,7 @@ class OctreeRayTracer:
         else:
             raise NotImplementedError("OctreeRayTracer currently supports only tree_coord='xyz' or 'rpa'.")
         self.tree = tree
-        self._trace_module = trace_module
+        self.trace_module = trace_module
         self._crossing_buffer_size = int(trace_module.DEFAULT_CROSSING_BUFFER_SIZE)
         logger.info(
             "OctreeRayTracer.__init__: coord=%s crossing_buffer_size=%d",
@@ -234,24 +254,32 @@ class OctreeRayTracer:
         The scratch rows hold one traced crossing path per ray. If any ray
         exhausts the current row width, the whole chunk is retraced with a
         larger shared crossing capacity.
+
+        Args:
+            origins (const): Flat origin array with shape `(chunk_n_rays, 3)`.
+            directions (const): Flat direction array with shape `(chunk_n_rays, 3)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+
+        Returns:
+            `(cell_counts, time_counts, cell_buffer, time_buffer, ray_status)`.
         """
-        trace_module = self._trace_module
         chunk_n_rays = int(origins.shape[0])
         crossing_capacity = int(self._crossing_buffer_size)
-        buffer_overflow = int(trace_module.TRACE_BUFFER_OVERFLOW)
+        buffer_overflow = int(self.trace_module.TRACE_BUFFER_OVERFLOW)
         logger.debug(
             "_trace_chunk_to_scratch: coord=%s n_rays=%d crossing_buffer_size=%d default=%d",
             self.tree.tree_coord,
             chunk_n_rays,
             crossing_capacity,
-            int(trace_module.DEFAULT_CROSSING_BUFFER_SIZE),
+            int(self.trace_module.DEFAULT_CROSSING_BUFFER_SIZE),
         )
         while True:
             cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
             time_counts = np.empty(chunk_n_rays, dtype=np.int64)
             cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
             time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-            trace_module.trace_rays(
+            self.trace_module.trace_rays(
                 self.tree.root_cell_ids,
                 self.tree.cell_child,
                 self.tree.cell_bounds,
@@ -312,7 +340,18 @@ class OctreeRayTracer:
         t_max: float,
         ray_shape: tuple[int, ...],
     ) -> RaySegments:
-        """Trace rays and return packed crossing segments."""
+        """Trace rays and return packed crossing segments.
+
+        Args:
+            origins (const): Flat origin array with shape `(n_rays, 3)`.
+            directions (const): Flat direction array with shape `(n_rays, 3)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+            ray_shape (const): Requested output ray-grid shape.
+
+        Returns:
+            Packed per-ray crossing segments for the traced rays.
+        """
         o_flat = np.asarray(origins, dtype=np.float64)
         d_flat = np.asarray(directions, dtype=np.float64)
         n_rays = int(o_flat.shape[0])
@@ -412,7 +451,19 @@ class OctreeRayTracer:
         t_max: float,
         ray_shape: tuple[int, ...],
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and accumulate midpoint samples without packing segments."""
+        """Trace rays and accumulate midpoint samples without packing segments.
+
+        Args:
+            interpolator (const): Interpolator bound to the tracer octree.
+            origins (const): Flat origin array with shape `(n_rays, 3)`.
+            directions (const): Flat direction array with shape `(n_rays, 3)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+            ray_shape (const): Requested output ray-grid shape.
+
+        Returns:
+            `(image, counts)` with one midpoint-sampled image and per-ray segment counts.
+        """
         if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
             raise TypeError("midpoint_image requires one OctreeInterpolator.")
         if interpolator.tree is not self.tree:
@@ -485,7 +536,19 @@ class OctreeRayTracer:
         t_max: float,
         ray_shape: tuple[int, ...],
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and integrate trilinear cell interpolants without packing segments."""
+        """Trace rays and integrate trilinear cell interpolants without packing segments.
+
+        Args:
+            interpolator (const): Interpolator bound to the tracer octree.
+            origins (const): Flat origin array with shape `(n_rays, 3)`.
+            directions (const): Flat direction array with shape `(n_rays, 3)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+            ray_shape (const): Requested output ray-grid shape.
+
+        Returns:
+            `(image, counts)` with one integrated image and per-ray segment counts.
+        """
         if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
             raise TypeError("trilinear_image requires one OctreeInterpolator.")
         if interpolator.tree is not self.tree:
@@ -547,7 +610,17 @@ class OctreeRayTracer:
         t_min: float = 0,
         t_max: float = np.inf,
     ) -> RaySegments:
-        """Trace rays and return packed crossing segments."""
+        """Trace rays and return packed crossing segments.
+
+        Args:
+            origins (const): Ray origins with shape `(..., 3)`.
+            directions (const): Ray directions with shape `(..., 3)` or `(3,)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+
+        Returns:
+            Packed per-ray crossing segments with the broadcast ray shape.
+        """
         t_lo = float(t_min)
         t_hi = float(t_max)
         if not math.isfinite(t_lo):
@@ -574,7 +647,18 @@ class OctreeRayTracer:
         t_min: float = 0,
         t_max: float = np.inf,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and accumulate one midpoint-sampled image plus per-ray segment counts."""
+        """Trace rays and accumulate one midpoint-sampled image plus per-ray segment counts.
+
+        Args:
+            interpolator (const): Interpolator bound to the tracer octree.
+            origins (const): Ray origins with shape `(..., 3)`.
+            directions (const): Ray directions with shape `(..., 3)` or `(3,)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+
+        Returns:
+            `(image, counts)` reshaped onto the broadcast ray grid.
+        """
         t_lo = float(t_min)
         t_hi = float(t_max)
         if not math.isfinite(t_lo):
@@ -602,7 +686,18 @@ class OctreeRayTracer:
         t_min: float = 0,
         t_max: float = np.inf,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and integrate trilinear cell interpolants plus per-ray segment counts."""
+        """Trace rays and integrate trilinear cell interpolants plus per-ray segment counts.
+
+        Args:
+            interpolator (const): Interpolator bound to the tracer octree.
+            origins (const): Ray origins with shape `(..., 3)`.
+            directions (const): Ray directions with shape `(..., 3)` or `(3,)`.
+            t_min (const): Lower parameter clip.
+            t_max (const): Upper parameter clip.
+
+        Returns:
+            `(image, counts)` reshaped onto the broadcast ray grid.
+        """
         t_lo = float(t_min)
         t_hi = float(t_max)
         if not math.isfinite(t_lo):
@@ -622,7 +717,11 @@ class OctreeRayTracer:
         )
 
     def __str__(self) -> str:
-        """Return a compact tracer summary."""
+        """Return a compact tracer summary.
+
+        Returns:
+            String summary containing the tracer coordinate system.
+        """
         return f"OctreeRayTracer(tree_coord={self.tree.tree_coord})"
 
 
@@ -637,6 +736,15 @@ def render_midpoint_image(
     This is the packed-segment post-processing path: expand each packed segment
     into one midpoint sample, evaluate the interpolator there, weight by the
     segment length, and bin the result back onto the owning ray id.
+
+    Args:
+        interpolator (const): Interpolator used to sample the midpoint values.
+        origins (const): Ray origins with shape `(..., 3)`.
+        directions (const): Ray directions with shape `(..., 3)` or `(3,)`.
+        segments (const): Packed ray segments matching the ray grid.
+
+    Returns:
+        Midpoint-sampled image reshaped onto the broadcast ray grid.
     """
     if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
