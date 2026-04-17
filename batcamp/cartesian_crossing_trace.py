@@ -18,6 +18,7 @@ from .octree import _FACE_SIDE
 from .octree import _FACE_TANGENTIAL_AXES
 
 DEFAULT_CROSSING_BUFFER_SIZE = 256
+TRACE_BUFFER_OVERFLOW = -1
 
 
 def trace_ray(

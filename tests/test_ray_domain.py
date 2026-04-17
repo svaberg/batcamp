@@ -607,7 +607,7 @@ def test_trace_skips_failed_rays_with_empty_segments(monkeypatch) -> None:
         cell_counts[1] = -2
         time_counts[1] = -2
 
-    monkeypatch.setattr(tracer._trace_module, "trace_rays", fake_trace_rays)
+    monkeypatch.setattr(tracer, "_trace_rays", fake_trace_rays)
 
     origins = np.array([[-2.0, -0.3, -0.2], [-2.0, -0.3, -0.2]], dtype=float)
     directions = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=float)
