@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Octree ray tracing."""
+"""Public octree ray tracing and direct ray accumulation.
+
+This module is the coordinate-agnostic layer above the low-level crossing
+kernels. It normalizes ray origin/direction arrays, traces them in chunks
+through the Cartesian or spherical traversal backends, packs the resulting
+crossing paths into `RaySegments`, and provides the direct midpoint/trilinear
+image accumulators built on those paths.
+
+The exact event logic for leaf entry, exit, and neighbor continuation lives in
+the coordinate-specific crossing-trace modules. This file owns the public
+tracer API, packed segment representation, chunked scratch-buffer management,
+and status reporting for failed rays.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +30,12 @@ from .octree import Octree
 
 logger = logging.getLogger(__name__)
 
+# Trace chunks are sized to keep the scratch buffers moderate while still
+# amortizing the fixed tracing/packing overhead over many rays.
 RAY_CHUNK_SIZE = 256
+
+# Ray tracing reports one nonnegative success code plus negative sentinel values
+# inherited from the coordinate-specific scratch trace backends.
 RAY_STATUS_OK = 0
 
 
@@ -43,7 +60,15 @@ def _log_ray_status(label: str, coord: str, n_rays: int, ray_status: np.ndarray)
 
 
 def prepare_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
-    """Return flat finite ray arrays plus the broadcast shape."""
+    """Return flat finite ray arrays plus the broadcast shape.
+
+    Args:
+        origins (const): Ray origins with shape `(..., 3)`.
+        directions (const): Ray directions with shape `(..., 3)` or `(3,)`.
+
+    Returns:
+        `(origins_flat, directions_flat, ray_shape)`.
+    """
     o = np.array(origins, dtype=np.float64, order="C")
     d = np.array(directions, dtype=np.float64, order="C")
     if o.ndim == 0 or o.shape[-1] != 3:
@@ -74,7 +99,18 @@ def _pack_crossing_buffers(
     cell_ids_out: np.ndarray,
     times_out: np.ndarray,
 ) -> None:
-    """Pack scratch-traced crossing rows into flat output arrays."""
+    """Pack scratch-traced crossing rows into flat output arrays.
+
+    Args:
+        cell_counts (const): Per-ray packed cell counts.
+        time_counts (const): Per-ray packed time counts.
+        cell_ids_scratch (const): Per-ray scratch cell-id rows.
+        times_scratch (const): Per-ray scratch time rows.
+        cell_offsets (const): Packed cell offsets for each ray.
+        time_offsets (const): Packed time offsets for each ray.
+        cell_ids_out (output): Flat packed cell-id array.
+        times_out (output): Flat packed time array.
+    """
     n_rays = int(cell_counts.shape[0])
     for ray_id in prange(n_rays):
         cell_count = int(cell_counts[ray_id])
@@ -97,7 +133,12 @@ def _reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_sha
 
 @dataclass(frozen=True)
 class RaySegments:
-    """Packed per-ray crossing segments with one time list per ray."""
+    """Packed per-ray crossing segments with one time list per ray.
+
+    Each nonempty ray contributes one contiguous slice of `cell_ids` and one
+    matching contiguous slice of `times`, where the time slice is exactly one
+    entry longer than the cell slice.
+    """
 
     ray_offsets: np.ndarray
     time_offsets: np.ndarray
@@ -153,7 +194,12 @@ class RaySegments:
 
 
 class OctreeRayTracer:
-    """Trace rays through one octree."""
+    """Trace rays through one octree.
+
+    The tracer delegates exact leaf-crossing events to the Cartesian or
+    spherical backend selected by `tree.tree_coord`, then either packs those
+    events into `RaySegments` or accumulates them directly into image outputs.
+    """
 
     def __init__(self, tree: Octree) -> None:
         """Bind one tracer to one built octree."""
@@ -186,7 +232,12 @@ class OctreeRayTracer:
         t_min: float,
         t_max: float,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Trace one chunk into scratch buffers, growing capacity on overflow."""
+        """Trace one chunk into scratch buffers, growing capacity on overflow.
+
+        The scratch rows hold one traced crossing path per ray. If any ray
+        exhausts the current row width, the whole chunk is retraced with a
+        larger shared crossing capacity.
+        """
         chunk_n_rays = int(origins.shape[0])
         crossing_capacity = int(self._crossing_buffer_size)
         buffer_overflow = int(self._trace_buffer_overflow)
@@ -233,6 +284,9 @@ class OctreeRayTracer:
                 )
                 crossing_capacity *= 2
                 continue
+            # Collapse the per-array scratch sentinels into one public status
+            # array, then zero failed rows so later pack/accumulate code can
+            # treat them as ordinary empty rays.
             raw_status = np.where(
                 cell_counts < 0,
                 cell_counts,
@@ -323,6 +377,8 @@ class OctreeRayTracer:
             time_chunks.append(chunk_times)
             n_cell += chunk_cell_total
             n_time += chunk_time_total
+            # Convert chunk-local packed offsets into offsets in the final
+            # concatenated arrays without doing another prefix sum pass later.
             ray_offsets[chunk_lo + 1:chunk_hi + 1] = n_cell - chunk_cell_total + chunk_cell_offsets[1:]
             time_offsets[chunk_lo + 1:chunk_hi + 1] = n_time - chunk_time_total + chunk_time_offsets[1:]
         if n_cell:
@@ -369,6 +425,8 @@ class OctreeRayTracer:
             tuple(int(v) for v in ray_shape),
         )
         if str(self.tree.tree_coord) != "xyz":
+            # Only the Cartesian backend has a direct midpoint accumulator.
+            # Spherical midpoint rendering reuses the packed-segment path.
             logger.debug("_midpoint_image: using packed-segment render path for coord=%s", self.tree.tree_coord)
             segments = self._trace_segments(
                 origins,
@@ -576,7 +634,12 @@ def render_midpoint_image(
     directions: np.ndarray,
     segments: RaySegments,
 ) -> np.ndarray:
-    """Render one midpoint-sampled line integral from packed crossing segments."""
+    """Render one midpoint-sampled line integral from packed crossing segments.
+
+    This is the packed-segment post-processing path: expand each packed segment
+    into one midpoint sample, evaluate the interpolator there, weight by the
+    segment length, and bin the result back onto the owning ray id.
+    """
     if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
         raise TypeError("render_midpoint_image requires one OctreeInterpolator.")
     o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
@@ -594,6 +657,8 @@ def render_midpoint_image(
 
     cell_counts = segments.ray_offsets[1:] - segments.ray_offsets[:-1]
     ray_ids = np.repeat(np.arange(n_rays, dtype=np.int64), cell_counts)
+    # `segment_ord` is the segment index inside each owning ray after expanding
+    # the packed cell list into one row per segment.
     segment_ord = np.arange(segments.cell_ids.size, dtype=np.int64) - segments.ray_offsets[ray_ids]
     time_lo = segments.time_offsets[ray_ids] + segment_ord
     t0 = segments.times[time_lo]
