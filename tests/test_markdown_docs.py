@@ -9,7 +9,7 @@ import pytest
 
 _DOC_CASES = (
     pytest.param("README.md", ((512, 512, 2), (512, 512)), id="readme"),
-    pytest.param("pypi.md", ((512, 512, 2),), id="pypi"),
+    pytest.param("pypi.md", ((512, 512, 2), (512, 512)), id="pypi"),
 )
 
 
@@ -37,22 +37,49 @@ def test_markdown_python_blocks_execute(
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     blocks = _markdown_python_blocks(repo_root / doc_name)
+    output_root = repo_root / "artifacts" / "test_markdown_docs"
 
     assert len(blocks) == len(expected_shapes)
 
     monkeypatch.chdir(repo_root)
     plt.switch_backend("Agg")
-    monkeypatch.setattr(plt, "show", _no_show)
+    plt.close("all")
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    doc_stem = Path(doc_name).stem
+    for path in output_root.glob(f"{doc_stem}_block_*.png"):
+        path.unlink()
 
     observed_shapes: list[tuple[int, ...]] = []
+    saved_paths: list[Path] = []
+    namespace = {"__name__": "__main__"}
+    state = {"block_index": 0}
+
+    def _save_show(*args, **kwargs) -> None:
+        del args, kwargs
+        figure_numbers = tuple(plt.get_fignums())
+        for figure_order, figure_number in enumerate(figure_numbers, start=1):
+            figure = plt.figure(figure_number)
+            suffix = "" if len(figure_numbers) == 1 else f"_fig_{figure_order:02d}"
+            out_path = output_root / f"{doc_stem}_block_{state['block_index']:02d}{suffix}.png"
+            figure.savefig(out_path, dpi=150)
+            saved_paths.append(out_path)
+        plt.close("all")
+
+    monkeypatch.setattr(plt, "show", _save_show)
 
     for block_index, block in enumerate(blocks, start=1):
-        namespace = {"__name__": "__main__"}
+        state["block_index"] = block_index
+        before_ids = {name: id(namespace[name]) for name in ("rho_and_ti", "image") if name in namespace}
         runnable = _runnable_python_block(doc_name, block)
         exec(compile(runnable, f"{doc_name}:block:{block_index}", "exec"), namespace)
         if "rho_and_ti" in namespace:
-            observed_shapes.append(tuple(namespace["rho_and_ti"].shape))
+            if before_ids.get("rho_and_ti") != id(namespace["rho_and_ti"]):
+                observed_shapes.append(tuple(namespace["rho_and_ti"].shape))
         if "image" in namespace:
-            observed_shapes.append(tuple(namespace["image"].shape))
+            if before_ids.get("image") != id(namespace["image"]):
+                observed_shapes.append(tuple(namespace["image"].shape))
 
     assert tuple(observed_shapes) == expected_shapes
+    assert len(saved_paths) == len(expected_shapes)
+    assert all(path.exists() for path in saved_paths)

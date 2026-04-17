@@ -1,4 +1,4 @@
-<h1><img src="https://raw.githubusercontent.com/svaberg/batcamp/v0.2.1/assets/batcamp.png" alt="batcamp logo"> batcamp</h1>
+<h1><img src="https://raw.githubusercontent.com/svaberg/batcamp/main/assets/batcamp.png" alt="batcamp logo"> batcamp</h1>
 
 [![Tests](https://github.com/svaberg/batcamp/actions/workflows/tests.yml/badge.svg)](https://github.com/svaberg/batcamp/actions/workflows/tests.yml) [![PyPI version](https://badge.fury.io/py/batcamp.svg)](https://pypi.org/project/batcamp/) [![Codacy Badge](https://app.codacy.com/project/badge/Grade/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard) [![Codacy Badge](https://app.codacy.com/project/badge/Coverage/ac23b58aa5f14f9098d47c63ef054a63)](https://app.codacy.com/gh/svaberg/batcamp/dashboard) [![DOI](https://zenodo.org/badge/1177665095.svg)](https://doi.org/10.5281/zenodo.19163499)
 
@@ -48,8 +48,40 @@ X, Y = np.meshgrid(np.linspace(-24, 24, 512), np.linspace(-24, 24, 512))
 Z = np.zeros_like(X)
 rho_and_ti = octree_interpolator(X, Y, Z)
 plt.pcolormesh(X, Y, rho_and_ti[..., 0], norm="log")
+plt.title("Equatorial slice")
 plt.colorbar()
 plt.show()
 ```
 
 See [examples/quick_start.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/quick_start.ipynb) for a larger example.
+
+## Synthetic images
+`batcamp` also provides a specialised ray tracer, which can be used e.g. to create synthetic images.
+
+```python
+ds = Dataset.from_file("MY_FILE")
+tree = Octree.from_ds(ds)
+interp = OctreeInterpolator(tree, ds["Rho [g/cm^3]"])
+
+from batcamp import OctreeRayTracer
+octree_ray_tracer = OctreeRayTracer(tree)
+print(octree_ray_tracer)
+
+# Create rays that will form the image
+x, z = np.meshgrid(
+    np.linspace(-4, 4, 512),
+    np.linspace(-4, 4, 512),
+    indexing="xy")
+y = -24 * np.ones_like(x)
+origins_xyz = np.stack((x, y, z), axis=-1)
+direction = np.array([0.0, 1.0, 0.0])
+
+# Create the image and show it
+image, _ = octree_ray_tracer.trilinear_image(interp, origins_xyz, direction)
+plt.pcolormesh(x, z, image, norm="log")
+plt.colorbar()
+plt.title("Synthetic image")
+plt.show()
+```
+
+A raytracing example using a larger, more realistic data set can be seen in [examples/ray_image.ipynb](https://github.com/svaberg/batcamp/blob/main/examples/ray_image.ipynb).

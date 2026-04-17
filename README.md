@@ -50,6 +50,7 @@ X, Y = np.meshgrid(np.linspace(-24, 24, 512), np.linspace(-24, 24, 512))
 Z = np.zeros_like(X)
 rho_and_ti = octree_interpolator(X, Y, Z)
 plt.pcolormesh(X, Y, rho_and_ti[..., 0], norm="log")
+plt.title("Equatorial slice")
 plt.colorbar()
 plt.show()
 ```
@@ -57,28 +58,32 @@ plt.show()
 See [examples/quick_start.ipynb](examples/quick_start.ipynb) for a larger example.
 
 ## Synthetic images
-For cartesian data, you can create a synthetic image from a set of rays.
+`batcamp` also provides a specialised ray tracer, which can be used e.g. to create synthetic images.
 
 ```python
-from batread import Dataset
-from batcamp import Octree, OctreeInterpolator, OctreeRayTracer
-import numpy as np
-import matplotlib.pyplot as plt
-
-ds = Dataset.from_file("sample_data/3d__var_2_n00006003.plt")
-tree = Octree.from_ds(ds, tree_coord="xyz")
+ds = Dataset.from_file("sample_data/3d__var_2_n00060005.plt")
+tree = Octree.from_ds(ds)
 interp = OctreeInterpolator(tree, ds["Rho [g/cm^3]"])
-tracer = OctreeRayTracer(tree)
 
-y, z = np.meshgrid(
-    np.linspace(-24, 24, 512),
-    np.linspace(-24, 24, 512),
-    indexing="xy",
-)
-origins = np.stack((np.full_like(y, -24), y, z), axis=-1)
-image, _ = tracer.trilinear_image(interp, origins, np.array([1.0, 0.0, 0.0]))
+from batcamp import OctreeRayTracer
+octree_ray_tracer = OctreeRayTracer(tree)
+print(octree_ray_tracer)
 
-plt.pcolormesh(y, z, image, shading="auto", norm="log")
-plt.colorbar(label="line integral")
+# Create rays that will form the image
+x, z = np.meshgrid(
+    np.linspace(-4, 4, 512),
+    np.linspace(-4, 4, 512),
+    indexing="xy")
+y = -24 * np.ones_like(x)
+origins_xyz = np.stack((x, y, z), axis=-1)
+direction = np.array([0.0, 1.0, 0.0])
+
+# Create the image and show it
+image, _ = octree_ray_tracer.trilinear_image(interp, origins_xyz, direction)
+plt.pcolormesh(x, z, image, norm="log")
+plt.colorbar()
+plt.title("Synthetic image")
 plt.show()
 ```
+
+A raytracing example using a larger, more realistic data set can be seen in [examples/ray_image.ipynb](examples/ray_image.ipynb).
