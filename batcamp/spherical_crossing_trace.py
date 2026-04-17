@@ -45,7 +45,12 @@ def _times_close(left: float, right: float) -> bool:
 
 
 @njit(cache=True)
-def _quadratic_roots(a: float, b: float, c: float, roots_out: np.ndarray) -> int:
+def _quadratic_roots(
+    a: float,
+    b: float,
+    c: float,
+    roots_out: np.ndarray,  # out
+) -> int:
     """Write sorted real roots of one quadratic or linear polynomial."""
     qa = float(a)
     qb = float(b)
@@ -79,7 +84,12 @@ def _quadratic_roots(a: float, b: float, c: float, roots_out: np.ndarray) -> int
 
 
 @njit(cache=True)
-def _fill_xyz_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: float, out: np.ndarray) -> None:
+def _fill_xyz_at_time(
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    time: float,
+    out: np.ndarray,  # out
+) -> None:
     """Fill one Cartesian point on one straight ray at one parameter time."""
     t = float(time)
     out[0] = float(origin_xyz[0]) + t * float(direction_xyz[0])
@@ -88,7 +98,12 @@ def _fill_xyz_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: f
 
 
 @njit(cache=True)
-def _fill_rpa_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: float, out: np.ndarray) -> None:
+def _fill_rpa_at_time(
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    time: float,
+    out: np.ndarray,  # out
+) -> None:
     """Fill spherical coordinates for one straight ray at one parameter time."""
     point_x = float(origin_xyz[0]) + float(time) * float(direction_xyz[0])
     point_y = float(origin_xyz[1]) + float(time) * float(direction_xyz[1])
@@ -100,7 +115,12 @@ def _fill_rpa_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: f
 
 
 @njit(cache=True)
-def _sphere_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, radius: float, roots_out: np.ndarray) -> int:
+def _sphere_roots(
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    radius: float,
+    roots_out: np.ndarray,  # out
+) -> int:
     """Write ray parameters where one line meets one sphere centered at the origin."""
     radius_value = float(radius)
     a = float(np.dot(direction_xyz, direction_xyz))
@@ -110,7 +130,12 @@ def _sphere_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, radius: flo
 
 
 @njit(cache=True)
-def _polar_roots(origin_xyz: np.ndarray, direction_xyz: np.ndarray, polar: float, roots_out: np.ndarray) -> int:
+def _polar_roots(
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    polar: float,
+    roots_out: np.ndarray,  # out
+) -> int:
     """Write ray parameters where one line meets one constant-polar cone."""
     polar_value = float(polar)
     if polar_value <= 0.0 or polar_value >= _PI:
@@ -161,7 +186,7 @@ def _azimuth_plane_roots(
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     azimuth: float,
-    roots_out: np.ndarray,
+    roots_out: np.ndarray,  # out
 ) -> int:
     """Write the ray parameter where one line meets one constant-azimuth plane."""
     azimuth_value = float(azimuth)
@@ -182,7 +207,7 @@ def _rpa_coordinate_roots(
     direction_xyz: np.ndarray,
     axis: int,
     value: float,
-    roots_out: np.ndarray,
+    roots_out: np.ndarray,  # out
 ) -> int:
     """Write ray times where one RPA coordinate equals one value."""
     if int(axis) == 0:
@@ -201,7 +226,7 @@ def _face_roots(
     face_id: int,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
-    roots_out: np.ndarray,
+    roots_out: np.ndarray,  # out
 ) -> int:
     """Write ray times where one RPA trajectory meets one cell face."""
     bounds = cell_bounds[int(cell_id)]
@@ -467,14 +492,14 @@ def _coordinate_velocity_sign(point_xyz: np.ndarray, direction_xyz: np.ndarray, 
 
 @njit(cache=True)
 def find_domain_interval(
-    origin: np.ndarray,
-    direction: np.ndarray,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
     domain_bounds: np.ndarray,
 ) -> tuple[bool, float, float]:
     """Return whether one ray intersects the spherical domain plus the clipped parameter interval."""
     r_max = float(domain_bounds[0, START] + domain_bounds[0, WIDTH])
     roots = np.empty(2, dtype=np.float64)
-    n_root = _sphere_roots(origin, direction, r_max, roots)
+    n_root = _sphere_roots(origin_xyz, direction_xyz, r_max, roots)
     if n_root < 2:
         # The line does not cross the outer spherical boundary twice.
         return False, 0.0, 0.0
@@ -533,10 +558,10 @@ def find_exit(
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_current: float,
-    active_faces: np.ndarray,
-    candidate_times: np.ndarray,
-    roots: np.ndarray,
-    candidate_xyz: np.ndarray,
+    active_faces: np.ndarray,  # out
+    candidate_times: np.ndarray,  # out
+    roots: np.ndarray,  # out
+    candidate_xyz: np.ndarray,  # out
 ) -> tuple[float, int, bool]:
     """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state."""
     candidate_times[:] = math.inf
@@ -589,8 +614,8 @@ def _fill_active_face_state(
     active_faces: np.ndarray,
     n_active_face: int,
     current_face_id: int,
-    active_face_by_axis: np.ndarray,
-    active_face_order: np.ndarray,
+    active_face_by_axis: np.ndarray,  # out
+    active_face_order: np.ndarray,  # out
 ) -> int:
     """Fill reusable active-face lookup arrays and return the current face order."""
     active_face_by_axis[:] = -1
@@ -802,11 +827,9 @@ def _write_crossing(
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_event: float,
-    crossing_xyz: np.ndarray,
-    crossing_rpa: np.ndarray,
+    crossing_rpa: np.ndarray,  # out
 ) -> None:
     """Fill scratch coordinates derived from one crossing time."""
-    _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
     _fill_rpa_at_time(origin_xyz, direction_xyz, float(t_event), crossing_rpa)
     bounds = cell_bounds[int(cell_id)]
     for face_pos in range(n_active_face):
@@ -827,16 +850,17 @@ def walk_faces(
     start_cell_id: int,
     active_faces: np.ndarray,
     n_active_face: int,
-    crossing_xyz: np.ndarray,
     direction_xyz: np.ndarray,
-    path: np.ndarray,
-    active_face_by_axis: np.ndarray,
-    active_face_order: np.ndarray,
     origin_xyz: np.ndarray,
     t_event: float,
-    crossing_rpa: np.ndarray,
+    crossing_xyz: np.ndarray,  # out
+    crossing_rpa: np.ndarray,  # out
+    path: np.ndarray,  # out
+    active_face_by_axis: np.ndarray,  # out
+    active_face_order: np.ndarray,  # out
 ) -> int:
     """Walk one time-defined spherical crossing through the face/subface neighbor graph."""
+    _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
     _write_crossing(
         cell_bounds,
         start_cell_id,
@@ -845,7 +869,6 @@ def walk_faces(
         origin_xyz,
         direction_xyz,
         t_event,
-        crossing_xyz,
         crossing_rpa,
     )
     current_cell = int(start_cell_id)
@@ -892,8 +915,8 @@ def _start_active_faces(
     direction_xyz: np.ndarray,
     t_event: float,
     start_xyz: np.ndarray,
-    active_faces_out: np.ndarray,
-    roots: np.ndarray,
+    active_faces_out: np.ndarray,  # out
+    roots: np.ndarray,  # out
 ) -> int:
     """Return faces whose crossing time is snapped to the start time."""
     n_active_face = 0
@@ -930,13 +953,13 @@ def _start_cell_owner(
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_event: float,
-    active_faces: np.ndarray,
-    path: np.ndarray,
-    active_face_by_axis: np.ndarray,
-    active_face_order: np.ndarray,
-    crossing_xyz: np.ndarray,
-    crossing_rpa: np.ndarray,
-    roots: np.ndarray,
+    active_faces: np.ndarray,  # out
+    path: np.ndarray,  # out
+    active_face_by_axis: np.ndarray,  # out
+    active_face_order: np.ndarray,  # out
+    crossing_xyz: np.ndarray,  # out
+    crossing_rpa: np.ndarray,  # out
+    roots: np.ndarray,  # out
 ) -> int:
     """Return the leaf that owns the immediate open interval after one start point."""
     start_rpa = np.empty(3, dtype=np.float64)
@@ -964,14 +987,14 @@ def _start_cell_owner(
         current_cell,
         active_faces,
         n_active_face,
-        crossing_xyz,
         direction_xyz,
+        origin_xyz,
+        float(t_event),
+        crossing_xyz,
+        crossing_rpa,
         path,
         active_face_by_axis,
         active_face_order,
-        origin_xyz,
-        float(t_event),
-        crossing_rpa,
     )
     if path_count <= 0:
         return TRACE_START_WALK_FAILED
@@ -990,8 +1013,8 @@ def _trace_ray(
     direction_xyz: np.ndarray,
     t_min: float,
     t_max: float,
-    cell_ids_out: np.ndarray,
-    times_out: np.ndarray,
+    cell_ids_out: np.ndarray,  # out
+    times_out: np.ndarray,  # out
 ) -> tuple[int, int]:
     """Trace one spherical ray into fixed scratch buffers."""
     max_cells = int(cell_ids_out.shape[0])
@@ -1094,14 +1117,14 @@ def _trace_ray(
             current_cell,
             active_faces,
             n_active_face,
-            crossing_xyz,
             direction_xyz,
+            origin_xyz,
+            float(t_exit),
+            crossing_xyz,
+            crossing_rpa,
             path,
             active_face_by_axis,
             active_face_order,
-            origin_xyz,
-            float(t_exit),
-            crossing_rpa,
         )
         if path_count < 0:
             return TRACE_INVALID_CROSSING, TRACE_INVALID_CROSSING
@@ -1135,10 +1158,10 @@ def trace_rays(
     directions: np.ndarray,
     t_min: float,
     t_max: float,
-    cell_counts: np.ndarray,
-    time_counts: np.ndarray,
-    cell_ids_out: np.ndarray,
-    times_out: np.ndarray,
+    cell_counts: np.ndarray,  # out
+    time_counts: np.ndarray,  # out
+    cell_ids_out: np.ndarray,  # out
+    times_out: np.ndarray,  # out
 ) -> None:
     """Trace flat spherical rays into fixed per-ray scratch buffers."""
     n_rays = int(origins.shape[0])
