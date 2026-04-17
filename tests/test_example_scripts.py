@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import subprocess
 import sys
@@ -22,12 +23,42 @@ _BENCHMARK_SCRIPTS = [
 
 _BENCHMARK_TEST_MAX_SECONDS = 10.0
 _BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION = 256
+_EXAMPLE_LOGGERS = (
+    "resample.progress",
+    "batcamp.builder",
+    "batcamp.octree",
+    "batcamp.interpolator",
+    "batcamp.ray",
+)
 
 
 def _env_without_pythonpath() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     return env
+
+
+@pytest.fixture(autouse=True)
+def _restore_example_logger_state():
+    saved = {}
+    for name in _EXAMPLE_LOGGERS:
+        logger = logging.getLogger(name)
+        saved[name] = (
+            list(logger.handlers),
+            int(logger.level),
+            bool(logger.propagate),
+        )
+    try:
+        yield
+    finally:
+        for name, (handlers, level, propagate) in saved.items():
+            logger = logging.getLogger(name)
+            for handler in list(logger.handlers):
+                if handler not in handlers:
+                    handler.close()
+            logger.handlers = list(handlers)
+            logger.setLevel(level)
+            logger.propagate = propagate
 
 
 def _load_example_module(script_name: str, module_name: str):
