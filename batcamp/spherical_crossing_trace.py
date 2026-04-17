@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Spherical crossing-trace kernels."""
+"""Exact spherical leaf-crossing kernels for octree rays.
+
+This module is the low-level spherical traversal backend used by the public ray
+tracer. Rays are still straight in Cartesian space, but the leaf ownership and
+face events are expressed in spherical `(r, polar, azimuth)` coordinates. The
+kernels therefore solve analytic intersections with spherical coordinate
+surfaces, convert those events into exact half-open leaf ownership decisions,
+and walk the face/subface neighbor graph through multiface crossings.
+
+The tricky parts specific to spherical traversal live here: azimuth periodicity,
+ownership at shared boundaries, and transfers through polar-axis cells where
+the local azimuth becomes undefined on the axis itself. Higher layers use the
+packed leaf/time path produced here for interpolation and accumulation.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +29,14 @@ from .octree import _FACE_SIDE
 from .octree import _FACE_TANGENTIAL_AXES
 from .spherical import xyz_to_rpa_components
 
+# Start with one small per-ray scratch row; the public tracer grows this
+# lazily on overflow so short/common traces do not pay for a large default.
 DEFAULT_CROSSING_BUFFER_SIZE = 32
+
+# Spherical trace status codes use one positive success value plus negative
+# failure bits so callers can report mixed start/transition failures in one
+# summarized status histogram.
+TRACE_CONTAINS_BOX_OK = 0x0001
 TRACE_BUFFER_OVERFLOW = -0x0001
 TRACE_START_CELL_NOT_FOUND = -0x0002
 TRACE_START_WALK_FAILED = -0x0004
@@ -29,17 +49,29 @@ TRACE_START_OUTSIDE_DOMAIN_RADIUS_INTERVAL = -0x0200
 TRACE_START_OUTSIDE_DOMAIN_POLAR_INTERVAL = -0x0400
 TRACE_START_OUTSIDE_DOMAIN_RADIUS_OPEN_LOWER = -0x0800
 TRACE_START_OUTSIDE_DOMAIN_POLAR_OPEN_LOWER = -0x1000
-CONTAINS_BOX_OK = 0x0001
+
+# Event-snap tolerances shared by the spherical crossing kernels.
+# Domain containment is slightly looser because xyz->rpa conversion at entry can
+# move a boundary point by a few ulps before the half-open owner lookup.
 DOMAIN_CONTAINS_ATOL = 1.0e-10
-_PI = math.pi
-_TWO_PI = 2.0 * math.pi
+
+# Event times use one absolute floor plus one relative term scaled to the local
+# parameter magnitude so the same predicates work near zero and far from it.
 _TIME_ATOL = 1.0e-12
 _TIME_RTOL = 64.0 * np.finfo(np.float64).eps
 
 
 @njit(cache=True)
 def _times_close(left: float, right: float) -> bool:
-    """Return whether two ray parameters should be treated as one event."""
+    """Return whether two ray parameters should be treated as one event.
+
+    Args:
+        left (const): First ray parameter.
+        right (const): Second ray parameter.
+
+    Returns:
+        Whether the two parameters represent one snapped event.
+    """
     scale = max(abs(float(left)), abs(float(right)), 1.0)
     return abs(float(left) - float(right)) <= (_TIME_ATOL + _TIME_RTOL * scale)
 
@@ -51,7 +83,17 @@ def _quadratic_roots(
     c: float,
     roots_out: np.ndarray,  # out
 ) -> int:
-    """Write sorted real roots of one quadratic or linear polynomial."""
+    """Write sorted real roots of one quadratic or linear polynomial.
+
+    Args:
+        a (const): Quadratic coefficient.
+        b (const): Linear coefficient.
+        c (const): Constant coefficient.
+        roots_out (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Number of written real roots.
+    """
     qa = float(a)
     qb = float(b)
     qc = float(c)
@@ -90,7 +132,14 @@ def _fill_xyz_at_time(
     time: float,
     out: np.ndarray,  # out
 ) -> None:
-    """Fill one Cartesian point on one straight ray at one parameter time."""
+    """Fill one Cartesian point on one straight ray at one parameter time.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        time (const): Ray parameter.
+        out (output): Cartesian point buffer with shape `(3,)`.
+    """
     t = float(time)
     out[0] = float(origin_xyz[0]) + t * float(direction_xyz[0])
     out[1] = float(origin_xyz[1]) + t * float(direction_xyz[1])
@@ -104,7 +153,14 @@ def _fill_rpa_at_time(
     time: float,
     out: np.ndarray,  # out
 ) -> None:
-    """Fill spherical coordinates for one straight ray at one parameter time."""
+    """Fill spherical coordinates for one straight ray at one parameter time.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        time (const): Ray parameter.
+        out (output): RPA coordinate buffer with shape `(3,)`.
+    """
     point_x = float(origin_xyz[0]) + float(time) * float(direction_xyz[0])
     point_y = float(origin_xyz[1]) + float(time) * float(direction_xyz[1])
     point_z = float(origin_xyz[2]) + float(time) * float(direction_xyz[2])
@@ -121,7 +177,17 @@ def _sphere_roots(
     radius: float,
     roots_out: np.ndarray,  # out
 ) -> int:
-    """Write ray parameters where one line meets one sphere centered at the origin."""
+    """Write ray parameters where one line meets one sphere centered at the origin.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        radius (const): Sphere radius.
+        roots_out (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Number of written real roots.
+    """
     radius_value = float(radius)
     a = float(np.dot(direction_xyz, direction_xyz))
     b = 2.0 * float(np.dot(origin_xyz, direction_xyz))
@@ -136,11 +202,21 @@ def _polar_roots(
     polar: float,
     roots_out: np.ndarray,  # out
 ) -> int:
-    """Write ray parameters where one line meets one constant-polar cone."""
+    """Write ray parameters where one line meets one constant-polar cone.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        polar (const): Polar angle defining the cone.
+        roots_out (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Number of valid ray/cone intersections.
+    """
     polar_value = float(polar)
-    if polar_value <= 0.0 or polar_value >= _PI:
+    if polar_value <= 0.0 or polar_value >= math.pi:
         return 0
-    if _times_close(polar_value, 0.5 * _PI):
+    if _times_close(polar_value, 0.5 * math.pi):
         dz = float(direction_xyz[2])
         if abs(dz) <= (_TIME_ATOL + _TIME_RTOL):
             return 0
@@ -188,7 +264,17 @@ def _azimuth_plane_roots(
     azimuth: float,
     roots_out: np.ndarray,  # out
 ) -> int:
-    """Write the ray parameter where one line meets one constant-azimuth plane."""
+    """Write the ray parameter where one line meets one constant-azimuth plane.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        azimuth (const): Azimuth defining the half-plane normal.
+        roots_out (output): Scratch root buffer with room for one entry.
+
+    Returns:
+        Number of written roots.
+    """
     azimuth_value = float(azimuth)
     normal_x = math.sin(azimuth_value)
     normal_y = -math.cos(azimuth_value)
@@ -209,7 +295,18 @@ def _rpa_coordinate_roots(
     value: float,
     roots_out: np.ndarray,  # out
 ) -> int:
-    """Write ray times where one RPA coordinate equals one value."""
+    """Write ray times where one RPA coordinate equals one value.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        axis (const): RPA axis id.
+        value (const): Target coordinate value on that axis.
+        roots_out (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Number of written roots.
+    """
     if int(axis) == 0:
         return _sphere_roots(origin_xyz, direction_xyz, float(value), roots_out)
     if int(axis) == 1:
@@ -228,7 +325,19 @@ def _face_roots(
     direction_xyz: np.ndarray,
     roots_out: np.ndarray,  # out
 ) -> int:
-    """Write ray times where one RPA trajectory meets one cell face."""
+    """Write ray times where one RPA trajectory meets one cell face.
+
+    Args:
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Leaf cell id.
+        face_id (const): Face id on that leaf.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        roots_out (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Number of written roots.
+    """
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_AXIS[int(face_id)])
     side = int(_FACE_SIDE[int(face_id)])
@@ -238,7 +347,16 @@ def _face_roots(
 
 @njit(cache=True)
 def _next_time_after(roots: np.ndarray, n_root: int, time: float) -> float:
-    """Return the nearest root strictly after one ray time, or infinity when absent."""
+    """Return the nearest root strictly after one ray time, or infinity when absent.
+
+    Args:
+        roots (const): Scratch root buffer.
+        n_root (const): Number of live entries in `roots`.
+        time (const): Current ray parameter.
+
+    Returns:
+        Nearest root after `time`, or `math.inf` when absent.
+    """
     best = math.inf
     time_value = float(time)
     for root_pos in range(n_root):
@@ -252,36 +370,71 @@ def _next_time_after(roots: np.ndarray, n_root: int, time: float) -> float:
 
 @njit(cache=True)
 def _axis_interval_unwrapped(axis: int, start: float, width: float, reference: float) -> tuple[float, float]:
-    """Return one coordinate interval unwrapped around one reference value."""
+    """Return one coordinate interval unwrapped around one reference value.
+
+    Args:
+        axis (const): RPA axis id.
+        start (const): Interval start.
+        width (const): Interval width.
+        reference (const): Reference value used for azimuth unwrapping.
+
+    Returns:
+        `(start_u, stop_u)` for the unwrapped interval.
+    """
     start_value = float(start)
     width_value = float(width)
     if int(axis) != 2:
         return start_value, start_value + width_value
-    if width_value >= (_TWO_PI - (_TIME_ATOL + _TIME_RTOL * max(abs(width_value), 1.0))):
+    if width_value >= ((2.0 * math.pi) - (_TIME_ATOL + _TIME_RTOL * max(abs(width_value), 1.0))):
+        # A full-period azimuth cell owns every wrapped representation, so keep
+        # the interval centered on the current reference value.
         return float(reference), float(reference) + width_value
-    start_unwrapped = float(reference) + ((start_value - float(reference) + _PI) % _TWO_PI - _PI)
+    # Shift the periodic azimuth interval onto the same local branch cut as the
+    # event value so half-open comparisons can be done in one affine chart.
+    start_unwrapped = float(reference) + (
+        (start_value - float(reference) + math.pi) % (2.0 * math.pi) - math.pi
+    )
     stop_unwrapped = start_unwrapped + width_value
     tol = _TIME_ATOL + _TIME_RTOL * max(abs(float(reference)), abs(start_unwrapped), abs(stop_unwrapped), 1.0)
     if float(reference) < start_unwrapped - tol:
-        start_unwrapped -= _TWO_PI
-        stop_unwrapped -= _TWO_PI
+        start_unwrapped -= 2.0 * math.pi
+        stop_unwrapped -= 2.0 * math.pi
     elif float(reference) > stop_unwrapped + tol:
-        start_unwrapped += _TWO_PI
-        stop_unwrapped += _TWO_PI
+        start_unwrapped += 2.0 * math.pi
+        stop_unwrapped += 2.0 * math.pi
     return float(start_unwrapped), float(stop_unwrapped)
 
 
 @njit(cache=True)
 def _axis_value_unwrapped(axis: int, value: float, reference: float) -> float:
-    """Return one coordinate value unwrapped around one reference."""
+    """Return one coordinate value unwrapped around one reference.
+
+    Args:
+        axis (const): RPA axis id.
+        value (const): Coordinate value.
+        reference (const): Reference value used for azimuth unwrapping.
+
+    Returns:
+        Unwrapped coordinate value.
+    """
     if int(axis) != 2:
         return float(value)
-    return float(reference) + ((float(value) - float(reference) + _PI) % _TWO_PI - _PI)
+    return float(reference) + ((float(value) - float(reference) + math.pi) % (2.0 * math.pi) - math.pi)
 
 
 @njit(cache=True)
 def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.ndarray, atol: float = 0.0) -> int:
-    """Return whether one RPA query lies in one exact half-open cell box plus one miss code."""
+    """Return whether one RPA query lies in one exact half-open cell box plus one miss code.
+
+    Args:
+        query_rpa (const): RPA query point with shape `(3,)`.
+        bounds (const): Candidate cell bounds with shape `(3, 2)`.
+        domain_bounds (const): Global RPA domain bounds with shape `(3, 2)`.
+        atol (const): Extra absolute tolerance for closed-domain containment.
+
+        Returns:
+        `TRACE_CONTAINS_BOX_OK` on success or one negative spherical start-status code.
+    """
     for axis in range(3):
         value = float(query_rpa[axis])
         start = float(bounds[axis, START])
@@ -290,6 +443,8 @@ def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.n
         domain_start = float(domain_bounds[axis, START])
         domain_width = float(domain_bounds[axis, WIDTH])
         if int(axis) == 2:
+            # Azimuth ownership is periodic, so compare the query and the
+            # interval after unwrapping both around the query itself.
             start_u, stop_u = _axis_interval_unwrapped(axis, start, width, value)
             value_u = _axis_value_unwrapped(axis, value, value)
             domain_start_u, _domain_stop_u = _axis_interval_unwrapped(axis, domain_start, domain_width, value)
@@ -311,7 +466,7 @@ def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.n
             if axis_id == 0:
                 return TRACE_START_OUTSIDE_DOMAIN_RADIUS_OPEN_LOWER
             return TRACE_START_OUTSIDE_DOMAIN_POLAR_OPEN_LOWER
-    return CONTAINS_BOX_OK
+    return TRACE_CONTAINS_BOX_OK
 
 
 @njit(cache=True)
@@ -322,12 +477,23 @@ def _axis_transfer_time(
     direction_xyz: np.ndarray,
     t_current: float,
 ) -> float:
-    """Return one future pole-axis crossing time for a polar-cap cell, or infinity when absent."""
+    """Return one future pole-axis crossing time for a polar-cap cell, or infinity when absent.
+
+    Args:
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Current leaf id.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        t_current (const): Current ray parameter.
+
+    Returns:
+        Next axis-transfer time, or `math.inf` when no pole-axis transfer exists.
+    """
     bounds = cell_bounds[int(cell_id)]
     polar_start = float(bounds[1, START])
     polar_stop = float(bounds[1, START] + bounds[1, WIDTH])
     touches_north_pole = _times_close(polar_start, 0.0)
-    touches_south_pole = _times_close(polar_stop, _PI)
+    touches_south_pole = _times_close(polar_stop, math.pi)
     if not touches_north_pole and not touches_south_pole:
         return math.inf
 
@@ -341,6 +507,8 @@ def _axis_transfer_time(
     tol_y = _TIME_ATOL + _TIME_RTOL * max(abs(y0), abs(dy), 1.0)
     if abs(dx) <= tol_x and abs(dy) <= tol_y:
         return math.inf
+    # A pole-axis transfer happens only when the Cartesian projection reaches
+    # the symmetry axis. Solve x(t)=0 and y(t)=0 consistently under the event tolerance.
     if abs(dx) <= tol_x:
         if abs(x0) > tol_x or abs(dy) <= tol_y:
             return math.inf
@@ -375,7 +543,18 @@ def _axis_transfer_destination_cell(
     crossing_xyz: np.ndarray,
     direction_xyz: np.ndarray,
 ) -> int:
-    """Return the analytic post-pole destination leaf at one axis-crossing time."""
+    """Return the analytic post-pole destination leaf at one axis-crossing time.
+
+    Args:
+        cell_depth (const): Packed cell depths.
+        cell_child (const): Packed child table.
+        cell_bounds (const): Packed leaf bounds.
+        crossing_xyz (const): Cartesian pole-axis crossing point.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+
+    Returns:
+        Destination leaf cell id, `-1` for no transfer owner, or `-2` for ambiguity.
+    """
     x_crossing = float(crossing_xyz[0])
     y_crossing = float(crossing_xyz[1])
     z_crossing = float(crossing_xyz[2])
@@ -396,8 +575,11 @@ def _axis_transfer_destination_cell(
         return -1
 
     north_pole = z_crossing > 0.0
-    azimuth_after = math.atan2(dy, dx) % _TWO_PI
+    azimuth_after = math.atan2(dy, dx) % (2.0 * math.pi)
     radial_tendency = z_crossing * dz
+    # Leaving the axis, the immediate azimuth is determined by the transverse
+    # direction, while the radial branch depends on whether the ray is moving
+    # away from or toward the origin at the pole crossing.
     radial_outward = radial_tendency > 0.0 or _times_close(radial_tendency, 0.0)
     matched_cell = -1
     matched_p_width = math.inf
@@ -431,7 +613,7 @@ def _axis_transfer_destination_cell(
             if not _times_close(p_start, 0.0):
                 continue
         else:
-            if not _times_close(p_stop, _PI):
+            if not _times_close(p_stop, math.pi):
                 continue
 
         a_start = float(bounds[2, START])
@@ -449,6 +631,8 @@ def _axis_transfer_destination_cell(
             matched_cell = int(cell_id)
             matched_p_width = p_width
             continue
+        # Two distinct leaves with the same best polar width would mean the
+        # analytic pole-transfer target is ambiguous.
         if not _times_close(p_width, matched_p_width) and p_width > matched_p_width:
             continue
         return -2
@@ -457,7 +641,16 @@ def _axis_transfer_destination_cell(
 
 @njit(cache=True)
 def _coordinate_velocity_sign(point_xyz: np.ndarray, direction_xyz: np.ndarray, axis: int) -> int:
-    """Return the local sign of one RPA coordinate velocity at one point."""
+    """Return the local sign of one RPA coordinate velocity at one point.
+
+    Args:
+        point_xyz (const): Cartesian evaluation point with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        axis (const): RPA axis id.
+
+    Returns:
+        `-1`, `0`, or `1` for the local coordinate velocity sign.
+    """
     x = float(point_xyz[0])
     y = float(point_xyz[1])
     z = float(point_xyz[2])
@@ -496,7 +689,16 @@ def find_domain_interval(
     direction_xyz: np.ndarray,
     domain_bounds: np.ndarray,
 ) -> tuple[bool, float, float]:
-    """Return whether one ray intersects the spherical domain plus the clipped parameter interval."""
+    """Return whether one ray intersects the spherical domain plus the clipped parameter interval.
+
+    Args:
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        domain_bounds (const): Spherical domain bounds with shape `(3, 2)`.
+
+    Returns:
+        `(has_interval, t_enter, t_exit)`.
+    """
     r_max = float(domain_bounds[0, START] + domain_bounds[0, WIDTH])
     roots = np.empty(2, dtype=np.float64)
     n_root = _sphere_roots(origin_xyz, direction_xyz, r_max, roots)
@@ -519,7 +721,18 @@ def find_cell(
     cell_bounds: np.ndarray,
     domain_bounds: np.ndarray,
 ) -> int:
-    """Resolve one RPA query to its exact half-open RPA owner."""
+    """Resolve one RPA query to its exact half-open RPA owner.
+
+    Args:
+        query_rpa (const): RPA query point with shape `(3,)`.
+        cell_child (const): Packed child table.
+        root_cell_ids (const): Root cell ids.
+        cell_bounds (const): Packed leaf bounds.
+        domain_bounds (const): Spherical domain bounds.
+
+    Returns:
+        Owning leaf cell id, or one negative spherical start-status code.
+    """
     if not (
         math.isfinite(float(query_rpa[0]))
         and math.isfinite(float(query_rpa[1]))
@@ -563,7 +776,22 @@ def find_exit(
     roots: np.ndarray,  # out
     candidate_xyz: np.ndarray,  # out
 ) -> tuple[float, int, bool]:
-    """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state."""
+    """Return one leaf exit event as `t_exit`, active face ids, and axis-transfer state.
+
+    Args:
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Current leaf id.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        t_current (const): Current ray parameter.
+        active_faces (output): Scratch face ids written in crossing order.
+        candidate_times (output): Scratch per-face candidate times.
+        roots (output): Scratch root buffer with room for two entries.
+        candidate_xyz (output): Scratch Cartesian point buffer with shape `(3,)`.
+
+    Returns:
+        `(t_exit, n_active_face, axis_transfer)`.
+    """
     candidate_times[:] = math.inf
     n_candidate = 0
 
@@ -576,6 +804,8 @@ def find_exit(
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(candidate_xyz, direction_xyz, axis)
+        # Spherical coordinate surfaces can be met tangentially. Keep only roots
+        # where the local coordinate velocity points out through this face.
         if side == 0:
             if direction_sign >= 0:
                 continue
@@ -617,7 +847,18 @@ def _fill_active_face_state(
     active_face_by_axis: np.ndarray,  # out
     active_face_order: np.ndarray,  # out
 ) -> int:
-    """Fill reusable active-face lookup arrays and return the current face order."""
+    """Fill reusable active-face lookup arrays and return the current face order.
+
+    Args:
+        active_faces (const): Active face ids for one crossing.
+        n_active_face (const): Number of live entries in `active_faces`.
+        current_face_id (const): Face currently being resolved.
+        active_face_by_axis (output): Axis-to-active-face scratch map.
+        active_face_order (output): Face-id-to-order scratch map.
+
+    Returns:
+        Order of `current_face_id` inside `active_faces`.
+    """
     active_face_by_axis[:] = -1
     active_face_order[:] = -1
     current_face_order = -1
@@ -637,7 +878,17 @@ def is_on_face(
     face_id: int,
     crossing_xyz: np.ndarray,
 ) -> bool:
-    """Return whether one snapped spherical event lies on one cell face."""
+    """Return whether one snapped spherical event lies on one cell face.
+
+    Args:
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Candidate carrier leaf id.
+        face_id (const): Face id on that leaf.
+        crossing_xyz (const): Snapped crossing point in RPA coordinates.
+
+    Returns:
+        Whether the crossing lies on that face carrier.
+    """
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_AXIS[int(face_id)])
     width = float(bounds[axis, WIDTH])
@@ -683,7 +934,24 @@ def find_subface(
     direction_xyz: np.ndarray,
     crossing_rpa: np.ndarray,
 ) -> int:
-    """Return the destination-side owning face patch for one spherical face crossing."""
+    """Return the destination-side owning face patch for one spherical face crossing.
+
+    Args:
+        cell_neighbor (const): Packed face/subface neighbor table.
+        domain_bounds (const): Spherical domain bounds.
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Current leaf id.
+        face_id (const): Active crossed face on the current leaf.
+        active_face_by_axis (const): Axis-to-active-face map for this crossing.
+        active_face_order (const): Face-id-to-order map for this crossing.
+        current_face_order (const): Order of `face_id` inside the active-face list.
+        crossing_xyz (const): Cartesian crossing point.
+        direction_xyz (const): Ray direction.
+        crossing_rpa (const): Crossing point snapped in RPA coordinates.
+
+    Returns:
+        Face-patch slot id, `-1` for no owner, or `-2` for ambiguity.
+    """
     row = cell_neighbor[int(cell_id), int(face_id)]
     first_neighbor = -1
     first_slot = -1
@@ -753,6 +1021,10 @@ def find_subface(
             elif abs(value_u - current_stop_u) <= tol and direction_sign > 0:
                 implicit_active_side = 1
             if active_face_id >= 0 or implicit_active_side >= 0:
+                # Another active face on this tangential axis means the event is
+                # sitting on a lower-dimensional edge/corner. In that case the
+                # destination neighbor must inherit the whole current tangential
+                # interval or match the active boundary exactly.
                 if active_face_id >= 0:
                     active_side = int(_FACE_SIDE[int(active_face_id)])
                     if int(active_face_order[int(active_face_id)]) < int(current_face_order):
@@ -777,6 +1049,9 @@ def find_subface(
                     break
                 continue
 
+            # Otherwise this tangential axis is resolved purely by the open
+            # interval after the crossing, with the periodic/domain lower face
+            # staying closed only on the global domain boundary.
             if direction_sign > 0:
                 if value_u < neighbor_start_u - tol or value_u > neighbor_stop_u + tol:
                     contains = False
@@ -829,13 +1104,26 @@ def _write_crossing(
     t_event: float,
     crossing_rpa: np.ndarray,  # out
 ) -> None:
-    """Fill scratch coordinates derived from one crossing time."""
+    """Fill scratch coordinates derived from one crossing time.
+
+    Args:
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Current leaf id.
+        active_faces (const): Active crossed faces.
+        n_active_face (const): Number of live active faces.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        t_event (const): Crossing event time.
+        crossing_rpa (output): Snapped RPA crossing point.
+    """
     _fill_rpa_at_time(origin_xyz, direction_xyz, float(t_event), crossing_rpa)
     bounds = cell_bounds[int(cell_id)]
     for face_pos in range(n_active_face):
         face_id = int(active_faces[face_pos])
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
+        # Re-snap active axes onto the exact stored face coordinate so later
+        # half-open ownership tests do not depend on the raw xyz->rpa roundoff.
         if side == 0:
             crossing_rpa[axis] = float(bounds[axis, START])
         else:
@@ -859,7 +1147,27 @@ def walk_faces(
     active_face_by_axis: np.ndarray,  # out
     active_face_order: np.ndarray,  # out
 ) -> int:
-    """Walk one time-defined spherical crossing through the face/subface neighbor graph."""
+    """Walk one time-defined spherical crossing through the face/subface neighbor graph.
+
+    Args:
+        cell_neighbor (const): Packed face/subface neighbor table.
+        domain_bounds (const): Spherical domain bounds.
+        cell_bounds (const): Packed leaf bounds.
+        start_cell_id (const): Leaf that owns the pre-crossing segment.
+        active_faces (const): Active crossed faces for this crossing.
+        n_active_face (const): Number of live active faces.
+        direction_xyz (const): Ray direction.
+        origin_xyz (const): Ray origin.
+        t_event (const): Crossing event time.
+        crossing_xyz (output): Scratch Cartesian crossing point.
+        crossing_rpa (output): Scratch RPA crossing point.
+        path (output): Scratch crossing continuation path.
+        active_face_by_axis (output): Scratch axis-to-face map.
+        active_face_order (output): Scratch face-id-to-order map.
+
+    Returns:
+        Number of written cells in `path`, or `-1` on ambiguity.
+    """
     _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
     _write_crossing(
         cell_bounds,
@@ -877,6 +1185,8 @@ def walk_faces(
         face_id = int(active_faces[face_pos])
         if current_cell < 0:
             break
+        # The current continuation cell may no longer carry later active faces
+        # in a multiface event, so skip any face the current carrier does not own.
         if not is_on_face(cell_bounds, current_cell, face_id, crossing_rpa):
             continue
         current_face_order = _fill_active_face_state(
@@ -918,7 +1228,21 @@ def _start_active_faces(
     active_faces_out: np.ndarray,  # out
     roots: np.ndarray,  # out
 ) -> int:
-    """Return faces whose crossing time is snapped to the start time."""
+    """Return faces whose crossing time is snapped to the start time.
+
+    Args:
+        cell_bounds (const): Packed leaf bounds.
+        cell_id (const): Start leaf id.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        t_event (const): Start event time.
+        start_xyz (const): Cartesian start point.
+        active_faces_out (output): Scratch active-face buffer.
+        roots (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Number of start-active faces.
+    """
     n_active_face = 0
     for face_id in range(6):
         n_root = _face_roots(cell_bounds, int(cell_id), int(face_id), origin_xyz, direction_xyz, roots)
@@ -932,6 +1256,8 @@ def _start_active_faces(
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(start_xyz, direction_xyz, axis)
+        # At the exact start event we only keep faces that the ray immediately
+        # exits through, i.e. faces that bound the open interval after the start.
         if side == 0:
             if direction_sign >= 0:
                 continue
@@ -961,7 +1287,28 @@ def _start_cell_owner(
     crossing_rpa: np.ndarray,  # out
     roots: np.ndarray,  # out
 ) -> int:
-    """Return the leaf that owns the immediate open interval after one start point."""
+    """Return the leaf that owns the immediate open interval after one start point.
+
+    Args:
+        root_cell_ids (const): Root cell ids.
+        cell_child (const): Packed child table.
+        cell_bounds (const): Packed leaf bounds.
+        domain_bounds (const): Spherical domain bounds.
+        cell_neighbor (const): Packed face/subface neighbor table.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        t_event (const): Start event time.
+        active_faces (output): Scratch active-face buffer.
+        path (output): Scratch crossing continuation path.
+        active_face_by_axis (output): Scratch axis-to-face map.
+        active_face_order (output): Scratch face-id-to-order map.
+        crossing_xyz (output): Scratch Cartesian crossing point.
+        crossing_rpa (output): Scratch RPA crossing point.
+        roots (output): Scratch root buffer with room for two entries.
+
+    Returns:
+        Owning leaf cell id, or one negative spherical start-status code.
+    """
     start_rpa = np.empty(3, dtype=np.float64)
     _fill_rpa_at_time(origin_xyz, direction_xyz, float(t_event), start_rpa)
     # Domain-entry roots can land a few ulps outside the closed radial/polar bounds.
@@ -991,6 +1338,8 @@ def _start_cell_owner(
         roots,
     )
     if n_active_face == 0:
+        # Starting strictly inside one leaf is the easy case: the half-open
+        # lookup already identified the owner of the immediate post-start interval.
         return int(current_cell)
     path_count = walk_faces(
         cell_neighbor,
@@ -1028,7 +1377,25 @@ def _trace_ray(
     cell_ids_out: np.ndarray,  # out
     times_out: np.ndarray,  # out
 ) -> tuple[int, int]:
-    """Trace one spherical ray into fixed scratch buffers."""
+    """Trace one spherical ray into fixed scratch buffers.
+
+    Args:
+        root_cell_ids (const): Root cell ids.
+        cell_child (const): Packed child table.
+        cell_bounds (const): Packed leaf bounds.
+        domain_bounds (const): Spherical domain bounds.
+        cell_neighbor (const): Packed face/subface neighbor table.
+        cell_depth (const): Packed cell depths.
+        origin_xyz (const): Ray origin with shape `(3,)`.
+        direction_xyz (const): Ray direction with shape `(3,)`.
+        t_min (const): Lower parameter clip.
+        t_max (const): Upper parameter clip.
+        cell_ids_out (output): Scratch cell-id trace buffer.
+        times_out (output): Scratch time buffer.
+
+    Returns:
+        `(n_cell, n_time)`, matching spherical trace status codes on failure.
+    """
     max_cells = int(cell_ids_out.shape[0])
     has_interval, domain_enter, domain_exit = find_domain_interval(origin_xyz, direction_xyz, domain_bounds)
     if not has_interval:
@@ -1106,6 +1473,8 @@ def _trace_ray(
             if next_cell == TRACE_START_CELL_NOT_FOUND:
                 return TRACE_INVALID_CROSSING, TRACE_INVALID_CROSSING
             if next_cell != int(current_cell) or next_cell < 0:
+                # The pole-axis event ends the current segment even if the next
+                # owner is absent; the subsequent state starts from the axis-transfer target.
                 if n_cell >= max_cells:
                     return TRACE_BUFFER_OVERFLOW, TRACE_BUFFER_OVERFLOW
                 cell_ids_out[n_cell] = int(current_cell)
@@ -1175,7 +1544,24 @@ def trace_rays(
     cell_ids_out: np.ndarray,  # out
     times_out: np.ndarray,  # out
 ) -> None:
-    """Trace flat spherical rays into fixed per-ray scratch buffers."""
+    """Trace flat spherical rays into fixed per-ray scratch buffers.
+
+    Args:
+        root_cell_ids (const): Root cell ids.
+        cell_child (const): Packed child table.
+        cell_bounds (const): Packed leaf bounds.
+        domain_bounds (const): Spherical domain bounds.
+        cell_neighbor (const): Packed face/subface neighbor table.
+        cell_depth (const): Packed cell depths.
+        origins (const): Flat origin array with shape `(n_rays, 3)`.
+        directions (const): Flat direction array with shape `(n_rays, 3)`.
+        t_min (const): Lower parameter clip.
+        t_max (const): Upper parameter clip.
+        cell_counts (output): Per-ray cell counts.
+        time_counts (output): Per-ray time counts.
+        cell_ids_out (output): Per-ray scratch cell-id rows.
+        times_out (output): Per-ray scratch time rows.
+    """
     n_rays = int(origins.shape[0])
     for ray_id in prange(n_rays):
         n_cell, n_time = _trace_ray(

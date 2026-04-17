@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Cartesian crossing-trace kernels."""
+"""Exact Cartesian leaf-crossing kernels for octree rays.
+
+This module is the low-level Cartesian traversal backend used by the public ray
+tracer. It clips one straight ray to the axis-aligned octree domain, finds the
+next exit face of the current leaf, and then follows the face/subface neighbor
+graph to determine the owner of the open interval after that event.
+
+The emphasis here is exact discrete ownership, not interpolation or rendering.
+Given one current leaf and one straight Cartesian ray, these kernels produce
+the packed sequence of visited leaves and event times that higher layers later
+use for accumulation.
+"""
 
 from __future__ import annotations
 
