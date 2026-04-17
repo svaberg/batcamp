@@ -206,9 +206,18 @@ def _event_subface_id_rpa(
 
 def _find_cell_rpa_single(tree: Octree, query_xyz: np.ndarray) -> int:
     """Test wrapper around the production spherical cell lookup."""
+    query_xyz = np.asarray(query_xyz, dtype=float)
+    query_rpa = np.asarray(
+        spherical_crossing_trace.xyz_to_rpa_components(
+            float(query_xyz[0]),
+            float(query_xyz[1]),
+            float(query_xyz[2]),
+        ),
+        dtype=float,
+    )
     return int(
         spherical_crossing_trace.find_cell(
-            query_xyz,
+            query_rpa,
             tree.cell_child,
             tree._root_cell_ids,
             tree.cell_bounds,
@@ -278,14 +287,14 @@ def walk_faces_rpa(
         start_cell_id,
         active_faces_array,
         int(active_faces_array.size),
-        crossing,
         direction_xyz,
+        origin_xyz,
+        t_event,
+        crossing,
+        crossing_rpa,
         path,
         active_face_by_axis,
         active_face_order,
-        origin_xyz,
-        t_event,
-        crossing_rpa,
     )
     if path_count < 0:
         raise ValueError("Spherical event face patch is ambiguous under destination-side ownership.")
@@ -1090,6 +1099,7 @@ def test_rpa_trace_chunk_uses_spherical_initial_crossing_capacity(monkeypatch) -
     assert tracer._crossing_buffer_size == 2
 
 
+@pytest.mark.pooch
 def test_sc_benchmark_artifact_rays_render_match_standalone_midpoint_image() -> None:
     ds, tree, origins, directions, t_end = _build_sc_benchmark_trace_case()
     tracer = OctreeRayTracer(tree)
@@ -1116,11 +1126,13 @@ def test_sc_benchmark_artifact_rays_render_match_standalone_midpoint_image() -> 
     np.testing.assert_allclose(image, expected, atol=1.0e-12, rtol=0.0)
 
 
+@pytest.mark.pooch
 def test_trace_sc_benchmark_vertical_artifact_ray_matches_lookup_oracle() -> None:
     tree, origin, direction, t_end = _sc_benchmark_ray(32, 33)
     _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))
 
 
+@pytest.mark.pooch
 def test_trace_sc_benchmark_corner_artifact_ray_matches_lookup_oracle() -> None:
     tree, origin, direction, t_end = _sc_benchmark_ray(41, 22)
     _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))

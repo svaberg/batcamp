@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from batcamp import spherical_crossing_trace
+from sample_data_helper import local_data_file
 
 
 _BENCHMARK_SCRIPTS = [
@@ -53,7 +54,7 @@ def _load_benchmark_grid_vs_ray_module():
 
 
 def _example_benchmark_output_root(repo_root: Path) -> Path:
-    out_root = repo_root / "artifacts" / "test_example_imports"
+    out_root = repo_root / "artifacts" / "test_example_scripts"
     out_root.mkdir(parents=True, exist_ok=True)
     return out_root
 
@@ -64,6 +65,11 @@ def _example_benchmark_progress(module, out_root: Path, log_name: str):
     module._configure_progress_logging(log_path=log_path)
     module._configure_builder_logging(log_path=log_path)
     return module._ProgressReporter(log_path=log_path), log_path
+
+
+def _resolve_local_data_file(_repo_root: Path, name: str) -> Path:
+    """Resolve one bundled sample file without falling back to pooch."""
+    return local_data_file(name)
 
 
 @pytest.mark.parametrize("script_name", _BENCHMARK_SCRIPTS)
@@ -84,6 +90,7 @@ def test_benchmark_scripts_run_from_examples(script_name: str) -> None:
 def test_grid_vs_ray_benchmark_runs_one_example_case() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_grid_vs_ray.py", "benchmark_grid_vs_ray_run_for_test")
+    module.resolve_data_file = _resolve_local_data_file
     out_root = _example_benchmark_output_root(repo_root)
     expected_path = out_root / (
         "benchmark_grid_vs_ray_example_trilinear_"
@@ -113,6 +120,7 @@ def test_grid_vs_ray_benchmark_runs_one_example_case() -> None:
 def test_xy_plane_benchmark_runs_one_example_case() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_xy_plane.py", "benchmark_xy_plane_run_for_test")
+    module.resolve_data_file = _resolve_local_data_file
     out_root = _example_benchmark_output_root(repo_root)
     expected_path = out_root / (
         "benchmark_xy_plane_example_"
@@ -141,6 +149,7 @@ def test_xy_plane_benchmark_runs_one_example_case() -> None:
 def test_random_points_benchmark_runs_one_example_case() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_random_points.py", "benchmark_random_points_run_for_test")
+    module.resolve_data_file = _resolve_local_data_file
     out_root = _example_benchmark_output_root(repo_root)
     expected_path = out_root / "benchmark_random_points_example_timing_report.md"
     expected_path.unlink(missing_ok=True)
@@ -162,6 +171,7 @@ def test_random_points_benchmark_runs_one_example_case() -> None:
     assert "[example] done -> benchmark_random_points_example_*" in log_text
 
 
+@pytest.mark.pooch
 def test_star_movie_benchmark_runs_one_example_case() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_run_for_test")
@@ -197,6 +207,7 @@ def test_star_movie_benchmark_runs_one_example_case() -> None:
     assert "[sc] done -> benchmark_star_movie_sc_*" in log_text
 
 
+@pytest.mark.pooch
 def test_star_movie_view_angles_render_for_all_available_files() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_angles_for_test")
@@ -239,12 +250,15 @@ def test_star_movie_view_angles_render_for_all_available_files() -> None:
 @pytest.mark.parametrize(
     ("case_label", "file_name", "azimuth_deg"),
     [
-        pytest.param(case_label, file_name, azimuth_deg, id=f"{case_label}_{azimuth_deg:.3f}")
-        for case_label, file_name, azimuth_deg in (
-            ("local_example", "3d__var_1_n00000000.plt", 1.875),
-            ("local_rpa", "3d__var_2_n00060005.plt", 5.625),
-            ("sc", "3d__var_4_n00044000.plt", 5.625),
-        )
+        pytest.param("local_example", "3d__var_1_n00000000.plt", 1.875, id="local_example_1.875"),
+        pytest.param("local_rpa", "3d__var_2_n00060005.plt", 5.625, id="local_rpa_5.625"),
+        pytest.param(
+            "sc",
+            "3d__var_4_n00044000.plt",
+            5.625,
+            id="sc_5.625",
+            marks=pytest.mark.pooch,
+        ),
     ],
 )
 def test_star_movie_diagnostic_angles_render_successfully(
@@ -253,7 +267,10 @@ def test_star_movie_diagnostic_angles_render_successfully(
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_diagnostic_for_test")
     case = module.DatasetCase(case_label, file_name)
-    data_path = module.resolve_data_file(repo_root, case.file_name)
+    if case_label.startswith("local_"):
+        data_path = local_data_file(case.file_name)
+    else:
+        data_path = module.resolve_data_file(repo_root, case.file_name)
     ds = module.Dataset.from_file(str(data_path))
     tree = module._build_octree(ds)
     interp = module.OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))
@@ -287,7 +304,7 @@ def test_star_movie_local_example_first_frame_has_no_start_owner_drops() -> None
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_local_example_regression_for_test")
     case = module.DatasetCase("local_example", "3d__var_1_n00000000.plt")
-    data_path = module.resolve_data_file(repo_root, case.file_name)
+    data_path = local_data_file(case.file_name)
     ds = module.Dataset.from_file(str(data_path))
     tree = module._build_octree(ds)
     interp = module.OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))

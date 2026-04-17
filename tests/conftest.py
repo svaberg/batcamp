@@ -5,13 +5,13 @@ from batread import Dataset
 
 from batcamp import Octree
 from batcamp.builder import DEFAULT_AXIS_TOL
-from sample_data_helper import data_file
+from sample_data_helper import local_data_file
 
 
 @lru_cache(maxsize=1)
 def _build_difflevels_rpa_case() -> tuple[Dataset, Octree]:
     """Build and cache one representative spherical dataset/tree pair."""
-    input_file = data_file("3d__var_2_n00060005.plt")
+    input_file = local_data_file("3d__var_2_n00060005.plt")
     assert input_file.exists(), f"Missing sample file: {input_file}"
     ds = Dataset.from_file(str(input_file))
     assert ds.corners is not None

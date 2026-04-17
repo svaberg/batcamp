@@ -49,6 +49,12 @@ def _fetch_from_g2211_archive(name: str) -> Path:
     return Path(extracted)
 
 
+def local_data_file(name: str) -> Path:
+    """Resolve one bundled sample file by basename from this repo only."""
+    root = Path(__file__).resolve().parents[1]
+    return _find_in_sample_data(root / "sample_data", name)
+
+
 def data_file(name: str) -> Path:
     """Resolve one sample file by basename.
 
