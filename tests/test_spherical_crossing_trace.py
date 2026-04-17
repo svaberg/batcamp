@@ -225,14 +225,17 @@ def trace_rpa_test_path(
     t_min: float = 0.0,
     t_max: float = np.inf,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Test wrapper around the production one-ray spherical trace."""
-    return spherical_crossing_trace.trace_ray(
-        tree,
+    """Test wrapper around the production batched spherical trace for one ray."""
+    tracer = OctreeRayTracer(tree)
+    segments = tracer.trace(
         origin_xyz,
         direction_xyz,
         t_min=t_min,
         t_max=t_max,
     )
+    if segments.n_rays != 1:
+        raise AssertionError("trace_rpa_test_path expects exactly one traced ray.")
+    return segments.cell_ids.copy(), segments.times.copy()
 
 
 def trace_rpa_test_rays(

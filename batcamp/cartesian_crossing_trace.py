@@ -666,7 +666,7 @@ def walk_faces(
 
 
 @njit(cache=True, parallel=True)
-def trace_buffer(
+def trace_rays(
     root_cell_ids: np.ndarray,
     cell_child: np.ndarray,
     cell_bounds: np.ndarray,

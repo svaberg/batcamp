@@ -573,6 +573,53 @@ def test_render_midpoint_image_preserves_vector_components() -> None:
     np.testing.assert_allclose(image, np.array([[[2.0, 6.0]]], dtype=float), atol=1.0e-12, rtol=0.0)
 
 
+def test_trace_skips_failed_rays_with_empty_segments(monkeypatch) -> None:
+    tree = _build_xyz_tree()
+    tracer = OctreeRayTracer(tree)
+
+    def fake_trace_rays(
+        root_cell_ids: np.ndarray,
+        cell_child: np.ndarray,
+        cell_bounds: np.ndarray,
+        domain_bounds: np.ndarray,
+        cell_neighbor: np.ndarray,
+        cell_depth: np.ndarray,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        t_min: float,
+        t_max: float,
+        cell_counts: np.ndarray,
+        time_counts: np.ndarray,
+        cell_ids_out: np.ndarray,
+        times_out: np.ndarray,
+    ) -> None:
+        del root_cell_ids, cell_child, cell_bounds, domain_bounds, cell_neighbor, cell_depth
+        del origins, directions, t_min, t_max
+        cell_counts[:] = 0
+        time_counts[:] = 0
+        cell_counts[0] = 2
+        time_counts[0] = 3
+        cell_ids_out[0, 0] = 0
+        cell_ids_out[0, 1] = 1
+        times_out[0, 0] = 1.0
+        times_out[0, 1] = 2.0
+        times_out[0, 2] = 3.0
+        cell_counts[1] = -2
+        time_counts[1] = -2
+
+    monkeypatch.setattr(tracer._trace_module, "trace_rays", fake_trace_rays)
+
+    origins = np.array([[-2.0, -0.3, -0.2], [-2.0, -0.3, -0.2]], dtype=float)
+    directions = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=float)
+
+    segments = tracer.trace(origins, directions)
+
+    np.testing.assert_array_equal(segments.ray_offsets, np.array([0, 2, 2], dtype=np.int64))
+    np.testing.assert_array_equal(segments.time_offsets, np.array([0, 3, 3], dtype=np.int64))
+    np.testing.assert_array_equal(segments.cell_ids, np.array([0, 1], dtype=np.int64))
+    np.testing.assert_allclose(segments.times, np.array([1.0, 2.0, 3.0], dtype=float), atol=1.0e-12, rtol=0.0)
+
+
 def test_midpoint_image_preserves_vector_components() -> None:
     tree = _build_xyz_tree()
     tracer = OctreeRayTracer(tree)

@@ -9,7 +9,6 @@ import numpy as np
 from numba import njit
 from numba import prange
 
-from .octree import Octree
 from .octree import START
 from .octree import WIDTH
 from .octree import _FACE_AXIS
@@ -18,16 +17,24 @@ from .octree import _FACE_TANGENTIAL_AXES
 from .spherical import xyz_to_rpa_components
 
 DEFAULT_CROSSING_BUFFER_SIZE = 32
+TRACE_BUFFER_OVERFLOW = -0x0001
+TRACE_START_CELL_NOT_FOUND = -0x0002
+TRACE_START_WALK_FAILED = -0x0004
+TRACE_INVALID_CROSSING = -0x0008
+TRACE_START_QUERY_NOT_FINITE = -0x0010
+TRACE_START_NO_ROOT_OWNER = -0x0040
+TRACE_START_OUTSIDE_DOMAIN_AZIMUTH_INTERVAL = -0x0080
+TRACE_START_OUTSIDE_DOMAIN_AZIMUTH_OPEN_LOWER = -0x0100
+TRACE_START_OUTSIDE_DOMAIN_RADIUS_INTERVAL = -0x0200
+TRACE_START_OUTSIDE_DOMAIN_POLAR_INTERVAL = -0x0400
+TRACE_START_OUTSIDE_DOMAIN_RADIUS_OPEN_LOWER = -0x0800
+TRACE_START_OUTSIDE_DOMAIN_POLAR_OPEN_LOWER = -0x1000
+CONTAINS_BOX_OK = 0x0001
+DOMAIN_CONTAINS_ATOL = 1.0e-10
 _PI = math.pi
 _TWO_PI = 2.0 * math.pi
 _TIME_ATOL = 1.0e-12
 _TIME_RTOL = 64.0 * np.finfo(np.float64).eps
-
-__all__ = [
-    "DEFAULT_CROSSING_BUFFER_SIZE",
-    "trace_ray",
-    "trace_buffer",
-]
 
 
 @njit(cache=True)
@@ -81,9 +88,12 @@ def _fill_xyz_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: f
 
 
 @njit(cache=True)
-def _fill_rpa_from_xyz(xyz: np.ndarray, out: np.ndarray) -> None:
-    """Fill spherical coordinates for one Cartesian point."""
-    radius, polar, azimuth = xyz_to_rpa_components(float(xyz[0]), float(xyz[1]), float(xyz[2]))
+def _fill_rpa_at_time(origin_xyz: np.ndarray, direction_xyz: np.ndarray, time: float, out: np.ndarray) -> None:
+    """Fill spherical coordinates for one straight ray at one parameter time."""
+    point_x = float(origin_xyz[0]) + float(time) * float(direction_xyz[0])
+    point_y = float(origin_xyz[1]) + float(time) * float(direction_xyz[1])
+    point_z = float(origin_xyz[2]) + float(time) * float(direction_xyz[2])
+    radius, polar, azimuth = xyz_to_rpa_components(point_x, point_y, point_z)
     out[0] = radius
     out[1] = polar
     out[2] = azimuth
@@ -245,8 +255,8 @@ def _axis_value_unwrapped(axis: int, value: float, reference: float) -> float:
 
 
 @njit(cache=True)
-def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.ndarray) -> bool:
-    """Return whether one RPA query lies in one exact half-open cell box."""
+def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.ndarray, atol: float = 0.0) -> int:
+    """Return whether one RPA query lies in one exact half-open cell box plus one miss code."""
     for axis in range(3):
         value = float(query_rpa[axis])
         start = float(bounds[axis, START])
@@ -259,19 +269,24 @@ def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.n
             value_u = _axis_value_unwrapped(axis, value, value)
             domain_start_u, _domain_stop_u = _axis_interval_unwrapped(axis, domain_start, domain_width, value)
             scale = max(abs(start_u), abs(stop_u), abs(value_u), 1.0)
-            tol = 8.0 * np.finfo(np.float64).eps * scale
+            tol = max(8.0 * np.finfo(np.float64).eps * scale, float(atol))
             if value_u < start_u - tol or value_u > stop_u + tol:
-                return False
+                return TRACE_START_OUTSIDE_DOMAIN_AZIMUTH_INTERVAL
             if not _times_close(start_u, domain_start_u) and abs(value_u - start_u) <= tol:
-                return False
+                return TRACE_START_OUTSIDE_DOMAIN_AZIMUTH_OPEN_LOWER
             continue
+        axis_id = int(axis)
         scale = max(abs(start), abs(stop), abs(value), 1.0)
-        tol = 8.0 * np.finfo(np.float64).eps * scale
+        tol = max(8.0 * np.finfo(np.float64).eps * scale, float(atol))
         if value < start - tol or value > stop + tol:
-            return False
+            if axis_id == 0:
+                return TRACE_START_OUTSIDE_DOMAIN_RADIUS_INTERVAL
+            return TRACE_START_OUTSIDE_DOMAIN_POLAR_INTERVAL
         if not _times_close(start, domain_start) and abs(value - start) <= tol:
-            return False
-    return True
+            if axis_id == 0:
+                return TRACE_START_OUTSIDE_DOMAIN_RADIUS_OPEN_LOWER
+            return TRACE_START_OUTSIDE_DOMAIN_POLAR_OPEN_LOWER
+    return CONTAINS_BOX_OK
 
 
 @njit(cache=True)
@@ -461,48 +476,49 @@ def find_domain_interval(
     roots = np.empty(2, dtype=np.float64)
     n_root = _sphere_roots(origin, direction, r_max, roots)
     if n_root < 2:
+        # The line does not cross the outer spherical boundary twice.
         return False, 0.0, 0.0
     t_enter = float(roots[0])
     t_exit = float(roots[n_root - 1])
     if not t_enter < t_exit:
+        # Degenerate or reversed roots do not define a positive entry interval.
         return False, 0.0, 0.0
     return True, t_enter, t_exit
 
 
 @njit(cache=True)
 def find_cell(
-    query: np.ndarray,
+    query_rpa: np.ndarray,
     cell_child: np.ndarray,
     root_cell_ids: np.ndarray,
     cell_bounds: np.ndarray,
     domain_bounds: np.ndarray,
 ) -> int:
-    """Resolve one Cartesian query to its exact half-open RPA owner."""
+    """Resolve one RPA query to its exact half-open RPA owner."""
     if not (
-        math.isfinite(float(query[0]))
-        and math.isfinite(float(query[1]))
-        and math.isfinite(float(query[2]))
+        math.isfinite(float(query_rpa[0]))
+        and math.isfinite(float(query_rpa[1]))
+        and math.isfinite(float(query_rpa[2]))
     ):
-        return -1
-    query_rpa = np.empty(3, dtype=np.float64)
-    _fill_rpa_from_xyz(query, query_rpa)
-    if not _contains_box(query_rpa, domain_bounds, domain_bounds):
-        return -1
+        return TRACE_START_QUERY_NOT_FINITE
+    domain_code = _contains_box(query_rpa, domain_bounds, domain_bounds, DOMAIN_CONTAINS_ATOL)
+    if domain_code < 0:
+        return int(domain_code)
     current = -1
     for root_pos in range(int(root_cell_ids.shape[0])):
         root_cell_id = int(root_cell_ids[root_pos])
-        if _contains_box(query_rpa, cell_bounds[root_cell_id], domain_bounds):
+        if _contains_box(query_rpa, cell_bounds[root_cell_id], domain_bounds) > 0:
             current = root_cell_id
             break
     if current < 0:
-        return -1
+        return TRACE_START_NO_ROOT_OWNER
     while True:
         next_cell_id = -1
         for child_ord in range(8):
             child_id = int(cell_child[current, child_ord])
             if child_id < 0:
                 continue
-            if _contains_box(query_rpa, cell_bounds[child_id], domain_bounds):
+            if _contains_box(query_rpa, cell_bounds[child_id], domain_bounds) > 0:
                 next_cell_id = child_id
                 break
         if next_cell_id < 0:
@@ -514,8 +530,8 @@ def find_cell(
 def find_exit(
     cell_bounds: np.ndarray,
     cell_id: int,
-    origin: np.ndarray,
-    direction: np.ndarray,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
     t_current: float,
     active_faces: np.ndarray,
     candidate_times: np.ndarray,
@@ -527,14 +543,14 @@ def find_exit(
     n_candidate = 0
 
     for face_id in range(6):
-        n_root = _face_roots(cell_bounds, int(cell_id), int(face_id), origin, direction, roots)
+        n_root = _face_roots(cell_bounds, int(cell_id), int(face_id), origin_xyz, direction_xyz, roots)
         candidate_time = _next_time_after(roots, n_root, float(t_current))
         if math.isinf(candidate_time):
             continue
-        _fill_xyz_at_time(origin, direction, float(candidate_time), candidate_xyz)
+        _fill_xyz_at_time(origin_xyz, direction_xyz, float(candidate_time), candidate_xyz)
         axis = int(_FACE_AXIS[int(face_id)])
         side = int(_FACE_SIDE[int(face_id)])
-        direction_sign = _coordinate_velocity_sign(candidate_xyz, direction, axis)
+        direction_sign = _coordinate_velocity_sign(candidate_xyz, direction_xyz, axis)
         if side == 0:
             if direction_sign >= 0:
                 continue
@@ -544,7 +560,7 @@ def find_exit(
         candidate_times[face_id] = float(candidate_time)
         n_candidate += 1
 
-    axis_transfer_time = _axis_transfer_time(cell_bounds, int(cell_id), origin, direction, float(t_current))
+    axis_transfer_time = _axis_transfer_time(cell_bounds, int(cell_id), origin_xyz, direction_xyz, float(t_current))
     has_axis_transfer = not math.isinf(axis_transfer_time)
     if n_candidate == 0 and not has_axis_transfer:
         return np.nan, -1, False
@@ -594,14 +610,14 @@ def is_on_face(
     cell_bounds: np.ndarray,
     cell_id: int,
     face_id: int,
-    crossing: np.ndarray,
+    crossing_xyz: np.ndarray,
 ) -> bool:
     """Return whether one snapped spherical event lies on one cell face."""
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_AXIS[int(face_id)])
     width = float(bounds[axis, WIDTH])
-    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, START]), width, float(crossing[axis]))
-    value_u = _axis_value_unwrapped(axis, float(crossing[axis]), float(crossing[axis]))
+    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, START]), width, float(crossing_xyz[axis]))
+    value_u = _axis_value_unwrapped(axis, float(crossing_xyz[axis]), float(crossing_xyz[axis]))
     face_value = start_u if int(_FACE_SIDE[int(face_id)]) == 0 else stop_u
     scale = max(abs(face_value), abs(value_u), 1.0)
     if abs(value_u - face_value) > (_TIME_ATOL + _TIME_RTOL * scale):
@@ -614,12 +630,12 @@ def is_on_face(
             tangential_axis,
             tangential_start,
             tangential_width,
-            float(crossing[tangential_axis]),
+            float(crossing_xyz[tangential_axis]),
         )
         tangential_value_u = _axis_value_unwrapped(
             tangential_axis,
-            float(crossing[tangential_axis]),
-            float(crossing[tangential_axis]),
+            float(crossing_xyz[tangential_axis]),
+            float(crossing_xyz[tangential_axis]),
         )
         scale = max(abs(tangential_start_u), abs(tangential_stop_u), abs(tangential_value_u), 1.0)
         tol = _TIME_ATOL + _TIME_RTOL * scale
@@ -638,8 +654,8 @@ def find_subface(
     active_face_by_axis: np.ndarray,
     active_face_order: np.ndarray,
     current_face_order: int,
-    crossing: np.ndarray,
-    direction: np.ndarray,
+    crossing_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
     crossing_rpa: np.ndarray,
 ) -> int:
     """Return the destination-side owning face patch for one spherical face crossing."""
@@ -705,7 +721,7 @@ def find_subface(
             )
             tol = _TIME_ATOL + _TIME_RTOL * scale
             active_face_id = int(active_face_by_axis[axis])
-            direction_sign = _coordinate_velocity_sign(crossing, direction, axis)
+            direction_sign = _coordinate_velocity_sign(crossing_xyz, direction_xyz, axis)
             implicit_active_side = -1
             if abs(value_u - current_start_u) <= tol and direction_sign < 0:
                 implicit_active_side = 0
@@ -783,15 +799,15 @@ def _write_crossing(
     cell_id: int,
     active_faces: np.ndarray,
     n_active_face: int,
-    origin: np.ndarray,
-    direction: np.ndarray,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
     t_event: float,
-    crossing: np.ndarray,
+    crossing_xyz: np.ndarray,
     crossing_rpa: np.ndarray,
 ) -> None:
     """Fill scratch coordinates derived from one crossing time."""
-    _fill_xyz_at_time(origin, direction, float(t_event), crossing)
-    _fill_rpa_from_xyz(crossing, crossing_rpa)
+    _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
+    _fill_rpa_at_time(origin_xyz, direction_xyz, float(t_event), crossing_rpa)
     bounds = cell_bounds[int(cell_id)]
     for face_pos in range(n_active_face):
         face_id = int(active_faces[face_pos])
@@ -811,12 +827,12 @@ def walk_faces(
     start_cell_id: int,
     active_faces: np.ndarray,
     n_active_face: int,
-    crossing: np.ndarray,
-    direction: np.ndarray,
+    crossing_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
     path: np.ndarray,
     active_face_by_axis: np.ndarray,
     active_face_order: np.ndarray,
-    origin: np.ndarray,
+    origin_xyz: np.ndarray,
     t_event: float,
     crossing_rpa: np.ndarray,
 ) -> int:
@@ -826,10 +842,10 @@ def walk_faces(
         start_cell_id,
         active_faces,
         n_active_face,
-        origin,
-        direction,
+        origin_xyz,
+        direction_xyz,
         t_event,
-        crossing,
+        crossing_xyz,
         crossing_rpa,
     )
     current_cell = int(start_cell_id)
@@ -856,8 +872,8 @@ def walk_faces(
             active_face_by_axis,
             active_face_order,
             current_face_order,
-            crossing,
-            direction,
+            crossing_xyz,
+            direction_xyz,
             crossing_rpa,
         )
         if subface_id < 0:
@@ -914,26 +930,28 @@ def _start_cell_owner(
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_event: float,
-    start_xyz: np.ndarray,
     active_faces: np.ndarray,
     path: np.ndarray,
     active_face_by_axis: np.ndarray,
     active_face_order: np.ndarray,
-    crossing: np.ndarray,
+    crossing_xyz: np.ndarray,
     crossing_rpa: np.ndarray,
     roots: np.ndarray,
 ) -> int:
     """Return the leaf that owns the immediate open interval after one start point."""
-    current_cell = find_cell(start_xyz, cell_child, root_cell_ids, cell_bounds, domain_bounds)
+    start_rpa = np.empty(3, dtype=np.float64)
+    _fill_rpa_at_time(origin_xyz, direction_xyz, float(t_event), start_rpa)
+    current_cell = find_cell(start_rpa, cell_child, root_cell_ids, cell_bounds, domain_bounds)
     if current_cell < 0:
-        return -1
+        return int(current_cell)
+    _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
     n_active_face = _start_active_faces(
         cell_bounds,
         current_cell,
         origin_xyz,
         direction_xyz,
         float(t_event),
-        start_xyz,
+        crossing_xyz,
         active_faces,
         roots,
     )
@@ -946,7 +964,7 @@ def _start_cell_owner(
         current_cell,
         active_faces,
         n_active_face,
-        crossing,
+        crossing_xyz,
         direction_xyz,
         path,
         active_face_by_axis,
@@ -956,69 +974,8 @@ def _start_cell_owner(
         crossing_rpa,
     )
     if path_count <= 0:
-        return -1
+        return TRACE_START_WALK_FAILED
     return int(path[path_count - 1])
-
-
-def trace_ray(
-    tree: Octree,
-    origin: np.ndarray,
-    direction: np.ndarray,
-    *,
-    t_min: float = 0.0,
-    t_max: float = np.inf,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Trace one spherical ray."""
-    if str(tree.tree_coord) != "rpa":
-        raise ValueError("trace_ray supports only tree_coord='rpa'.")
-    if not math.isfinite(float(t_min)):
-        raise ValueError("t_min must be finite.")
-    if float(t_max) < float(t_min):
-        raise ValueError("t_max must be greater than or equal to t_min.")
-
-    origin = np.asarray(origin, dtype=float)
-    direction = np.asarray(direction, dtype=float)
-    if origin.shape != (3,) or direction.shape != (3,):
-        raise ValueError("origin and direction must have shape (3,).")
-    if not np.any(direction != 0.0):
-        raise ValueError("direction must be nonzero.")
-
-    has_interval, domain_enter, domain_exit = find_domain_interval(
-        origin,
-        direction,
-        tree.packed_domain_bounds,
-    )
-    if not has_interval:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
-    start_t = max(float(t_min), float(domain_enter))
-    stop_t = min(float(t_max), float(domain_exit))
-    if not (start_t < stop_t):
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
-
-    crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
-    while True:
-        cell_ids = np.empty(crossing_capacity, dtype=np.int64)
-        times = np.empty(crossing_capacity + 1, dtype=np.float64)
-        n_cell, n_time = _trace_ray(
-            tree.root_cell_ids,
-            tree.cell_child,
-            tree.cell_bounds,
-            tree.packed_domain_bounds,
-            tree.cell_neighbor,
-            tree.cell_depth,
-            origin,
-            direction,
-            float(t_min),
-            float(t_max),
-            cell_ids,
-            times,
-        )
-        if n_cell == -1 or n_time == -1:
-            crossing_capacity *= 2
-            continue
-        if n_cell < 0 or n_time < 0:
-            raise ValueError("Spherical ray trace encountered an invalid crossing.")
-        return cell_ids[:n_cell].copy(), times[:n_time].copy()
 
 
 @njit(cache=True)
@@ -1029,8 +986,8 @@ def _trace_ray(
     domain_bounds: np.ndarray,
     cell_neighbor: np.ndarray,
     cell_depth: np.ndarray,
-    origin: np.ndarray,
-    direction: np.ndarray,
+    origin_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
     t_min: float,
     t_max: float,
     cell_ids_out: np.ndarray,
@@ -1038,7 +995,7 @@ def _trace_ray(
 ) -> tuple[int, int]:
     """Trace one spherical ray into fixed scratch buffers."""
     max_cells = int(cell_ids_out.shape[0])
-    has_interval, domain_enter, domain_exit = find_domain_interval(origin, direction, domain_bounds)
+    has_interval, domain_enter, domain_exit = find_domain_interval(origin_xyz, direction_xyz, domain_bounds)
     if not has_interval:
         return 0, 0
     start_t = max(float(t_min), float(domain_enter))
@@ -1046,9 +1003,7 @@ def _trace_ray(
     if not (start_t < stop_t):
         return 0, 0
 
-    start = np.empty(3, dtype=np.float64)
-    _fill_xyz_at_time(origin, direction, float(start_t), start)
-    crossing = np.empty(3, dtype=np.float64)
+    crossing_xyz = np.empty(3, dtype=np.float64)
     crossing_rpa = np.empty(3, dtype=np.float64)
     active_faces = np.empty(3, dtype=np.int64)
     path = np.empty(3, dtype=np.int64)
@@ -1064,20 +1019,19 @@ def _trace_ray(
         cell_bounds,
         domain_bounds,
         cell_neighbor,
-        origin,
-        direction,
+        origin_xyz,
+        direction_xyz,
         float(start_t),
-        start,
         active_faces,
         path,
         active_face_by_axis,
         active_face_order,
-        crossing,
+        crossing_xyz,
         crossing_rpa,
         roots,
     )
     if current_cell < 0:
-        return -2, -2
+        return current_cell, current_cell
 
     n_cell = 0
     n_time = 1
@@ -1087,8 +1041,8 @@ def _trace_ray(
         t_exit, n_active_face, axis_transfer = find_exit(
             cell_bounds,
             current_cell,
-            origin,
-            direction,
+            origin_xyz,
+            direction_xyz,
             t_current,
             active_faces,
             candidate_times,
@@ -1096,29 +1050,29 @@ def _trace_ray(
             candidate_xyz,
         )
         if n_active_face < 0:
-            return -2, -2
+            return TRACE_INVALID_CROSSING, TRACE_INVALID_CROSSING
         if t_exit > stop_t and not _times_close(float(t_exit), float(stop_t)):
             if n_cell >= max_cells:
-                return -1, -1
+                return TRACE_BUFFER_OVERFLOW, TRACE_BUFFER_OVERFLOW
             cell_ids_out[n_cell] = int(current_cell)
             times_out[n_time] = float(stop_t)
             n_cell += 1
             n_time += 1
             break
         if axis_transfer:
-            _fill_xyz_at_time(origin, direction, float(t_exit), crossing)
+            _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_exit), crossing_xyz)
             next_cell = _axis_transfer_destination_cell(
                 cell_depth,
                 cell_child,
                 cell_bounds,
-                crossing,
-                direction,
+                crossing_xyz,
+                direction_xyz,
             )
-            if next_cell == -2:
-                return -2, -2
+            if next_cell == TRACE_START_CELL_NOT_FOUND:
+                return TRACE_INVALID_CROSSING, TRACE_INVALID_CROSSING
             if next_cell != int(current_cell) or next_cell < 0:
                 if n_cell >= max_cells:
-                    return -1, -1
+                    return TRACE_BUFFER_OVERFLOW, TRACE_BUFFER_OVERFLOW
                 cell_ids_out[n_cell] = int(current_cell)
                 times_out[n_time] = float(t_exit)
                 n_cell += 1
@@ -1128,7 +1082,7 @@ def _trace_ray(
             continue
 
         if n_cell >= max_cells:
-            return -1, -1
+            return TRACE_BUFFER_OVERFLOW, TRACE_BUFFER_OVERFLOW
         cell_ids_out[n_cell] = int(current_cell)
         times_out[n_time] = float(t_exit)
         n_cell += 1
@@ -1140,23 +1094,23 @@ def _trace_ray(
             current_cell,
             active_faces,
             n_active_face,
-            crossing,
-            direction,
+            crossing_xyz,
+            direction_xyz,
             path,
             active_face_by_axis,
             active_face_order,
-            origin,
+            origin_xyz,
             float(t_exit),
             crossing_rpa,
         )
         if path_count < 0:
-            return -2, -2
+            return TRACE_INVALID_CROSSING, TRACE_INVALID_CROSSING
         for path_pos in range(path_count - 1):
             intermediate_cell = int(path[path_pos])
             if intermediate_cell < 0:
                 break
             if n_cell >= max_cells:
-                return -1, -1
+                return TRACE_BUFFER_OVERFLOW, TRACE_BUFFER_OVERFLOW
             cell_ids_out[n_cell] = int(intermediate_cell)
             times_out[n_time] = float(t_exit)
             n_cell += 1
@@ -1170,7 +1124,7 @@ def _trace_ray(
 
 
 @njit(cache=True, parallel=True)
-def trace_buffer(
+def trace_rays(
     root_cell_ids: np.ndarray,
     cell_child: np.ndarray,
     cell_bounds: np.ndarray,

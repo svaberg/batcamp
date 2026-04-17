@@ -19,6 +19,28 @@ from .octree import Octree
 logger = logging.getLogger(__name__)
 
 TRACE_CHUNK_SIZE = 256
+TRACE_RESULT_BUFFER_OVERFLOW = -1
+RAY_STATUS_OK = 0
+
+
+def _log_ray_status(label: str, coord: str, n_rays: int, ray_status: np.ndarray) -> None:
+    """Log one summarized raw status-code line when any ray failed."""
+    failed_status = np.asarray(ray_status[ray_status < 0], dtype=np.int64)
+    if failed_status.size == 0:
+        return
+    codes, counts = np.unique(failed_status, return_counts=True)
+    status_bits = ", ".join(
+        f"-0x{-int(code):04x}:{int(count)}"
+        for code, count in zip(codes.tolist(), counts.tolist(), strict=True)
+    )
+    logger.warning(
+        "%s ray status: coord=%s n_rays=%d status_bits={%s} dropped_frac=%.6f",
+        label,
+        coord,
+        n_rays,
+        status_bits,
+        float(failed_status.size) / float(n_rays),
+    )
 
 
 def prepare_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
@@ -160,7 +182,7 @@ class OctreeRayTracer:
         *,
         t_min: float,
         t_max: float,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Trace one chunk into scratch buffers, growing capacity on overflow."""
         chunk_n_rays = int(origins.shape[0])
         crossing_capacity = int(self._crossing_buffer_size)
@@ -176,7 +198,7 @@ class OctreeRayTracer:
             time_counts = np.empty(chunk_n_rays, dtype=np.int64)
             cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
             time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-            self._trace_module.trace_buffer(
+            self._trace_module.trace_rays(
                 self.tree.root_cell_ids,
                 self.tree.cell_child,
                 self.tree.cell_bounds,
@@ -192,7 +214,11 @@ class OctreeRayTracer:
                 cell_buffer,
                 time_buffer,
             )
-            if np.any(cell_counts == -1) or np.any(time_counts == -1):
+            overflow_rays = (
+                (cell_counts == TRACE_RESULT_BUFFER_OVERFLOW)
+                | (time_counts == TRACE_RESULT_BUFFER_OVERFLOW)
+            )
+            if np.any(overflow_rays):
                 next_capacity = 2 * crossing_capacity
                 logger.info(
                     "grow crossing buffer: coord=%s n_rays=%d %d -> %d",
@@ -203,8 +229,15 @@ class OctreeRayTracer:
                 )
                 crossing_capacity *= 2
                 continue
-            if np.any(cell_counts < 0) or np.any(time_counts < 0):
-                raise ValueError("Ray trace encountered an invalid crossing.")
+            raw_status = np.where(
+                cell_counts < 0,
+                cell_counts,
+                np.where(time_counts < 0, time_counts, RAY_STATUS_OK),
+            )
+            ray_status = raw_status.astype(np.int64, copy=False)
+            failed_rays = ray_status < 0
+            cell_counts[failed_rays] = 0
+            time_counts[failed_rays] = 0
             self._crossing_buffer_size = int(crossing_capacity)
             logger.debug(
                 "_trace_chunk_to_scratch complete: coord=%s n_rays=%d crossing_buffer_size=%d",
@@ -212,7 +245,7 @@ class OctreeRayTracer:
                 chunk_n_rays,
                 self._crossing_buffer_size,
             )
-            return cell_counts, time_counts, cell_buffer, time_buffer
+            return cell_counts, time_counts, cell_buffer, time_buffer, ray_status
 
     def _trace_segments(
         self,
@@ -242,6 +275,7 @@ class OctreeRayTracer:
         time_chunks: list[np.ndarray] = []
         n_cell = 0
         n_time = 0
+        ray_status_all = np.full(n_rays, RAY_STATUS_OK, dtype=np.int64)
         for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
             chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
             chunk_origins = o_flat[chunk_lo:chunk_hi]
@@ -254,12 +288,13 @@ class OctreeRayTracer:
                 chunk_hi,
                 chunk_n_rays,
             )
-            cell_counts, time_counts, cell_buffer, time_buffer = self._trace_chunk_to_scratch(
+            cell_counts, time_counts, cell_buffer, time_buffer, ray_status = self._trace_chunk_to_scratch(
                 chunk_origins,
                 chunk_directions,
                 t_min=t_min,
                 t_max=t_max,
             )
+            ray_status_all[chunk_lo:chunk_hi] = ray_status
             chunk_cell_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
             chunk_time_offsets = np.empty(chunk_n_rays + 1, dtype=np.int64)
             chunk_cell_offsets[0] = 0
@@ -300,6 +335,7 @@ class OctreeRayTracer:
             n_cell,
             n_time,
         )
+        _log_ray_status("trace", self.tree.tree_coord, n_rays, ray_status_all)
         return RaySegments(
             ray_offsets=ray_offsets,
             time_offsets=time_offsets,
@@ -353,16 +389,18 @@ class OctreeRayTracer:
         logger.debug("_midpoint_image: using cartesian chunk accumulation for %d rays", n_rays)
         accum = np.zeros((n_rays, n_components), dtype=np.float64)
         cell_counts_out = np.zeros(n_rays, dtype=np.int64)
+        ray_status_all = np.full(n_rays, RAY_STATUS_OK, dtype=np.int64)
         for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
             chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
             chunk_origins = o_flat[chunk_lo:chunk_hi]
             chunk_directions = d_flat[chunk_lo:chunk_hi]
-            cell_counts, _time_counts, cell_buffer, time_buffer = self._trace_chunk_to_scratch(
+            cell_counts, _time_counts, cell_buffer, time_buffer, ray_status = self._trace_chunk_to_scratch(
                 chunk_origins,
                 chunk_directions,
                 t_min=t_min,
                 t_max=t_max,
             )
+            ray_status_all[chunk_lo:chunk_hi] = ray_status
             cell_counts_out[chunk_lo:chunk_hi] = cell_counts
             accum[chunk_lo:chunk_hi] = interpolator_module.accumulate_midpoint_cells_xyz(
                 chunk_origins,
@@ -374,6 +412,7 @@ class OctreeRayTracer:
                 self.tree.corners,
                 interpolator.point_values_2d,
             )
+        _log_ray_status("midpoint_image", self.tree.tree_coord, n_rays, ray_status_all)
         return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
     def _trilinear_image(
@@ -414,16 +453,18 @@ class OctreeRayTracer:
         logger.debug("_trilinear_image: using %s for %d rays", accumulator.__name__, n_rays)
         accum = np.zeros((n_rays, n_components), dtype=np.float64)
         cell_counts_out = np.zeros(n_rays, dtype=np.int64)
+        ray_status_all = np.full(n_rays, RAY_STATUS_OK, dtype=np.int64)
         for chunk_lo in range(0, n_rays, TRACE_CHUNK_SIZE):
             chunk_hi = min(chunk_lo + TRACE_CHUNK_SIZE, n_rays)
             chunk_origins = o_flat[chunk_lo:chunk_hi]
             chunk_directions = d_flat[chunk_lo:chunk_hi]
-            cell_counts, _time_counts, cell_buffer, time_buffer = self._trace_chunk_to_scratch(
+            cell_counts, _time_counts, cell_buffer, time_buffer, ray_status = self._trace_chunk_to_scratch(
                 chunk_origins,
                 chunk_directions,
                 t_min=t_min,
                 t_max=t_max,
             )
+            ray_status_all[chunk_lo:chunk_hi] = ray_status
             cell_counts_out[chunk_lo:chunk_hi] = cell_counts
             accum[chunk_lo:chunk_hi] = accumulator(
                 chunk_origins,
@@ -435,6 +476,7 @@ class OctreeRayTracer:
                 self.tree.corners,
                 interpolator.point_values_2d,
             )
+        _log_ray_status("trilinear_image", tree_coord, n_rays, ray_status_all)
         return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
 
     def trace(
