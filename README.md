@@ -60,6 +60,11 @@ See [examples/quick_start.ipynb](examples/quick_start.ipynb) for a larger exampl
 For cartesian data, you can create a synthetic image from a set of rays.
 
 ```python
+from batread import Dataset
+from batcamp import Octree, OctreeInterpolator, OctreeRayTracer
+import numpy as np
+import matplotlib.pyplot as plt
+
 ds = Dataset.from_file("sample_data/3d__var_2_n00006003.plt")
 tree = Octree.from_ds(ds, tree_coord="xyz")
 interp = OctreeInterpolator(tree, ds["Rho [g/cm^3]"])
