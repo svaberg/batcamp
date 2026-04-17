@@ -206,18 +206,15 @@ class OctreeRayTracer:
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
         tree_coord = str(tree.tree_coord)
-        if tree_coord not in {"xyz", "rpa"}:
+        if tree_coord == "xyz":
+            trace_module = cartesian_crossing_trace
+        elif tree_coord == "rpa":
+            trace_module = spherical_crossing_trace
+        else:
             raise NotImplementedError("OctreeRayTracer currently supports only tree_coord='xyz' or 'rpa'.")
         self.tree = tree
-        if tree_coord == "xyz":
-            self._trace_rays = cartesian_crossing_trace.trace_rays
-            self._default_crossing_buffer_size = int(cartesian_crossing_trace.DEFAULT_CROSSING_BUFFER_SIZE)
-            self._trace_buffer_overflow = int(cartesian_crossing_trace.TRACE_BUFFER_OVERFLOW)
-        else:
-            self._trace_rays = spherical_crossing_trace.trace_rays
-            self._default_crossing_buffer_size = int(spherical_crossing_trace.DEFAULT_CROSSING_BUFFER_SIZE)
-            self._trace_buffer_overflow = int(spherical_crossing_trace.TRACE_BUFFER_OVERFLOW)
-        self._crossing_buffer_size = int(self._default_crossing_buffer_size)
+        self._trace_module = trace_module
+        self._crossing_buffer_size = int(trace_module.DEFAULT_CROSSING_BUFFER_SIZE)
         logger.info(
             "OctreeRayTracer.__init__: coord=%s crossing_buffer_size=%d",
             tree_coord,
@@ -238,22 +235,23 @@ class OctreeRayTracer:
         exhausts the current row width, the whole chunk is retraced with a
         larger shared crossing capacity.
         """
+        trace_module = self._trace_module
         chunk_n_rays = int(origins.shape[0])
         crossing_capacity = int(self._crossing_buffer_size)
-        buffer_overflow = int(self._trace_buffer_overflow)
+        buffer_overflow = int(trace_module.TRACE_BUFFER_OVERFLOW)
         logger.debug(
             "_trace_chunk_to_scratch: coord=%s n_rays=%d crossing_buffer_size=%d default=%d",
             self.tree.tree_coord,
             chunk_n_rays,
             crossing_capacity,
-            int(self._default_crossing_buffer_size),
+            int(trace_module.DEFAULT_CROSSING_BUFFER_SIZE),
         )
         while True:
             cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
             time_counts = np.empty(chunk_n_rays, dtype=np.int64)
             cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
             time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-            self._trace_rays(
+            trace_module.trace_rays(
                 self.tree.root_cell_ids,
                 self.tree.cell_child,
                 self.tree.cell_bounds,
