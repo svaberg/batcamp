@@ -398,6 +398,60 @@ def test_trace_returns_event_segments_for_one_cartesian_ray() -> None:
     np.testing.assert_allclose(segments.times, np.array([1.0, 2.0, 3.0], dtype=float), atol=0.0, rtol=0.0)
 
 
+def test_raysegments_ray_unpacks_one_packed_slice() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    segments = tracer.trace(
+        np.array(
+            [
+                [-2.0, -0.3, -0.2],
+                [2.0, 2.0, 2.0],
+                [-2.0, 0.0, 0.0],
+            ],
+            dtype=float,
+        ),
+        np.array([1.0, 0.0, 0.0], dtype=float),
+    )
+
+    first_cell_ids, first_times = segments.ray(0)
+    np.testing.assert_array_equal(first_cell_ids, np.array([0, 4], dtype=np.int64))
+    np.testing.assert_allclose(first_times, np.array([1.0, 2.0, 3.0], dtype=float), atol=0.0, rtol=0.0)
+
+    empty_cell_ids, empty_times = segments.ray(1)
+    np.testing.assert_array_equal(empty_cell_ids, np.empty(0, dtype=np.int64))
+    np.testing.assert_array_equal(empty_times, np.empty(0, dtype=float))
+
+    last_cell_ids, last_times = segments.ray(-1)
+    expected_last_cell_ids, expected_last_times = _ray_slice(segments, 2)
+    np.testing.assert_array_equal(last_cell_ids, expected_last_cell_ids)
+    np.testing.assert_array_equal(last_times, expected_last_times)
+
+    with pytest.raises(IndexError):
+        segments.ray(segments.n_rays)
+
+
+def test_raysegments_iteration_yields_one_unpacked_slice_per_ray() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    segments = tracer.trace(
+        np.array(
+            [
+                [-2.0, -0.3, -0.2],
+                [2.0, 2.0, 2.0],
+                [-2.0, 0.0, 0.0],
+            ],
+            dtype=float,
+        ),
+        np.array([1.0, 0.0, 0.0], dtype=float),
+    )
+
+    unpacked = list(segments)
+
+    assert len(unpacked) == segments.n_rays
+    for ray_id, (cell_ids, times) in enumerate(unpacked):
+        expected_cell_ids, expected_times = _ray_slice(segments, ray_id)
+        np.testing.assert_array_equal(cell_ids, expected_cell_ids)
+        np.testing.assert_array_equal(times, expected_times)
+
+
 def test_trace_clips_one_cartesian_ray() -> None:
     tracer = OctreeRayTracer(_build_xyz_tree())
     segments = tracer.trace(

@@ -15,6 +15,7 @@ and status reporting for failed rays.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 import logging
 import math
@@ -207,6 +208,25 @@ class RaySegments:
     def n_rays(self) -> int:
         """Return the number of packed rays."""
         return int(self.ray_offsets.size - 1)
+
+    def ray(self, ray_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return one unpacked `(cell_ids, times)` crossing slice."""
+        ray_index = int(ray_id)
+        n_rays = self.n_rays
+        if ray_index < 0:
+            ray_index += n_rays
+        if ray_index < 0 or ray_index >= n_rays:
+            raise IndexError(f"ray_id out of range: {ray_id}")
+        cell_lo = int(self.ray_offsets[ray_index])
+        cell_hi = int(self.ray_offsets[ray_index + 1])
+        time_lo = int(self.time_offsets[ray_index])
+        time_hi = int(self.time_offsets[ray_index + 1])
+        return self.cell_ids[cell_lo:cell_hi], self.times[time_lo:time_hi]
+
+    def __iter__(self) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Iterate over unpacked `(cell_ids, times)` ray slices."""
+        for ray_id in range(self.n_rays):
+            yield self.ray(ray_id)
 
 
 class OctreeRayTracer:
