@@ -964,6 +964,18 @@ def _start_cell_owner(
     """Return the leaf that owns the immediate open interval after one start point."""
     start_rpa = np.empty(3, dtype=np.float64)
     _fill_rpa_at_time(origin_xyz, direction_xyz, float(t_event), start_rpa)
+    # Domain-entry roots can land a few ulps outside the closed radial/polar bounds.
+    # Snap those nonperiodic axes back onto the exact domain face before the half-open lookup.
+    for axis in range(2):
+        domain_start = float(domain_bounds[axis, START])
+        domain_stop = domain_start + float(domain_bounds[axis, WIDTH])
+        value = float(start_rpa[axis])
+        scale = max(abs(value), abs(domain_start), abs(domain_stop), 1.0)
+        tol = max(8.0 * np.finfo(np.float64).eps * scale, DOMAIN_CONTAINS_ATOL)
+        if abs(value - domain_start) <= tol:
+            start_rpa[axis] = domain_start
+        elif abs(value - domain_stop) <= tol:
+            start_rpa[axis] = domain_stop
     current_cell = find_cell(start_rpa, cell_child, root_cell_ids, cell_bounds, domain_bounds)
     if current_cell < 0:
         return int(current_cell)

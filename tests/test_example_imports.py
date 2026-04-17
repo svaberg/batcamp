@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from batcamp import spherical_crossing_trace
+
 
 _BENCHMARK_SCRIPTS = [
     "benchmark_grid_vs_ray.py",
@@ -245,7 +247,7 @@ def test_star_movie_view_angles_render_for_all_available_files() -> None:
         )
     ],
 )
-def test_star_movie_diagnostic_angles_expose_known_failures(
+def test_star_movie_diagnostic_angles_render_successfully(
     case_label: str, file_name: str, azimuth_deg: float
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -264,18 +266,77 @@ def test_star_movie_diagnostic_angles_expose_known_failures(
         elevation_deg=module.DEFAULT_ELEVATION_DEG,
     )
 
-    with pytest.raises(ValueError):
-        module._render_frame(
-            tracer,
-            interp,
-            origin=origin,
-            target=np.zeros(3, dtype=float),
-            up=np.array([0.0, 0.0, 1.0], dtype=float),
-            nx=16,
-            ny=16,
-            width=view_width_multiplier * domain_radius,
-            height=view_width_multiplier * domain_radius,
-        )
+    image, counts = module._render_frame(
+        tracer,
+        interp,
+        origin=origin,
+        target=np.zeros(3, dtype=float),
+        up=np.array([0.0, 0.0, 1.0], dtype=float),
+        nx=16,
+        ny=16,
+        width=view_width_multiplier * domain_radius,
+        height=view_width_multiplier * domain_radius,
+    )
+
+    assert image.shape == (16, 16), case.label
+    assert counts.shape == (16, 16), case.label
+    assert np.count_nonzero(np.isfinite(image) & (image > 0.0)) > 0, case.label
+
+
+def test_star_movie_local_example_first_frame_has_no_start_owner_drops() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_local_example_regression_for_test")
+    case = module.DatasetCase("local_example", "3d__var_1_n00000000.plt")
+    data_path = module.resolve_data_file(repo_root, case.file_name)
+    ds = module.Dataset.from_file(str(data_path))
+    tree = module._build_octree(ds)
+    interp = module.OctreeInterpolator(tree, np.asarray(ds["Rho [g/cm^3]"], dtype=float))
+    tracer = module.OctreeRayTracer(tree)
+    domain_radius = module._domain_radius(tree)
+    distance_multiplier, view_width_multiplier = module._case_camera_settings(case)
+    azimuth_deg = module._frame_azimuth_deg(0, 96)
+    origin = module._orbit_origin(
+        radius=distance_multiplier * domain_radius,
+        azimuth_deg=float(azimuth_deg),
+        elevation_deg=module.DEFAULT_ELEVATION_DEG,
+    )
+    width = view_width_multiplier * domain_radius
+    origins, directions = module.camera_rays(
+        origin=origin,
+        target=np.zeros(3, dtype=float),
+        up=np.array([0.0, 0.0, 1.0], dtype=float),
+        nx=256,
+        ny=256,
+        width=width,
+        height=width,
+        projection="parallel",
+    )
+
+    # This exact benchmark launch used to drop 977 rays with TRACE_START_NO_ROOT_OWNER.
+    _cell_counts, _time_counts, _cell_buffer, _time_buffer, ray_status = tracer._trace_chunk_to_scratch(
+        origins.reshape(-1, 3),
+        directions.reshape(-1, 3),
+        t_min=0.0,
+        t_max=np.inf,
+    )
+    no_root_owner = int(np.count_nonzero(ray_status == spherical_crossing_trace.TRACE_START_NO_ROOT_OWNER))
+    assert no_root_owner == 0
+
+    image, counts = module._render_frame(
+        tracer,
+        interp,
+        origin=origin,
+        target=np.zeros(3, dtype=float),
+        up=np.array([0.0, 0.0, 1.0], dtype=float),
+        nx=256,
+        ny=256,
+        width=width,
+        height=width,
+    )
+
+    assert image.shape == (256, 256)
+    assert counts.shape == (256, 256)
+    assert np.count_nonzero(np.isfinite(image) & (image > 0.0)) > 0
 
 
 def test_grid_vs_ray_rejects_resolution_too_small_for_symlog_height_colors() -> None:

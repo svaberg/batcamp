@@ -1126,6 +1126,28 @@ def test_trace_sc_benchmark_corner_artifact_ray_matches_lookup_oracle() -> None:
     _assert_trace_matches_lookup_oracle(tree, origin, direction, t_max=float(t_end))
 
 
+def test_trace_rpa_camera_entry_ray_matches_lookup_oracle_at_outer_boundary() -> None:
+    tree = _build_uniform_rpa_tree()
+    origin = np.array(
+        (
+            9.391828094135867,
+            -0.420667604443791,
+            -0.20731583241380047,
+        ),
+        dtype=float,
+    )
+    direction = np.array(
+        (
+            -0.9654086575047712,
+            -0.03160420711004458,
+            -0.25881904510252074,
+        ),
+        dtype=float,
+    )
+
+    _assert_trace_matches_lookup_oracle(tree, origin, direction)
+
+
 def test_rpa_trilinear_image_matches_midpoint_for_constant_field() -> None:
     tree = _build_uniform_rpa_tree()
     tracer = OctreeRayTracer(tree)
