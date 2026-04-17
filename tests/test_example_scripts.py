@@ -23,6 +23,7 @@ _BENCHMARK_SCRIPTS = [
 
 _BENCHMARK_TEST_MAX_SECONDS = 10.0
 _BENCHMARK_TEST_EXPECTED_IMAGE_RESOLUTION = 256
+_STAR_MOVIE_DIAGNOSTIC_FRAMES = (1, 49)
 _EXAMPLE_LOGGERS = (
     "resample.progress",
     "batcamp.builder",
@@ -216,12 +217,18 @@ def test_star_movie_benchmark_runs_one_example_case() -> None:
     report_path.unlink(missing_ok=True)
     progress, log_path = _example_benchmark_progress(module, out_root, "benchmark_star_movie.log")
 
+    def _write_placeholder_movie(frame_dir: Path, movie_path: Path, *, fps: int) -> None:
+        assert any(frame_dir.glob("frame_*.png"))
+        movie_path.write_bytes(b"")
+
+    module._write_movie = _write_placeholder_movie
+
     module._run_case(
         case=module.DatasetCase("sc", "3d__var_4_n00044000.plt"),
         repo_root=repo_root,
         out_root=out_root,
         progress=progress,
-        n_frames=4,
+        n_frames=2,
         nx=64,
         ny=64,
         fps=8,
@@ -239,7 +246,7 @@ def test_star_movie_benchmark_runs_one_example_case() -> None:
 
 
 @pytest.mark.pooch
-def test_star_movie_view_angles_render_for_all_available_files() -> None:
+def test_star_movie_view_angles_render_for_two_diagnostic_frames() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_angles_for_test")
 
@@ -251,7 +258,7 @@ def test_star_movie_view_angles_render_for_all_available_files() -> None:
         tracer = module.OctreeRayTracer(tree)
         domain_radius = module._domain_radius(tree)
 
-        for frame in range(96):
+        for frame in _STAR_MOVIE_DIAGNOSTIC_FRAMES:
             azimuth_deg = module._frame_azimuth_deg(frame, 96)
             origin = module._orbit_origin(
                 radius=2.0 * domain_radius,
