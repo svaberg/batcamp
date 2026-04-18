@@ -154,7 +154,9 @@ class RaySegments:
 
     Each nonempty ray contributes one contiguous slice of `cell_ids` and one
     matching contiguous slice of `times`, where the time slice is exactly one
-    entry longer than the cell slice.
+    entry longer than the cell slice. The traced `origins` and `directions`
+    are stored on the same `ray_shape + (3,)` grid used to index the packed
+    rays.
     """
 
     ray_offsets: np.ndarray
@@ -162,12 +164,17 @@ class RaySegments:
     cell_ids: np.ndarray
     times: np.ndarray
     ray_shape: tuple[int, ...]
+    origins: np.ndarray
+    directions: np.ndarray
 
     def __post_init__(self) -> None:
         ray_offsets = np.asarray(self.ray_offsets, dtype=np.int64)
         time_offsets = np.asarray(self.time_offsets, dtype=np.int64)
         cell_ids = np.asarray(self.cell_ids, dtype=np.int64)
         times = np.asarray(self.times, dtype=np.float64)
+        ray_shape = tuple(int(v) for v in self.ray_shape)
+        origins = np.asarray(self.origins)
+        directions = np.asarray(self.directions)
         if ray_offsets.ndim != 1 or time_offsets.ndim != 1:
             raise ValueError("ray_offsets and time_offsets must be 1D arrays.")
         if cell_ids.ndim != 1 or times.ndim != 1:
@@ -182,6 +189,12 @@ class RaySegments:
             raise ValueError("ray_offsets[-1] must equal the packed cell count.")
         if int(time_offsets[-1]) != int(times.size):
             raise ValueError("time_offsets[-1] must equal the packed time count.")
+        if int(np.prod(ray_shape, dtype=np.int64)) != int(ray_offsets.size - 1):
+            raise ValueError("ray_shape must match the number of packed rays.")
+
+        expected_ray_array_shape = tuple(ray_shape) + (3,)
+        if origins.shape != expected_ray_array_shape or directions.shape != expected_ray_array_shape:
+            raise ValueError("origins and directions must have shape ray_shape + (3,).")
 
         cell_counts = np.diff(ray_offsets)
         time_counts = np.diff(time_offsets)
@@ -202,7 +215,9 @@ class RaySegments:
         object.__setattr__(self, "time_offsets", time_offsets)
         object.__setattr__(self, "cell_ids", cell_ids)
         object.__setattr__(self, "times", times)
-        object.__setattr__(self, "ray_shape", tuple(int(v) for v in self.ray_shape))
+        object.__setattr__(self, "ray_shape", ray_shape)
+        object.__setattr__(self, "origins", origins)
+        object.__setattr__(self, "directions", directions)
 
     @property
     def n_rays(self) -> int:
@@ -480,6 +495,8 @@ class OctreeRayTracer:
             cell_ids=cell_ids_out,
             times=times_out,
             ray_shape=ray_shape,
+            origins=o_flat.reshape(tuple(ray_shape) + (3,)),
+            directions=d_flat.reshape(tuple(ray_shape) + (3,)),
         )
 
     def _midpoint_image(
