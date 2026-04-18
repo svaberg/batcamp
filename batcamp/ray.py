@@ -223,6 +223,27 @@ class RaySegments:
         time_hi = int(self.time_offsets[ray_index + 1])
         return self.cell_ids[cell_lo:cell_hi], self.times[time_lo:time_hi]
 
+    def __getitem__(self, key) -> tuple[np.ndarray, np.ndarray]:
+        """Return one unpacked ray slice using the stored ray-grid indexing."""
+        if not isinstance(key, tuple):
+            key = (key,)
+        if any(isinstance(index, slice) for index in key):
+            raise TypeError("RaySegments indexing supports one ray at a time; slices are not supported.")
+        if len(key) == 1 and len(self.ray_shape) == 1:
+            return self.ray(int(key[0]))
+        if len(key) != len(self.ray_shape):
+            raise IndexError(f"Expected {len(self.ray_shape)} ray indices, got {len(key)}.")
+        ray_index: list[int] = []
+        for axis, (index, axis_size) in enumerate(zip(key, self.ray_shape, strict=True)):
+            axis_index = int(index)
+            if axis_index < 0:
+                axis_index += int(axis_size)
+            if axis_index < 0 or axis_index >= int(axis_size):
+                raise IndexError(f"ray index out of range on axis {axis}: {index}")
+            ray_index.append(axis_index)
+        flat_ray_id = int(np.ravel_multi_index(tuple(ray_index), self.ray_shape))
+        return self.ray(flat_ray_id)
+
     def __iter__(self) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Iterate over unpacked `(cell_ids, times)` ray slices."""
         for ray_id in range(self.n_rays):

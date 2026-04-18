@@ -452,6 +452,38 @@ def test_raysegments_iteration_yields_one_unpacked_slice_per_ray() -> None:
         np.testing.assert_array_equal(times, expected_times)
 
 
+def test_raysegments_grid_indexing_matches_batched_ray_layout() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    segments = tracer.trace(origins, np.array([1.0, 0.0, 0.0], dtype=float))
+
+    ij_cell_ids, ij_times = segments[0, 1]
+    expected_ij_cell_ids, expected_ij_times = _ray_slice(segments, 1)
+    np.testing.assert_array_equal(ij_cell_ids, expected_ij_cell_ids)
+    np.testing.assert_array_equal(ij_times, expected_ij_times)
+
+    miss_cell_ids, miss_times = segments[1, 0]
+    np.testing.assert_array_equal(miss_cell_ids, np.empty(0, dtype=np.int64))
+    np.testing.assert_array_equal(miss_times, np.empty(0, dtype=float))
+
+    neg_cell_ids, neg_times = segments[-1, -1]
+    expected_neg_cell_ids, expected_neg_times = _ray_slice(segments, 3)
+    np.testing.assert_array_equal(neg_cell_ids, expected_neg_cell_ids)
+    np.testing.assert_array_equal(neg_times, expected_neg_times)
+
+    with pytest.raises(IndexError):
+        segments[2, 0]
+
+    with pytest.raises(TypeError):
+        segments[:, 0]
+
+
 def test_trace_clips_one_cartesian_ray() -> None:
     tracer = OctreeRayTracer(_build_xyz_tree())
     segments = tracer.trace(
