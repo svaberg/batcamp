@@ -15,7 +15,6 @@ and status reporting for failed rays.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 import logging
 import math
@@ -77,8 +76,8 @@ def prepare_rays(origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarra
     Returns:
         `(origins_flat, directions_flat, ray_shape)`.
     """
-    o = np.array(origins, dtype=np.float64, order="C")
-    d = np.array(directions, dtype=np.float64, order="C")
+    o = np.asarray(origins, dtype=np.float64, order="C")
+    d = np.asarray(directions, dtype=np.float64, order="C")
     if o.ndim == 0 or o.shape[-1] != 3:
         raise ValueError("origins must have shape (..., 3).")
     if d.shape == (3,):
@@ -154,16 +153,14 @@ class RaySegments:
 
     Each nonempty ray contributes one contiguous slice of `cell_ids` and one
     matching contiguous slice of `times`, where the time slice is exactly one
-    entry longer than the cell slice. The traced `origins` and `directions`
-    are stored on the same `ray_shape + (3,)` grid used to index the packed
-    rays.
+    entry longer than the cell slice. The traced ray `origins` and
+    `directions` are stored with the same shapes passed to `trace`.
     """
 
     ray_offsets: np.ndarray
     time_offsets: np.ndarray
     cell_ids: np.ndarray
     times: np.ndarray
-    ray_shape: tuple[int, ...]
     origins: np.ndarray
     directions: np.ndarray
 
@@ -172,29 +169,29 @@ class RaySegments:
         time_offsets = np.asarray(self.time_offsets, dtype=np.int64)
         cell_ids = np.asarray(self.cell_ids, dtype=np.int64)
         times = np.asarray(self.times, dtype=np.float64)
-        ray_shape = tuple(int(v) for v in self.ray_shape)
-        origins = np.asarray(self.origins)
-        directions = np.asarray(self.directions)
+        origins = np.asarray(self.origins, dtype=np.float64, order="C")
+        directions = np.asarray(self.directions, dtype=np.float64, order="C")
         if ray_offsets.ndim != 1 or time_offsets.ndim != 1:
             raise ValueError("ray_offsets and time_offsets must be 1D arrays.")
         if cell_ids.ndim != 1 or times.ndim != 1:
             raise ValueError("cell_ids and times must be 1D arrays.")
+        if origins.ndim == 0 or origins.shape[-1] != 3:
+            raise ValueError("origins must have shape (..., 3).")
         if ray_offsets.size == 0 or time_offsets.size == 0 or ray_offsets[0] != 0 or time_offsets[0] != 0:
             raise ValueError("ray_offsets and time_offsets must start at 0.")
         if ray_offsets.shape != time_offsets.shape:
             raise ValueError("ray_offsets and time_offsets must have the same shape.")
         if np.any(np.diff(ray_offsets) < 0) or np.any(np.diff(time_offsets) < 0):
             raise ValueError("ray_offsets and time_offsets must be nondecreasing.")
+        ray_shape = (1,) if origins.ndim == 1 else tuple(int(v) for v in origins.shape[:-1])
         if int(ray_offsets[-1]) != int(cell_ids.size):
             raise ValueError("ray_offsets[-1] must equal the packed cell count.")
         if int(time_offsets[-1]) != int(times.size):
             raise ValueError("time_offsets[-1] must equal the packed time count.")
         if int(np.prod(ray_shape, dtype=np.int64)) != int(ray_offsets.size - 1):
             raise ValueError("ray_shape must match the number of packed rays.")
-
-        expected_ray_array_shape = tuple(ray_shape) + (3,)
-        if origins.shape != expected_ray_array_shape or directions.shape != expected_ray_array_shape:
-            raise ValueError("origins and directions must have shape ray_shape + (3,).")
+        if directions.shape != (3,) and directions.shape != origins.shape:
+            raise ValueError("directions must have shape origins.shape or (3,).")
 
         cell_counts = np.diff(ray_offsets)
         time_counts = np.diff(time_offsets)
@@ -215,7 +212,6 @@ class RaySegments:
         object.__setattr__(self, "time_offsets", time_offsets)
         object.__setattr__(self, "cell_ids", cell_ids)
         object.__setattr__(self, "times", times)
-        object.__setattr__(self, "ray_shape", ray_shape)
         object.__setattr__(self, "origins", origins)
         object.__setattr__(self, "directions", directions)
 
@@ -224,45 +220,108 @@ class RaySegments:
         """Return the number of packed rays."""
         return int(self.ray_offsets.size - 1)
 
-    def ray(self, ray_id: int) -> tuple[np.ndarray, np.ndarray]:
-        """Return one unpacked `(cell_ids, times)` crossing slice."""
-        ray_index = int(ray_id)
-        n_rays = self.n_rays
-        if ray_index < 0:
-            ray_index += n_rays
-        if ray_index < 0 or ray_index >= n_rays:
-            raise IndexError(f"ray_id out of range: {ray_id}")
+    @property
+    def ray_shape(self) -> tuple[int, ...]:
+        """Return the ray-grid shape."""
+        return (1,) if self.origins.ndim == 1 else tuple(int(v) for v in self.origins.shape[:-1])
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return the ray-grid shape."""
+        return self.ray_shape
+
+    @property
+    def ndim(self) -> int:
+        """Return the number of ray-grid axes."""
+        return len(self.ray_shape)
+
+    @property
+    def size(self) -> int:
+        """Return the total number of rays."""
+        return self.n_rays
+
+    def _selected_ray_ids(self, key) -> np.ndarray:
+        """Return the selected flat ray ids under NumPy indexing semantics."""
+        if not isinstance(key, tuple):
+            key = (key,)
+        if any(index is None for index in key):
+            raise TypeError("RaySegments indexing does not support new axes.")
+        return np.asarray(
+            np.arange(self.n_rays, dtype=np.int64).reshape(self.ray_shape)[key],
+            dtype=np.int64,
+        )
+
+    def _ray_index(self, key) -> tuple[int, int | tuple[int, ...]]:
+        """Return one flat ray index plus the matching origin-grid index."""
+        ray_id_array = self._selected_ray_ids(key)
+        if ray_id_array.ndim != 0:
+            raise TypeError("RaySegments.xyz and scalar indexing require one ray, not a subset.")
+        ray_index = int(ray_id_array)
+        if len(self.ray_shape) == 1:
+            return ray_index, ray_index
+        return ray_index, tuple(int(v) for v in np.unravel_index(ray_index, self.ray_shape))
+
+    def _subset(self, key) -> RaySegments:
+        """Return one repacked ray-grid subset."""
+        origins_grid = self.origins if self.origins.ndim > 1 else self.origins[None, :]
+        subset_origins = np.asarray(origins_grid[key], dtype=np.float64, order="C")
+        if self.directions.ndim == 1:
+            subset_directions = self.directions
+        else:
+            subset_directions = np.asarray(self.directions[key], dtype=np.float64, order="C")
+
+        selected_ray_ids = self._selected_ray_ids(key).reshape(-1)
+        cell_counts = self.ray_offsets[selected_ray_ids + 1] - self.ray_offsets[selected_ray_ids]
+        time_counts = self.time_offsets[selected_ray_ids + 1] - self.time_offsets[selected_ray_ids]
+        ray_offsets = np.empty(selected_ray_ids.size + 1, dtype=np.int64)
+        time_offsets = np.empty(selected_ray_ids.size + 1, dtype=np.int64)
+        ray_offsets[0] = 0
+        time_offsets[0] = 0
+        np.cumsum(cell_counts, out=ray_offsets[1:])
+        np.cumsum(time_counts, out=time_offsets[1:])
+        cell_ids = np.empty(int(ray_offsets[-1]), dtype=np.int64)
+        times = np.empty(int(time_offsets[-1]), dtype=np.float64)
+        for subset_ray_id, ray_id in enumerate(selected_ray_ids):
+            cell_lo = int(self.ray_offsets[ray_id])
+            cell_hi = int(self.ray_offsets[ray_id + 1])
+            time_lo = int(self.time_offsets[ray_id])
+            time_hi = int(self.time_offsets[ray_id + 1])
+            subset_cell_lo = int(ray_offsets[subset_ray_id])
+            subset_cell_hi = int(ray_offsets[subset_ray_id + 1])
+            subset_time_lo = int(time_offsets[subset_ray_id])
+            subset_time_hi = int(time_offsets[subset_ray_id + 1])
+            cell_ids[subset_cell_lo:subset_cell_hi] = self.cell_ids[cell_lo:cell_hi]
+            times[subset_time_lo:subset_time_hi] = self.times[time_lo:time_hi]
+        return RaySegments(
+            ray_offsets=ray_offsets,
+            time_offsets=time_offsets,
+            cell_ids=cell_ids,
+            times=times,
+            origins=subset_origins,
+            directions=subset_directions,
+        )
+
+    def __getitem__(self, key) -> tuple[np.ndarray, np.ndarray] | RaySegments:
+        """Return one ray or one repacked subset under NumPy indexing semantics."""
+        ray_id_array = self._selected_ray_ids(key)
+        if ray_id_array.ndim != 0:
+            return self._subset(key)
+        ray_index = int(ray_id_array)
         cell_lo = int(self.ray_offsets[ray_index])
         cell_hi = int(self.ray_offsets[ray_index + 1])
         time_lo = int(self.time_offsets[ray_index])
         time_hi = int(self.time_offsets[ray_index + 1])
         return self.cell_ids[cell_lo:cell_hi], self.times[time_lo:time_hi]
 
-    def __getitem__(self, key) -> tuple[np.ndarray, np.ndarray]:
-        """Return one unpacked ray slice using the stored ray-grid indexing."""
-        if not isinstance(key, tuple):
-            key = (key,)
-        if any(isinstance(index, slice) for index in key):
-            raise TypeError("RaySegments indexing supports one ray at a time; slices are not supported.")
-        if len(key) == 1 and len(self.ray_shape) == 1:
-            return self.ray(int(key[0]))
-        if len(key) != len(self.ray_shape):
-            raise IndexError(f"Expected {len(self.ray_shape)} ray indices, got {len(key)}.")
-        ray_index: list[int] = []
-        for axis, (index, axis_size) in enumerate(zip(key, self.ray_shape, strict=True)):
-            axis_index = int(index)
-            if axis_index < 0:
-                axis_index += int(axis_size)
-            if axis_index < 0 or axis_index >= int(axis_size):
-                raise IndexError(f"ray index out of range on axis {axis}: {index}")
-            ray_index.append(axis_index)
-        flat_ray_id = int(np.ravel_multi_index(tuple(ray_index), self.ray_shape))
-        return self.ray(flat_ray_id)
-
-    def __iter__(self) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """Iterate over unpacked `(cell_ids, times)` ray slices."""
-        for ray_id in range(self.n_rays):
-            yield self.ray(ray_id)
+    def xyz(self, *key) -> np.ndarray:
+        """Return one ray's event positions in Cartesian coordinates."""
+        ray_index, origin_key = self._ray_index(key[0] if len(key) == 1 else key)
+        time_lo = int(self.time_offsets[ray_index])
+        time_hi = int(self.time_offsets[ray_index + 1])
+        ray_times = self.times[time_lo:time_hi]
+        origin_xyz = self.origins if self.origins.ndim == 1 else self.origins[origin_key]
+        direction_xyz = self.directions if self.directions.ndim == 1 else self.directions[origin_key]
+        return origin_xyz + ray_times[:, None] * direction_xyz
 
 
 class OctreeRayTracer:
@@ -395,6 +454,8 @@ class OctreeRayTracer:
         t_min: float,
         t_max: float,
         ray_shape: tuple[int, ...],
+        geometry_origins: np.ndarray,
+        geometry_directions: np.ndarray,
     ) -> RaySegments:
         """Trace rays and return packed crossing segments.
 
@@ -404,6 +465,8 @@ class OctreeRayTracer:
             t_min (const): Lower parameter clip.
             t_max (const): Upper parameter clip.
             ray_shape (const): Requested output ray-grid shape.
+            geometry_origins (const): Traced origin array with the original input shape.
+            geometry_directions (const): Traced direction array with the original input shape.
 
         Returns:
             Packed per-ray crossing segments for the traced rays.
@@ -494,9 +557,8 @@ class OctreeRayTracer:
             time_offsets=time_offsets,
             cell_ids=cell_ids_out,
             times=times_out,
-            ray_shape=ray_shape,
-            origins=o_flat.reshape(tuple(ray_shape) + (3,)),
-            directions=d_flat.reshape(tuple(ray_shape) + (3,)),
+            origins=geometry_origins,
+            directions=geometry_directions,
         )
 
     def _midpoint_image(
@@ -508,6 +570,8 @@ class OctreeRayTracer:
         t_min: float,
         t_max: float,
         ray_shape: tuple[int, ...],
+        geometry_origins: np.ndarray,
+        geometry_directions: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Trace rays and accumulate midpoint samples without packing segments.
 
@@ -541,6 +605,8 @@ class OctreeRayTracer:
                 t_min=t_min,
                 t_max=t_max,
                 ray_shape=ray_shape,
+                geometry_origins=geometry_origins,
+                geometry_directions=geometry_directions,
             )
             image = render_midpoint_image(
                 interpolator,
@@ -687,13 +753,17 @@ class OctreeRayTracer:
             raise ValueError("t_max must not be NaN.")
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
-        o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
+        origins_array = np.asarray(origins, dtype=np.float64, order="C")
+        directions_array = np.asarray(directions, dtype=np.float64, order="C")
+        o_flat, d_flat, ray_shape = prepare_rays(origins_array, directions_array)
         return self._trace_segments(
             o_flat,
             d_flat,
             t_min=t_lo,
             t_max=t_hi,
             ray_shape=ray_shape,
+            geometry_origins=origins_array,
+            geometry_directions=directions_array,
         )
 
     def midpoint_image(
@@ -725,7 +795,9 @@ class OctreeRayTracer:
             raise ValueError("t_max must not be NaN.")
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
-        o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
+        origins_array = np.asarray(origins, dtype=np.float64, order="C")
+        directions_array = np.asarray(directions, dtype=np.float64, order="C")
+        o_flat, d_flat, ray_shape = prepare_rays(origins_array, directions_array)
         return self._midpoint_image(
             interpolator,
             o_flat,
@@ -733,6 +805,8 @@ class OctreeRayTracer:
             t_min=t_lo,
             t_max=t_hi,
             ray_shape=ray_shape,
+            geometry_origins=origins_array,
+            geometry_directions=directions_array,
         )
 
     def trilinear_image(

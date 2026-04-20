@@ -398,7 +398,7 @@ def test_trace_returns_event_segments_for_one_cartesian_ray() -> None:
     np.testing.assert_allclose(segments.times, np.array([1.0, 2.0, 3.0], dtype=float), atol=0.0, rtol=0.0)
 
 
-def test_raysegments_ray_unpacks_one_packed_slice() -> None:
+def test_raysegments_1d_indexing_unpacks_one_packed_slice() -> None:
     tracer = OctreeRayTracer(_build_xyz_tree())
     segments = tracer.trace(
         np.array(
@@ -412,44 +412,21 @@ def test_raysegments_ray_unpacks_one_packed_slice() -> None:
         np.array([1.0, 0.0, 0.0], dtype=float),
     )
 
-    first_cell_ids, first_times = segments.ray(0)
+    first_cell_ids, first_times = segments[0]
     np.testing.assert_array_equal(first_cell_ids, np.array([0, 4], dtype=np.int64))
     np.testing.assert_allclose(first_times, np.array([1.0, 2.0, 3.0], dtype=float), atol=0.0, rtol=0.0)
 
-    empty_cell_ids, empty_times = segments.ray(1)
+    empty_cell_ids, empty_times = segments[1]
     np.testing.assert_array_equal(empty_cell_ids, np.empty(0, dtype=np.int64))
     np.testing.assert_array_equal(empty_times, np.empty(0, dtype=float))
 
-    last_cell_ids, last_times = segments.ray(-1)
+    last_cell_ids, last_times = segments[-1]
     expected_last_cell_ids, expected_last_times = _ray_slice(segments, 2)
     np.testing.assert_array_equal(last_cell_ids, expected_last_cell_ids)
     np.testing.assert_array_equal(last_times, expected_last_times)
 
     with pytest.raises(IndexError):
-        segments.ray(segments.n_rays)
-
-
-def test_raysegments_iteration_yields_one_unpacked_slice_per_ray() -> None:
-    tracer = OctreeRayTracer(_build_xyz_tree())
-    segments = tracer.trace(
-        np.array(
-            [
-                [-2.0, -0.3, -0.2],
-                [2.0, 2.0, 2.0],
-                [-2.0, 0.0, 0.0],
-            ],
-            dtype=float,
-        ),
-        np.array([1.0, 0.0, 0.0], dtype=float),
-    )
-
-    unpacked = list(segments)
-
-    assert len(unpacked) == segments.n_rays
-    for ray_id, (cell_ids, times) in enumerate(unpacked):
-        expected_cell_ids, expected_times = _ray_slice(segments, ray_id)
-        np.testing.assert_array_equal(cell_ids, expected_cell_ids)
-        np.testing.assert_array_equal(times, expected_times)
+        segments[segments.n_rays]
 
 
 def test_raysegments_grid_indexing_matches_batched_ray_layout() -> None:
@@ -477,11 +454,138 @@ def test_raysegments_grid_indexing_matches_batched_ray_layout() -> None:
     np.testing.assert_array_equal(neg_cell_ids, expected_neg_cell_ids)
     np.testing.assert_array_equal(neg_times, expected_neg_times)
 
+    row_subset = segments[0]
+    assert row_subset.shape == (2,)
+    np.testing.assert_array_equal(row_subset.origins, origins[0])
+
     with pytest.raises(IndexError):
         segments[2, 0]
 
-    with pytest.raises(TypeError):
-        segments[:, 0]
+
+def test_raysegments_slice_indexing_returns_repacked_subset() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    directions = np.array([1.0, 0.0, 0.0], dtype=float)
+    segments = tracer.trace(origins, directions)
+
+    subset = segments[0, ::-1]
+
+    assert isinstance(subset, type(segments))
+    assert subset.shape == (2,)
+    np.testing.assert_array_equal(subset.origins, origins[0, ::-1])
+    np.testing.assert_array_equal(subset.directions, directions)
+
+    first_cell_ids, first_times = subset[0]
+    expected_first_cell_ids, expected_first_times = _ray_slice(segments, 1)
+    np.testing.assert_array_equal(first_cell_ids, expected_first_cell_ids)
+    np.testing.assert_array_equal(first_times, expected_first_times)
+    np.testing.assert_allclose(
+        subset.xyz(0),
+        origins[0, 1] + expected_first_times[:, None] * directions,
+        atol=0.0,
+        rtol=0.0,
+    )
+
+    second_cell_ids, second_times = subset[1]
+    expected_second_cell_ids, expected_second_times = _ray_slice(segments, 0)
+    np.testing.assert_array_equal(second_cell_ids, expected_second_cell_ids)
+    np.testing.assert_array_equal(second_times, expected_second_times)
+
+
+def test_raysegments_mask_indexing_returns_row_major_subset() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    directions = np.array([1.0, 0.0, 0.0], dtype=float)
+    segments = tracer.trace(origins, directions)
+
+    subset = segments[np.array([[False, True], [False, True]])]
+
+    assert subset.shape == (2,)
+    np.testing.assert_array_equal(subset.origins, np.array([origins[0, 1], origins[1, 1]], dtype=float))
+    np.testing.assert_array_equal(subset.directions, directions)
+    np.testing.assert_array_equal(subset[0][0], _ray_slice(segments, 1)[0])
+    np.testing.assert_array_equal(subset[1][0], _ray_slice(segments, 3)[0])
+
+
+def test_raysegments_fancy_indexing_returns_selected_subset() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+    segments = tracer.trace(origins, directions)
+
+    subset = segments[np.array([0, 1]), np.array([1, 1])]
+
+    assert subset.shape == (2,)
+    np.testing.assert_array_equal(subset.origins, np.array([origins[0, 1], origins[1, 1]], dtype=float))
+    np.testing.assert_array_equal(subset.directions, np.array([directions[0, 1], directions[1, 1]], dtype=float))
+    np.testing.assert_allclose(
+        subset.xyz(1),
+        origins[1, 1] + _ray_slice(segments, 3)[1][:, None] * directions[1, 1],
+        atol=0.0,
+        rtol=0.0,
+    )
+
+
+def test_raysegments_xyz_uses_stored_shared_direction() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    directions = np.array([1.0, 0.0, 0.0], dtype=float)
+    segments = tracer.trace(origins, directions)
+
+    _, ray_times = segments[0, 1]
+    np.testing.assert_allclose(
+        segments.xyz(0, 1),
+        origins[0, 1] + ray_times[:, None] * directions,
+        atol=0.0,
+        rtol=0.0,
+    )
+
+
+def test_raysegments_xyz_uses_stored_per_ray_direction() -> None:
+    tracer = OctreeRayTracer(_build_xyz_tree())
+    origins = np.array(
+        [
+            [[-2.0, -0.3, -0.2], [-2.0, 0.3, 0.2]],
+            [[2.0, 2.0, 2.0], [-2.0, 0.0, 0.0]],
+        ],
+        dtype=float,
+    )
+    directions = np.zeros_like(origins)
+    directions[..., 0] = 1.0
+    segments = tracer.trace(origins, directions)
+
+    _, ray_times = segments[-1, -1]
+    np.testing.assert_allclose(
+        segments.xyz(-1, -1),
+        origins[-1, -1] + ray_times[:, None] * directions[-1, -1],
+        atol=0.0,
+        rtol=0.0,
+    )
 
 
 def test_trace_clips_one_cartesian_ray() -> None:
@@ -521,6 +625,9 @@ def test_trace_preserves_batch_shape() -> None:
     segments = tracer.trace(origins, directions)
 
     assert segments.ray_shape == (2, 2)
+    assert segments.shape == (2, 2)
+    assert segments.ndim == 2
+    assert segments.size == 4
     np.testing.assert_array_equal(segments.origins, origins)
     np.testing.assert_array_equal(segments.directions, directions)
     np.testing.assert_array_equal(segments.ray_offsets, np.array([0, 2, 4, 4, 6], dtype=np.int64))
@@ -544,7 +651,7 @@ def test_trace_broadcasts_one_direction_vector_over_batched_origins() -> None:
 
     assert segments.ray_shape == (2, 2)
     np.testing.assert_array_equal(segments.origins, origins)
-    np.testing.assert_array_equal(segments.directions, np.broadcast_to(directions, origins.shape))
+    np.testing.assert_array_equal(segments.directions, directions)
     np.testing.assert_array_equal(segments.ray_offsets, np.array([0, 2, 4, 4, 6], dtype=np.int64))
     np.testing.assert_array_equal(segments.time_offsets, np.array([0, 3, 6, 6, 9], dtype=np.int64))
     np.testing.assert_array_equal(_ray_slice(segments, 2)[0], np.empty(0, dtype=np.int64))
