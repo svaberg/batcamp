@@ -1,0 +1,13 @@
+inherits:
+  - default
+
+pydocstyle:
+  disable:
+    - D105
+    - D202
+    - D203
+    - D213
+    - D214
+    - D406
+    - D407
+    - D413
