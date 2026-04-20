@@ -60,7 +60,14 @@ jobs:
 
       - name: Run default test suite with coverage
         shell: bash -l {0}
-        run: pytest -q -m "not pooch and not perf" --cov=. --cov-report=xml:pytest-cobertura.xml
+        env:
+          COVERAGE_CORE: ctrace
+          NUMBA_JIT_COVERAGE: "1"
+          NUMBA_CACHE_DIR: ${{ runner.temp }}/numba-cache
+        run: |
+          coverage run --source=batcamp -m pytest -q -m "not pooch and not perf"
+          coverage xml -i -o pytest-cobertura.xml
+          coverage report -m -i
 
       - name: Upload grid-vs-ray benchmark artifacts
         if: always()
