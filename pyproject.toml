@@ -60,3 +60,9 @@ omit = [
   "tests/*",
   "examples/*",
 ]
+
+[tool.ruff.lint]
+extend-select = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

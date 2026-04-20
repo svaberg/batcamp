@@ -165,6 +165,7 @@ class TracedRays:
     directions: np.ndarray
 
     def __post_init__(self) -> None:
+        """Validate the packed segment arrays and attached ray geometry."""
         ray_offsets = np.asarray(self.ray_offsets, dtype=np.int64)
         time_offsets = np.asarray(self.time_offsets, dtype=np.int64)
         cell_ids = np.asarray(self.cell_ids, dtype=np.int64)
@@ -582,6 +583,8 @@ class OctreeRayTracer:
             t_min (const): Lower parameter clip.
             t_max (const): Upper parameter clip.
             ray_shape (const): Requested output ray-grid shape.
+            geometry_origins (const): Ray origins in the original user-facing shape.
+            geometry_directions (const): Ray directions in the original user-facing shape.
 
         Returns:
             `(image, counts)` with one midpoint-sampled image and per-ray segment counts.

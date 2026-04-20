@@ -311,7 +311,6 @@ def _rebuild_cell_state(
     tree_coord: str,
 ) -> tuple[np.ndarray, ...]:
     """Rebuild exact occupied cells from leaf addresses."""
-
     if cell_ijk.ndim != 2 or cell_ijk.shape[1] != 3:
         raise ValueError("Octree leaf cell_ijk must have shape (n_cells, 3).")
     if cell_levels.shape[0] != cell_ijk.shape[0]:

@@ -432,7 +432,7 @@ def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.n
         domain_bounds (const): Global RPA domain bounds with shape `(3, 2)`.
         atol (const): Extra absolute tolerance for closed-domain containment.
 
-        Returns:
+    Returns:
         `TRACE_CONTAINS_BOX_OK` on success or one negative spherical start-status code.
     """
     for axis in range(3):
