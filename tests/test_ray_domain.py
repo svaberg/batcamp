@@ -665,7 +665,7 @@ def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small
 
     origin = np.array([-1.0, 0.5, 0.5], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    with caplog.at_level(logging.DEBUG, logger="batcamp.ray"):
+    with caplog.at_level(logging.DEBUG, logger="batcamp.raytracing"):
         segments = tracer.trace(origin, direction)
 
     positive_cell_ids, positive_times = _positive_trace(*_ray_slice(segments, 0))

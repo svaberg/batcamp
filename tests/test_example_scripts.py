@@ -29,7 +29,7 @@ _EXAMPLE_LOGGERS = (
     "batcamp.builder",
     "batcamp.octree",
     "batcamp.interpolator",
-    "batcamp.ray",
+    "batcamp.raytracing",
 )
 
 

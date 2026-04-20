@@ -60,7 +60,7 @@ def _trace_report(
     ray_counts = np.diff(segments.ray_offsets)
     time_counts = np.diff(segments.time_offsets)
     if not np.array_equal(time_counts, np.where(ray_counts == 0, 0, ray_counts + 1)):
-        raise ValueError("RaySegments has inconsistent packed counts.")
+        raise ValueError("TracedRays has inconsistent packed counts.")
 
     n_rays = int(ray_counts.size)
     nonempty_mask = ray_counts > 0

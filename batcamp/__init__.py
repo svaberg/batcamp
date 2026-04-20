@@ -5,15 +5,15 @@ from __future__ import annotations
 from .camera import camera_rays
 from .interpolator import OctreeInterpolator
 from .octree import Octree
-from .ray import OctreeRayTracer
-from .ray import RaySegments
-from .ray import render_midpoint_image
+from .raytracing import OctreeRayTracer
+from .raytracing import TracedRays
+from .raytracing import render_midpoint_image
 
 __all__ = [
     "camera_rays",
     "Octree",
     "OctreeInterpolator",
     "OctreeRayTracer",
-    "RaySegments",
+    "TracedRays",
     "render_midpoint_image",
 ]

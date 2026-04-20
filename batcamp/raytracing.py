@@ -4,7 +4,7 @@
 This module is the coordinate-agnostic layer above the low-level crossing
 kernels. It normalizes ray origin/direction arrays, traces them in chunks
 through the Cartesian or spherical traversal backends, packs the resulting
-crossing paths into `RaySegments`, and provides the direct midpoint/trilinear
+crossing paths into `TracedRays`, and provides the direct midpoint/trilinear
 image accumulators built on those paths.
 
 The exact event logic for leaf entry, exit, and neighbor continuation lives in
@@ -148,7 +148,7 @@ def _reshape_image(image_flat: np.ndarray, ray_shape: tuple[int, ...], value_sha
 
 
 @dataclass(frozen=True)
-class RaySegments:
+class TracedRays:
     """Packed per-ray crossing segments with one time list per ray.
 
     Each nonempty ray contributes one contiguous slice of `cell_ids` and one
@@ -245,7 +245,7 @@ class RaySegments:
         if not isinstance(key, tuple):
             key = (key,)
         if any(index is None for index in key):
-            raise TypeError("RaySegments indexing does not support new axes.")
+            raise TypeError("TracedRays indexing does not support new axes.")
         return np.asarray(
             np.arange(self.n_rays, dtype=np.int64).reshape(self.ray_shape)[key],
             dtype=np.int64,
@@ -255,13 +255,13 @@ class RaySegments:
         """Return one flat ray index plus the matching origin-grid index."""
         ray_id_array = self._selected_ray_ids(key)
         if ray_id_array.ndim != 0:
-            raise TypeError("RaySegments.xyz and scalar indexing require one ray, not a subset.")
+            raise TypeError("TracedRays.xyz and scalar indexing require one ray, not a subset.")
         ray_index = int(ray_id_array)
         if len(self.ray_shape) == 1:
             return ray_index, ray_index
         return ray_index, tuple(int(v) for v in np.unravel_index(ray_index, self.ray_shape))
 
-    def _subset(self, key) -> RaySegments:
+    def _subset(self, key) -> TracedRays:
         """Return one repacked ray-grid subset."""
         origins_grid = self.origins if self.origins.ndim > 1 else self.origins[None, :]
         subset_origins = np.asarray(origins_grid[key], dtype=np.float64, order="C")
@@ -292,7 +292,7 @@ class RaySegments:
             subset_time_hi = int(time_offsets[subset_ray_id + 1])
             cell_ids[subset_cell_lo:subset_cell_hi] = self.cell_ids[cell_lo:cell_hi]
             times[subset_time_lo:subset_time_hi] = self.times[time_lo:time_hi]
-        return RaySegments(
+        return TracedRays(
             ray_offsets=ray_offsets,
             time_offsets=time_offsets,
             cell_ids=cell_ids,
@@ -301,7 +301,7 @@ class RaySegments:
             directions=subset_directions,
         )
 
-    def __getitem__(self, key) -> tuple[np.ndarray, np.ndarray] | RaySegments:
+    def __getitem__(self, key) -> tuple[np.ndarray, np.ndarray] | TracedRays:
         """Return one ray or one repacked subset under NumPy indexing semantics."""
         ray_id_array = self._selected_ray_ids(key)
         if ray_id_array.ndim != 0:
@@ -329,7 +329,7 @@ class OctreeRayTracer:
 
     The tracer delegates exact leaf-crossing events to the Cartesian or
     spherical backend selected by `tree.tree_coord`, then either packs those
-    events into `RaySegments` or accumulates them directly into image outputs.
+    events into `TracedRays` or accumulates them directly into image outputs.
     """
 
     def __init__(self, tree: Octree) -> None:
@@ -456,7 +456,7 @@ class OctreeRayTracer:
         ray_shape: tuple[int, ...],
         geometry_origins: np.ndarray,
         geometry_directions: np.ndarray,
-    ) -> RaySegments:
+    ) -> TracedRays:
         """Trace rays and return packed crossing segments.
 
         Args:
@@ -552,7 +552,7 @@ class OctreeRayTracer:
             n_time,
         )
         _log_ray_status("trace", self.tree.tree_coord, n_rays, ray_status_all)
-        return RaySegments(
+        return TracedRays(
             ray_offsets=ray_offsets,
             time_offsets=time_offsets,
             cell_ids=cell_ids_out,
@@ -733,7 +733,7 @@ class OctreeRayTracer:
         *,
         t_min: float = 0,
         t_max: float = np.inf,
-    ) -> RaySegments:
+    ) -> TracedRays:
         """Trace rays and return packed crossing segments.
 
         Args:
@@ -861,7 +861,7 @@ def render_midpoint_image(
     interpolator,
     origins: np.ndarray,
     directions: np.ndarray,
-    segments: RaySegments,
+    segments: TracedRays,
 ) -> np.ndarray:
     """Render one midpoint-sampled line integral from packed crossing segments.
 
