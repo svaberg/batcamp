@@ -6,6 +6,7 @@ from batcamp import Octree, OctreeInterpolator
 from batcamp.builder import infer_tree_coord_from_geometry
 from tests.octree_test_support import cell_bounds
 from sample_data_helper import data_file
+from sample_data_helper import local_data_file
 
 
 _CASES = [
@@ -24,6 +25,15 @@ _CASES = [
     ),
 ]
 
+_LOCAL_SAMPLE_FILES = {"3d__var_2_n00060005.plt"}
+
+
+def _case_data_file(name: str):
+    """Return the bundled path for local cases and the pooch helper otherwise."""
+    if name in _LOCAL_SAMPLE_FILES:
+        return local_data_file(name)
+    return data_file(name)
+
 
 def _midpoint_queries_xyz(tree: Octree, n_query: int) -> np.ndarray:
     queries = []
@@ -36,7 +46,7 @@ def _midpoint_queries_xyz(tree: Octree, n_query: int) -> np.ndarray:
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
     """Inference contract: geometry-based coord inference matches expected."""
-    ds = Dataset.from_file(str(data_file(name)))
+    ds = Dataset.from_file(str(_case_data_file(name)))
     points = np.column_stack((np.asarray(ds["X [R]"]), np.asarray(ds["Y [R]"]), np.asarray(ds["Z [R]"])))
     assert str(infer_tree_coord_from_geometry(points, np.asarray(ds.corners, dtype=np.int64))) == tree_coord
 
@@ -44,7 +54,7 @@ def test_infer_tree_coord_from_geometry(name: str, tree_coord: str) -> None:
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_tree_build_uses_expected_coord(name: str, tree_coord: str) -> None:
     """Tree contract: constructor honors explicit tree_coord and rejects wrong ones."""
-    ds = Dataset.from_file(str(data_file(name)))
+    ds = Dataset.from_file(str(_case_data_file(name)))
     points = ds[["X [R]", "Y [R]", "Z [R]"]]
     wrong_tree_coord = "xyz" if tree_coord == "rpa" else "rpa"
     assert str(Octree(points, ds.corners, tree_coord=tree_coord).tree_coord) == tree_coord
@@ -55,7 +65,7 @@ def test_tree_build_uses_expected_coord(name: str, tree_coord: str) -> None:
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_tree_build_default_matches_expected(name: str, tree_coord: str) -> None:
     """Tree contract: default `Octree(points, corners)` resolves correct tree type."""
-    ds = Dataset.from_file(str(data_file(name)))
+    ds = Dataset.from_file(str(_case_data_file(name)))
     points = ds[["X [R]", "Y [R]", "Z [R]"]]
     assert str(Octree(points, ds.corners).tree_coord) == tree_coord
 
@@ -63,7 +73,7 @@ def test_tree_build_default_matches_expected(name: str, tree_coord: str) -> None
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
     """Interpolator contract: explicit and inferred trees should interpolate identically."""
-    ds = Dataset.from_file(str(data_file(name)))
+    ds = Dataset.from_file(str(_case_data_file(name)))
     points = ds[["X [R]", "Y [R]", "Z [R]"]]
     tree_explicit = Octree(points, ds.corners, tree_coord=tree_coord)
     tree_auto = Octree(points, ds.corners)
@@ -88,7 +98,7 @@ def test_explicit_tree_equals_auto_tree(name: str, tree_coord: str) -> None:
 @pytest.mark.parametrize("name,tree_coord", _CASES)
 def test_from_ds_matches_constructor(name: str, tree_coord: str) -> None:
     """`Octree.from_ds(...)` should match direct constructor output."""
-    ds = Dataset.from_file(str(data_file(name)))
+    ds = Dataset.from_file(str(_case_data_file(name)))
     points = ds[["X [R]", "Y [R]", "Z [R]"]]
     tree_ctor = Octree(points, ds.corners, tree_coord=tree_coord)
     tree_from_ds = Octree.from_ds(ds, tree_coord=tree_coord)

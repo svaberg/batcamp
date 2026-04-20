@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from pathlib import Path
-import sys
 import time
 
 import matplotlib.pyplot as plt
+from matplotlib import ticker
 from matplotlib.colors import LogNorm
 from matplotlib.colors import Normalize
+from matplotlib.colors import SymLogNorm
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
 from batread.dataset import Dataset
@@ -19,26 +21,20 @@ from batread.dataset import Dataset
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp.constants import XYZ_VARS
+from benchmark_helpers import _build_octree
+from benchmark_helpers import _configure_builder_logging
+from benchmark_helpers import _configure_progress_logging
+from benchmark_helpers import _ProgressReporter
+from benchmark_helpers import _resolution_ramp
+from benchmark_helpers import _time_call
+from benchmark_helpers import DatasetCase
+from benchmark_helpers import resolve_data_file
 
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from benchmark_helpers import _build_octree
-    from benchmark_helpers import _configure_builder_logging
-    from benchmark_helpers import _configure_progress_logging
-    from benchmark_helpers import _ProgressReporter
-    from benchmark_helpers import _resolution_ramp
-    from benchmark_helpers import _time_call
-    from benchmark_helpers import DatasetCase
-    from benchmark_helpers import resolve_data_file
-else:
-    from .benchmark_helpers import _build_octree
-    from .benchmark_helpers import _configure_builder_logging
-    from .benchmark_helpers import _configure_progress_logging
-    from .benchmark_helpers import _ProgressReporter
-    from .benchmark_helpers import _resolution_ramp
-    from .benchmark_helpers import _time_call
-    from .benchmark_helpers import DatasetCase
-    from .benchmark_helpers import resolve_data_file
+
+_GRID_CACHE_VERSION = 3
+_GRID_SUM_PIXEL_CHUNK_SIZE = 1024
+_SCATTER_MAX_POINTS = 100_000
+_BOUNDARY_SCATTER_MAX_POINTS = 25_000
 
 
 def _grid_sum_image(
@@ -53,20 +49,188 @@ def _grid_sum_image(
     x = np.linspace(xmin, xmax, int(nx_sum), dtype=float)
     y = _plane_axis_points(ymin, ymax, int(n_plane))
     z = _plane_axis_points(zmin, zmax, int(n_plane))
+    yg, zg = np.meshgrid(y, z, indexing="xy")
+    y_flat = yg.reshape(-1)
+    z_flat = zg.reshape(-1)
+    out = np.full(y_flat.shape, np.nan, dtype=float)
+    chunk_size = int(_GRID_SUM_PIXEL_CHUNK_SIZE)
+    for pixel_lo in range(0, y_flat.size, chunk_size):
+        pixel_hi = min(pixel_lo + chunk_size, y_flat.size)
+        n_pixel = int(pixel_hi - pixel_lo)
+        query = np.empty((x.size * n_pixel, 3), dtype=float)
+        query[:, 0] = np.repeat(x, n_pixel)
+        query[:, 1] = np.tile(y_flat[pixel_lo:pixel_hi], x.size)
+        query[:, 2] = np.tile(z_flat[pixel_lo:pixel_hi], x.size)
+        vals = np.asarray(
+            interp(query, query_coord="xyz", log_outside_domain=False),
+            dtype=float,
+        ).reshape(x.size, n_pixel)
+        finite = np.isfinite(vals)
+        summed = np.trapezoid(np.where(finite, vals, 0.0), x=x, axis=0)
+        active = np.any(finite, axis=0)
+        out_chunk = out[pixel_lo:pixel_hi]
+        out_chunk[active] = summed[active]
+    return out.reshape(z.size, y.size)
 
-    xg, yg, zg = np.meshgrid(x, y, z, indexing="ij")
-    query = np.column_stack((xg.ravel(), yg.ravel(), zg.ravel()))
-    vals = np.asarray(
-        interp(query, query_coord="xyz", log_outside_domain=False),
-        dtype=float,
-    ).reshape(x.size, y.size, z.size)
 
-    finite = np.isfinite(vals)
-    summed = np.trapezoid(np.where(finite, vals, 0.0), x=x, axis=0)
-    any_finite = np.any(finite, axis=0)
-    out = np.full_like(summed, np.nan, dtype=float)
-    out[any_finite] = summed[any_finite]
-    return out.T
+def _grid_cache_file(
+    out_root: Path,
+    *,
+    case_label: str,
+    phase: str,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> Path:
+    data_stat = data_path.stat()
+    key = "|".join(
+        (
+            str(data_path.resolve()),
+            str(phase),
+            str(int(data_stat.st_size)),
+            str(int(data_stat.st_mtime_ns)),
+            str(variable),
+            str(int(n_plane)),
+            str(int(nx_sum)),
+            ",".join(f"{float(value):.17g}" for value in bounds),
+        )
+    )
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return (
+        out_root
+        / f"benchmark_grid_vs_ray_{case_label}_grid_cache_{phase}_{int(n_plane)}x{int(n_plane)}_{digest}.npz"
+    )
+
+
+def _grid_cache_matches(
+    cache: np.lib.npyio.NpzFile,
+    *,
+    phase: str,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> bool:
+    data_stat = data_path.stat()
+    return (
+        int(cache["version"]) == _GRID_CACHE_VERSION
+        and str(cache["data_path"]) == str(data_path.resolve())
+        and str(cache["phase"]) == str(phase)
+        and int(cache["data_size"]) == int(data_stat.st_size)
+        and int(cache["data_mtime_ns"]) == int(data_stat.st_mtime_ns)
+        and str(cache["variable"]) == str(variable)
+        and int(cache["n_plane"]) == int(n_plane)
+        and int(cache["nx_sum"]) == int(nx_sum)
+        and np.allclose(
+            np.asarray(cache["bounds"], dtype=float),
+            np.asarray(bounds, dtype=float),
+            atol=0.0,
+            rtol=0.0,
+        )
+    )
+
+
+def _read_grid_cache(
+    cache_path: Path,
+    *,
+    phase: str,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> tuple[np.ndarray, float] | None:
+    if not cache_path.exists():
+        return None
+    with np.load(cache_path, allow_pickle=False) as cache:
+        if not _grid_cache_matches(
+            cache,
+            phase=phase,
+            data_path=data_path,
+            variable=variable,
+            n_plane=int(n_plane),
+            nx_sum=int(nx_sum),
+            bounds=bounds,
+        ):
+            return None
+        return np.asarray(cache["image"], dtype=float), float(cache["grid_s"])
+
+
+def _write_grid_cache(
+    cache_path: Path,
+    image: np.ndarray,
+    *,
+    grid_s: float,
+    phase: str,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> None:
+    data_stat = data_path.stat()
+    np.savez_compressed(
+        cache_path,
+        version=np.array(_GRID_CACHE_VERSION, dtype=np.int64),
+        image=np.asarray(image, dtype=float),
+        grid_s=np.array(float(grid_s), dtype=float),
+        data_path=np.array(str(data_path.resolve())),
+        phase=np.array(str(phase)),
+        data_size=np.array(int(data_stat.st_size), dtype=np.int64),
+        data_mtime_ns=np.array(int(data_stat.st_mtime_ns), dtype=np.int64),
+        variable=np.array(str(variable)),
+        n_plane=np.array(int(n_plane), dtype=np.int64),
+        nx_sum=np.array(int(nx_sum), dtype=np.int64),
+        bounds=np.asarray(bounds, dtype=float),
+    )
+
+
+def _grid_sum_image_cached(
+    interp: OctreeInterpolator,
+    *,
+    cache_path: Path,
+    phase: str,
+    data_path: Path,
+    variable: str,
+    n_plane: int,
+    nx_sum: int,
+    bounds: tuple[float, float, float, float, float, float],
+) -> tuple[np.ndarray, float, bool]:
+    cached = _read_grid_cache(
+        cache_path,
+        phase=phase,
+        data_path=data_path,
+        variable=variable,
+        n_plane=int(n_plane),
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    if cached is not None:
+        image, grid_s = cached
+        return image, float(grid_s), True
+
+    image, grid_s = _time_call(
+        _grid_sum_image,
+        interp,
+        n_plane=int(n_plane),
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    _write_grid_cache(
+        cache_path,
+        image,
+        grid_s=float(grid_s),
+        phase=phase,
+        data_path=data_path,
+        variable=variable,
+        n_plane=int(n_plane),
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    return image, float(grid_s), False
 
 
 def _plane_axis_points(lo: float, hi: float, n: int) -> np.ndarray:
@@ -105,15 +269,15 @@ def _ray_image_and_segment_counts(
     """Trace one plane of parallel rays and return one accumulated image and segment counts."""
     origins, directions, t_end = _ray_setup(n_plane=int(n_plane), bounds=bounds)
     if str(ray_method) == "midpoint":
-        image, counts = tracer.accumulate_midpoint_image(
+        image, counts = tracer.midpoint_image(
             interp,
             origins,
             directions,
             t_min=0.0,
             t_max=float(t_end),
         )
-    elif str(ray_method) == "exact":
-        image, counts = tracer.accumulate_exact_image(
+    elif str(ray_method) == "trilinear":
+        image, counts = tracer.trilinear_image(
             interp,
             origins,
             directions,
@@ -130,8 +294,8 @@ def _ray_image_and_segment_counts(
 def _ray_methods(ray_method: str) -> list[str]:
     """Return the concrete ray methods to run for one benchmark invocation."""
     if str(ray_method) == "both":
-        return ["midpoint", "exact"]
-    if str(ray_method) in {"midpoint", "exact"}:
+        return ["midpoint", "trilinear"]
+    if str(ray_method) in {"midpoint", "trilinear"}:
         return [str(ray_method)]
     raise ValueError(f"Unsupported ray_method '{ray_method}'.")
 
@@ -156,6 +320,72 @@ def _array_stats(a: np.ndarray) -> tuple[int, int]:
     nan_count = int(np.size(a) - np.count_nonzero(finite))
     zero_count = int(np.count_nonzero(finite & (a == 0.0)))
     return nan_count, zero_count
+
+
+def _sample_mask_indices(mask: np.ndarray, max_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return deterministic sampled 2D indices from one boolean mask."""
+    flat = np.flatnonzero(mask.reshape(-1))
+    if flat.size > int(max_points):
+        sample = np.linspace(0, flat.size - 1, int(max_points), dtype=np.int64)
+        flat = flat[sample]
+    return np.unravel_index(flat, mask.shape)
+
+
+def _height_color_norm(height_values: np.ndarray) -> SymLogNorm:
+    """Return the symlog height-over-surface color norm for comparison scatter points."""
+    heights = np.asarray(height_values, dtype=float).reshape(-1)
+    finite = heights[np.isfinite(heights)]
+    if finite.size == 0:
+        raise ValueError("Comparison scatter height colors require finite values.")
+    h_lo = float(np.min(finite))
+    h_hi = float(np.max(finite))
+    if h_hi <= h_lo:
+        raise ValueError("Comparison scatter height colors require a non-degenerate range.")
+    return SymLogNorm(linthresh=1.0e-3, vmin=h_lo, vmax=h_hi)
+
+
+def _style_horizontal_colorbar_top(cbar, label: str, *, labelsize: int, tick_labelsize: int) -> None:
+    """Place one horizontal colorbar label and ticks on the top edge with minor ticks enabled."""
+    cbar.set_label(label, fontsize=labelsize)
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.ax.xaxis.labelpad = 0
+    cbar.ax.xaxis.set_ticks_position("top")
+    if isinstance(cbar.norm, SymLogNorm):
+        vmin = float(cbar.norm.vmin)
+        vmax = float(cbar.norm.vmax)
+        linthresh = float(cbar.norm.linthresh)
+        if vmin >= linthresh:
+            major_ticks = np.geomspace(vmin, vmax, num=3)
+            cbar.ax.xaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2.0, 10.0)))
+        elif vmax <= -linthresh:
+            major_ticks = -np.geomspace(abs(vmin), abs(vmax), num=3)
+            major_ticks = np.sort(major_ticks)
+            cbar.ax.xaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2.0, 10.0)))
+        else:
+            major_ticks = np.array([vmin, 0.0, vmax], dtype=float)
+            cbar.ax.xaxis.set_minor_locator(
+                ticker.SymmetricalLogLocator(
+                    base=10.0,
+                    linthresh=linthresh,
+                    subs=np.arange(2.0, 10.0),
+                )
+            )
+        cbar.set_ticks(major_ticks)
+        cbar.ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _pos: f"{x:.3g}"))
+        cbar.ax.xaxis.set_minor_formatter(ticker.NullFormatter())
+    cbar.minorticks_on()
+    cbar.outline.set_linewidth(0.6)
+    cbar.ax.tick_params(
+        axis="x",
+        which="both",
+        top=True,
+        bottom=False,
+        labeltop=True,
+        labelbottom=False,
+        pad=0,
+    )
+    cbar.ax.tick_params(axis="x", which="major", labelsize=tick_labelsize, length=2)
+    cbar.ax.tick_params(axis="x", which="minor", length=1)
 
 
 def _equality_deviation(
@@ -193,6 +423,7 @@ def _discrepancy_rows(
     pixel_z: np.ndarray,
     pixel_r: np.ndarray,
     log10_threshold: float = 0.1,
+    max_category_rows: int = 256,
     max_finite_rows: int = 256,
 ) -> list[dict[str, float | int | str]]:
     """Return one sorted discrepancy list for one comparison image pair."""
@@ -209,6 +440,10 @@ def _discrepancy_rows(
     rows: list[dict[str, float | int | str]] = []
     for kind, mask, log_mag in categories:
         iz, iy = np.nonzero(mask)
+        if iz.size > int(max_category_rows):
+            selected = np.argsort(pixel_r[iz, iy])[-int(max_category_rows):]
+            iz = iz[selected]
+            iy = iy[selected]
         for k in range(iz.size):
             i = int(iz[k])
             j = int(iy[k])
@@ -234,13 +469,13 @@ def _discrepancy_rows(
     if np.any(both_pos):
         abs_log10 = np.abs(np.log10(img1[both_pos]) - np.log10(img0[both_pos]))
         if np.any(abs_log10 >= log10_threshold):
-            coords = np.column_stack(np.nonzero(both_pos))
+            iz_all, iy_all = np.nonzero(both_pos)
             selected = np.nonzero(abs_log10 >= log10_threshold)[0]
             selected = selected[np.argsort(abs_log10[selected])[::-1]]
             selected = selected[: int(max_finite_rows)]
             for idx in selected:
-                i = int(coords[idx, 0])
-                j = int(coords[idx, 1])
+                i = int(iz_all[idx])
+                j = int(iy_all[idx])
                 rows.append(
                     {
                         "kind": "finite_log10_mismatch",
@@ -321,11 +556,17 @@ def _save_four_panel_figure(
     plot1_only = np.isfinite(img0) & (img0 == 0.0) & pos1
     plot0_nan = pos0 & np.isnan(img1)
     plot1_nan = np.isnan(img0) & pos1
-    pos_vals = np.concatenate((img0[pos0], img1[pos1])) if (np.any(pos0) or np.any(pos1)) else np.array([], dtype=float)
+    has_positive = bool(np.any(pos0) or np.any(pos1))
 
-    if pos_vals.size > 0:
-        vmin = float(np.min(pos_vals))
-        vmax = float(np.max(pos_vals))
+    if has_positive:
+        vmin = np.inf
+        vmax = -np.inf
+        if np.any(pos0):
+            vmin = min(vmin, float(np.min(img0[pos0])))
+            vmax = max(vmax, float(np.max(img0[pos0])))
+        if np.any(pos1):
+            vmin = min(vmin, float(np.min(img1[pos1])))
+            vmax = max(vmax, float(np.max(img1[pos1])))
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin <= 0.0 or vmax <= vmin:
             vmin, vmax = 1.0, 10.0
         norm = LogNorm(vmin=vmin, vmax=vmax)
@@ -403,9 +644,9 @@ def _save_four_panel_figure(
     cbar.ax.tick_params(labelsize=8, pad=1)
 
     axes[1, 0].set_title(f"Comparison: grid vs {ray_label.lower()}")
-    if pos_vals.size > 0:
-        lo_data = float(np.min(pos_vals))
-        hi_data = float(np.max(pos_vals))
+    if has_positive:
+        lo_data = float(vmin)
+        hi_data = float(vmax)
         if not np.isfinite(lo_data) or not np.isfinite(hi_data) or lo_data <= 0.0 or hi_data <= lo_data:
             lo_data, hi_data = 1.0, 10.0
         pad = 1.12
@@ -415,77 +656,87 @@ def _save_four_panel_figure(
         y_boundary_transform = blended_transform_factory(axes[1, 0].transData, axes[1, 0].transAxes)
         boundary_frac_zero = 0.015
         boundary_frac_nan = 0.045
-        r_mask = both_pos | plot0_only | plot1_only | plot0_nan | plot1_nan
-        r_vals = pixel_r[r_mask].reshape(-1) if np.any(r_mask) else np.array([0.0], dtype=float)
-        r_lo = float(np.min(r_vals))
-        r_hi = float(np.max(r_vals))
-        if not np.isfinite(r_lo) or not np.isfinite(r_hi) or r_hi <= r_lo:
-            r_lo = 0.0
-            r_hi = max(r_lo + 1.0, r_hi)
-        r_norm = Normalize(vmin=r_lo, vmax=r_hi)
-        if np.any(both_pos):
+        pixel_height = pixel_r - 1.0
+        height_norm = _height_color_norm(pixel_height)
+        height_cmap = "cividis"
+        iz, iy = _sample_mask_indices(both_pos, _SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                img0[both_pos].reshape(-1),
-                img1[both_pos].reshape(-1),
-                c=pixel_r[both_pos].reshape(-1),
-                cmap="cividis",
-                norm=r_norm,
+                img0[iz, iy],
+                img1[iz, iy],
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 s=12,
                 alpha=0.85,
                 linewidths=0.0,
             )
-        if np.any(plot0_only):
+        iz, iy = _sample_mask_indices(plot0_only, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                img0[plot0_only].reshape(-1),
-                np.full(int(np.count_nonzero(plot0_only)), boundary_frac_zero, dtype=float),
-                c=pixel_r[plot0_only].reshape(-1),
-                cmap="cividis",
-                norm=r_norm,
+                img0[iz, iy],
+                np.full(iz.size, boundary_frac_zero, dtype=float),
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker="v",
                 s=22,
                 alpha=0.95,
                 linewidths=0.0,
                 transform=y_boundary_transform,
             )
-        if np.any(plot1_only):
+        iz, iy = _sample_mask_indices(plot1_only, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                np.full(int(np.count_nonzero(plot1_only)), boundary_frac_zero, dtype=float),
-                img1[plot1_only].reshape(-1),
-                c=pixel_r[plot1_only].reshape(-1),
-                cmap="cividis",
-                norm=r_norm,
+                np.full(iz.size, boundary_frac_zero, dtype=float),
+                img1[iz, iy],
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker="<",
                 s=22,
                 alpha=0.95,
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
-        if np.any(plot0_nan):
+        iz, iy = _sample_mask_indices(plot0_nan, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                img0[plot0_nan].reshape(-1),
-                np.full(int(np.count_nonzero(plot0_nan)), boundary_frac_nan, dtype=float),
-                c=pixel_r[plot0_nan].reshape(-1),
-                cmap="cividis",
-                norm=r_norm,
+                img0[iz, iy],
+                np.full(iz.size, boundary_frac_nan, dtype=float),
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker="^",
                 s=24,
                 alpha=0.95,
                 linewidths=0.0,
                 transform=y_boundary_transform,
             )
-        if np.any(plot1_nan):
+        iz, iy = _sample_mask_indices(plot1_nan, _BOUNDARY_SCATTER_MAX_POINTS)
+        if iz.size > 0:
             axes[1, 0].scatter(
-                np.full(int(np.count_nonzero(plot1_nan)), boundary_frac_nan, dtype=float),
-                img1[plot1_nan].reshape(-1),
-                c=pixel_r[plot1_nan].reshape(-1),
-                cmap="cividis",
-                norm=r_norm,
+                np.full(iz.size, boundary_frac_nan, dtype=float),
+                img1[iz, iy],
+                c=pixel_height[iz, iy],
+                cmap=height_cmap,
+                norm=height_norm,
                 marker=">",
                 s=24,
                 alpha=0.95,
                 linewidths=0.0,
                 transform=x_boundary_transform,
             )
+        height_cax = axes[1, 0].inset_axes([0.55, 0.075, 0.38, 0.035])
+        height_mappable = plt.cm.ScalarMappable(norm=height_norm, cmap=height_cmap)
+        height_mappable.set_array([])
+        height_cbar = fig.colorbar(height_mappable, cax=height_cax, orientation="horizontal")
+        _style_horizontal_colorbar_top(
+            height_cbar,
+            "height over surface (R-1)",
+            labelsize=7,
+            tick_labelsize=6,
+        )
         axes[1, 0].set_xlim(lo, hi)
         axes[1, 0].set_ylim(lo, hi)
         axes[1, 0].set_xscale("log")
@@ -646,31 +897,31 @@ def _write_method_comparison_table(
     rows_by_method: dict[str, list[dict[str, float | int]]],
     out_path: Path,
 ) -> None:
-    """Write one direct midpoint-versus-exact timing comparison table."""
+    """Write one direct midpoint-versus-trilinear timing comparison table."""
     midpoint_rows = rows_by_method.get("midpoint", [])
-    exact_rows = rows_by_method.get("exact", [])
-    if not midpoint_rows or not exact_rows:
+    trilinear_rows = rows_by_method.get("trilinear", [])
+    if not midpoint_rows or not trilinear_rows:
         return
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "## Ray Method Comparison",
         "",
-        "| resolution | pixels | midpoint_s | exact_s | exact/midpoint |",
+        "| resolution | pixels | midpoint_s | trilinear_s | trilinear/midpoint |",
         "|---:|---:|---:|---:|---:|",
     ]
-    for midpoint_row, exact_row in zip(midpoint_rows, exact_rows, strict=True):
+    for midpoint_row, trilinear_row in zip(midpoint_rows, trilinear_rows, strict=True):
         resolution = int(midpoint_row["resolution"])
-        if resolution != int(exact_row["resolution"]):
-            raise ValueError("midpoint/exact comparison rows must share the same resolutions.")
+        if resolution != int(trilinear_row["resolution"]):
+            raise ValueError("midpoint/trilinear comparison rows must share the same resolutions.")
         midpoint_s = float(midpoint_row["ray_s"])
-        exact_s = float(exact_row["ray_s"])
+        trilinear_s = float(trilinear_row["ray_s"])
         lines.append(
             f"| {resolution}x{resolution} | "
             f"{int(midpoint_row['pixels'])} | "
             f"{midpoint_s:.6f} | "
-            f"{exact_s:.6f} | "
-            f"{(exact_s / max(midpoint_s, 1.0e-15)):.3f} |"
+            f"{trilinear_s:.6f} | "
+            f"{(trilinear_s / max(midpoint_s, 1.0e-15)):.3f} |"
         )
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -738,7 +989,7 @@ def _run_case(
     variable: str,
 ) -> None:
     """Run one dataset case through the grid-vs-ray benchmark."""
-    ray_methods = _ray_methods(ray_method)
+    requested_ray_methods = _ray_methods(ray_method)
     progress.note(f"[{case.label}] file={case.file_name}")
     progress.note(f"[{case.label}] artifact_prefix=benchmark_grid_vs_ray_{case.label}_<method>_*")
     progress.start(f"[{case.label}] resolve data file")
@@ -754,9 +1005,7 @@ def _run_case(
         tree_s,
         detail=f"coord={tree.tree_coord}",
     )
-    if str(tree.tree_coord) != "xyz":
-        progress.note(f"[{case.label}] skip: ray benchmark currently supports only tree_coord='xyz'")
-        return
+    ray_methods = requested_ray_methods
     progress.start(f"[{case.label}] build interpolator")
     interp, interp_s = _time_call(OctreeInterpolator, tree, np.asarray(ds[variable], dtype=float))
     progress.complete(f"[{case.label}] build interpolator", interp_s)
@@ -779,7 +1028,28 @@ def _run_case(
     warm_n = int(resolutions[0])
     progress.start(f"[{case.label}] cold start check")
     t0 = time.perf_counter()
-    _, cold_grid_s = _time_call(_grid_sum_image, interp, n_plane=warm_n, nx_sum=int(nx_sum), bounds=bounds)
+    cold_grid_cache_path = _grid_cache_file(
+        out_root,
+        case_label=case.label,
+        phase="cold",
+        data_path=data_path,
+        variable=variable,
+        n_plane=warm_n,
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    _, cold_grid_s, cold_grid_cached = _grid_sum_image_cached(
+        interp,
+        cache_path=cold_grid_cache_path,
+        phase="cold",
+        data_path=data_path,
+        variable=variable,
+        n_plane=warm_n,
+        nx_sum=int(nx_sum),
+        bounds=bounds,
+    )
+    if cold_grid_cached:
+        progress.note(f"[{case.label}] grid cache hit cold {warm_n}x{warm_n}")
     cold_ray_s_by_method: dict[str, float] = {}
     for method in ray_methods:
         try:
@@ -799,7 +1069,8 @@ def _run_case(
         f"[{case.label}] cold start check",
         float(time.perf_counter() - t0),
         detail=" ".join(
-            [f"grid={cold_grid_s:.2f}s"] + [f"{method}={cold_ray_s_by_method[method]:.2f}s" for method in ray_methods]
+            [f"grid={cold_grid_s:.2f}s" + (" cached" if cold_grid_cached else "")]
+            + [f"{method}={cold_ray_s_by_method[method]:.2f}s" for method in ray_methods]
         ),
     )
     rows_by_method: dict[str, list[dict[str, float | int]]] = {method: [] for method in ray_methods}
@@ -807,18 +1078,33 @@ def _run_case(
         progress.start(f"[{case.label}] run {n}x{n}")
         t_step = time.perf_counter()
 
-        img0, grid_s = _time_call(
-            _grid_sum_image,
-            interp,
+        grid_cache_path = _grid_cache_file(
+            out_root,
+            case_label=case.label,
+            phase="run",
+            data_path=data_path,
+            variable=variable,
             n_plane=int(n),
             nx_sum=int(nx_sum),
             bounds=bounds,
         )
+        img0, grid_s, grid_cached = _grid_sum_image_cached(
+            interp,
+            cache_path=grid_cache_path,
+            phase="run",
+            data_path=data_path,
+            variable=variable,
+            n_plane=int(n),
+            nx_sum=int(nx_sum),
+            bounds=bounds,
+        )
+        if grid_cached:
+            progress.note(f"[{case.label}] grid cache hit run {int(n)}x{int(n)}")
         pixel_y, pixel_z, pixel_r = _pixel_plane_coordinates(n_plane=int(n), bounds=bounds)
         grid_nan, grid_zero = _array_stats(img0)
         pixels = int(n * n)
         stop_after_resolution = False
-        method_details: list[str] = [f"grid={grid_s:.2f}s"]
+        method_details: list[str] = [f"grid={grid_s:.2f}s" + (" cached" if grid_cached else "")]
         for method in ray_methods:
             ray_label = f"Ray {method}"
             try:
@@ -935,8 +1221,8 @@ def main() -> None:
     parser.add_argument(
         "--min-resolution",
         type=int,
-        default=2,
-        help="Smallest square plane resolution (default: 2).",
+        default=4,
+        help="Smallest square plane resolution (default: 4).",
     )
     parser.add_argument(
         "--max-resolution",
@@ -963,9 +1249,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--ray-method",
-        choices=("midpoint", "exact", "both"),
-        default="exact",
-        help="Ray accumulation method to benchmark (default: exact). Use 'both' for one-process midpoint/exact comparison.",
+        choices=("midpoint", "trilinear", "both"),
+        default="trilinear",
+        help="Ray accumulation method to benchmark (default: trilinear). Use 'both' for one-process midpoint/trilinear comparison.",
     )
     parser.add_argument(
         "--output-dir",
@@ -975,6 +1261,8 @@ def main() -> None:
     args = parser.parse_args()
 
     resolutions = _resolution_ramp(int(args.min_resolution), int(args.max_resolution))
+    if int(args.min_resolution) < 4:
+        raise ValueError("min-resolution must be at least 4 for symlog height comparison colors.")
     max_seconds_per_image = float(args.max_seconds_per_image)
     if max_seconds_per_image <= 0.0:
         raise ValueError("max_seconds_per_image must be positive.")

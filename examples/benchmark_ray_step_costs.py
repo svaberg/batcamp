@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Profile one warmed xyz ray trace through public crossing-trace statistics."""
+"""Profile one warmed octree ray trace through public crossing-trace statistics."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 import time
 
 import numpy as np
@@ -13,22 +12,12 @@ from batread.dataset import Dataset
 
 from batcamp import OctreeRayTracer
 from batcamp.constants import XYZ_VARS
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from benchmark_helpers import _build_octree
-    from benchmark_helpers import _configure_builder_logging
-    from benchmark_helpers import _configure_progress_logging
-    from benchmark_helpers import _ProgressReporter
-    from benchmark_helpers import _time_call
-    from benchmark_helpers import resolve_data_file
-else:
-    from .benchmark_helpers import _build_octree
-    from .benchmark_helpers import _configure_builder_logging
-    from .benchmark_helpers import _configure_progress_logging
-    from .benchmark_helpers import _ProgressReporter
-    from .benchmark_helpers import _time_call
-    from .benchmark_helpers import resolve_data_file
+from benchmark_helpers import _build_octree
+from benchmark_helpers import _configure_builder_logging
+from benchmark_helpers import _configure_progress_logging
+from benchmark_helpers import _ProgressReporter
+from benchmark_helpers import _time_call
+from benchmark_helpers import resolve_data_file
 
 
 def _plane_axis_points(lo: float, hi: float, n: int) -> np.ndarray:
@@ -71,7 +60,7 @@ def _trace_report(
     ray_counts = np.diff(segments.ray_offsets)
     time_counts = np.diff(segments.time_offsets)
     if not np.array_equal(time_counts, np.where(ray_counts == 0, 0, ray_counts + 1)):
-        raise ValueError("RaySegments has inconsistent packed counts.")
+        raise ValueError("TracedRays has inconsistent packed counts.")
 
     n_rays = int(ray_counts.size)
     nonempty_mask = ray_counts > 0
@@ -120,13 +109,13 @@ def _trace_report(
     }
 
 
-def _write_report(report: dict[str, float | int], out_path: Path) -> None:
+def _write_report(report: dict[str, float | int | str], out_path: Path) -> None:
     """Write one markdown report with the public crossing-trace benchmark summary."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Ray Trace Cost Report",
         "",
-        "- scope: `xyz` public crossing tracer only",
+        f"- scope: `{str(report['tree_coord'])}` public crossing tracer",
         f"- sampled ray plane: `{int(report['sample_resolution'])}x{int(report['sample_resolution'])}`",
         f"- sampled rays: `{int(report['sample_rays'])}`",
         f"- nonempty rays: `{int(report['nonempty_rays'])}`",
@@ -148,11 +137,11 @@ def _write_report(report: dict[str, float | int], out_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Profile one warmed xyz ray trace through public crossing-trace statistics.")
+    parser = argparse.ArgumentParser(description="Profile one warmed octree ray trace through public crossing-trace statistics.")
     parser.add_argument(
         "--dataset",
         default="3d__var_2_n00006003.plt",
-        help="XYZ dataset basename to resolve from sample_data or pooch.",
+        help="Dataset basename to resolve from sample_data or pooch.",
     )
     parser.add_argument(
         "--resolution",
@@ -189,8 +178,6 @@ def main() -> None:
     progress.start("prepare octree")
     tree, tree_s = _time_call(_build_octree, ds)
     progress.complete("prepare octree", tree_s, detail=f"coord={tree.tree_coord}")
-    if str(tree.tree_coord) != "xyz":
-        raise NotImplementedError("benchmark_ray_step_costs currently supports only tree_coord='xyz'.")
 
     progress.start("build ray tracer")
     tracer, tracer_s = _time_call(OctreeRayTracer, tree)
@@ -215,6 +202,7 @@ def main() -> None:
         n_plane=int(args.resolution),
         bounds=bounds,
     )
+    report["tree_coord"] = str(tree.tree_coord)
     progress.complete(
         f"profile crossing trace at {int(args.resolution)}x{int(args.resolution)}",
         profile_s,

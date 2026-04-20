@@ -8,7 +8,9 @@ The current development order is:
 3. design a minimal ray and imaging API against those invariants
 4. implement the new traversal and image-formation code
 
-The immediate goal is not to restore the old ray code. The goal is to make the octree trustworthy enough that a new octree-aware ray traversal layer can be built on top of it without carrying temporary assumptions or cleanup debt.
+The immediate goal is not to restore old ray behavior. The goal is to keep the
+octree trustworthy enough that the octree-aware ray traversal layer can be
+extended without carrying temporary assumptions or cleanup debt.
 
 ## Why this matters
 Ray traversal is unusually sensitive to geometric ambiguity. If the octree contract is vague, the traversal layer will absorb that vagueness as:
@@ -18,23 +20,28 @@ Ray traversal is unusually sensitive to geometric ambiguity. If the octree contr
 - duplicated coordinate logic
 - inconsistent behavior between lookup, interpolation, and traversal
 
-The octree should therefore expose a small number of exact, stable rules that the future tracer is allowed to assume.
+The octree should therefore expose a small number of exact, stable rules that the tracer is allowed to assume.
 
 ## Ray traversal geometry target
-The future ray tracer should be geometry-first.
+The ray tracer should be geometry-first.
 
-Its primary output should be exact per-cell ray intervals:
+Its primary output should be exact per-cell ray-parameter intervals, represented
+as packed crossing events:
 
-- `t_enter`
-- `t_exit`
+- `cell_ids[i]`
+- `times[i]`
+- `times[i + 1]`
 
-for each crossed cell, in physical `xyz` ray coordinates.
+for each crossed cell, in physical `xyz` ray coordinates. This is equivalent to
+one `t_enter` and `t_exit` pair per crossed cell, but the shared trace product is
+the packed `cell_ids` and `times` representation.
 
 In other words, traversal should determine where the parametric ray
 
 - `x(t) = origin + t * direction`
 
-enters and exits each supported cell geometry. Those intervals should not come from:
+enters and exits each supported coordinate-slab cell. Those intervals should not
+come from:
 
 - ray marching
 - midpoint approximations
@@ -42,10 +49,195 @@ enters and exits each supported cell geometry. Those intervals should not come f
 - post hoc estimates of path length from sample placement
 - native-coordinate path lengths that are later converted to `xyz`
 
-Downstream sampling and integration may choose midpoint, quadrature, or other rules, but those sit on top of exact segment geometry rather than replacing it.
+Downstream sampling and integration may choose midpoint, quadrature, or other
+rules, but those sit on top of exact time intervals rather than replacing them.
 
-## Explicit non-goals for the first ray pass
-The first traversal implementation should work directly on the adaptive octree geometry.
+## Ray traversal time-event contract
+The ray tracer should not become separate Cartesian and spherical systems. The
+shared contract is crossing events in ray-parameter time.
+
+For every supported coordinate system, tracing should produce only:
+
+- `cell_ids[i]`
+- `times[i]`
+- `times[i + 1]`
+
+meaning the physical ray occupies `cell_ids[i]` over `[times[i], times[i + 1]]`.
+
+Coordinate-specific code should be limited to finding and resolving the next
+time event.
+
+For `tree_coord="xyz"`, cells are slabs in Cartesian coordinate space and the
+physical ray is linear in that space:
+
+- `x(t)`
+- `y(t)`
+- `z(t)`
+
+For `tree_coord="rpa"`, cells are slabs in spherical coordinate space, while the
+same physical straight ray becomes a curved coordinate trajectory. Here `p`
+means polar angle:
+
+- `r(t)`
+- `p(t)`
+- `a(t)`
+
+The two branches should differ only in:
+
+- how candidate crossing times are computed
+- how active faces at one time event are identified
+- how the destination-side owning cell is resolved
+
+After that, both branches should rejoin the same traversal shape:
+
+1. current cell
+2. current time
+3. next crossing time
+4. append current cell and crossing time
+5. resolve destination cell
+6. repeat
+
+Spherical details such as event coordinates, azimuth seams, polar-axis transfer,
+face ids, probe points, and half-open RPA ownership are local machinery for
+resolving one time event. They should not leak into the trace product.
+
+The layering rule is:
+
+- geometry and traversal find cell ids and time intervals
+- interpolation and accumulation consume cell ids and time intervals
+- image formation sits above both
+
+## Ray traversal refactor tasks
+Move the current ray code toward the time-event contract with the following
+tasks, in this order.
+
+1. Keep the packed trace output as the only cross-branch product.
+   Status: done.
+
+   The shared contract is `cell_ids`, `times`, `ray_offsets`, and
+   `time_offsets`. Do not expose coordinate-specific event state above the
+   traversal layer. Packing scratch rows into flat trace arrays is shared by
+   both coordinate branches.
+
+2. Make the shared trace loop shape explicit.
+   Status: done.
+
+   Both coordinate branches should follow the same structure: current cell,
+   current time, next event time, append segment, resolve destination cell,
+   repeat.
+
+3. Split each coordinate branch into two local responsibilities.
+   Status: done.
+
+   One part computes candidate crossing times for the current cell. The other
+   resolves the destination-side owner at the chosen time event.
+
+4. Keep `xyz` as the structural reference.
+   Status: done.
+
+   The Cartesian branch already has fixed scratch buffers, packed output, and
+   direct accumulation. Shared non-geometric mechanics should not live in the
+   coordinate branches. Scratch allocation, overflow retry, invalid-count
+   handling, and packing are owned by the shared ray layer.
+
+5. Rework RPA event solving around fixed scratch arrays.
+   Status: done.
+
+   Replace hot-path Python lists, small per-event allocations, and
+   exception-driven invalid states with fixed buffers and explicit return codes.
+   This is now scoped to the RPA event solver itself; shared chunk mechanics are
+   already outside the coordinate branch. `find_exit()` now uses fixed
+   per-face candidate storage, future-root selection follows the scalar
+   nearest-event pattern used by Cartesian traversal, startup active-face
+   discovery scans faces directly in deterministic face order, and polar-root
+   filtering writes into a fixed-size result buffer. Spherical trace kernels now use
+   Numba for the scalar root solvers, event selection, owner resolution, single
+   ray trace, and batch `trace_buffer()` path. Root solvers write into
+   caller-owned two-slot scratch buffers instead of allocating per-face root
+   arrays. Coordinate conversion and ray-point evaluation now fill reusable
+   scratch arrays during event resolution, and `find_exit()` receives its
+   candidate-time, root, and coordinate buffers from the per-ray trace scratch.
+
+6. Keep RPA seam and pole handling local to owner resolution.
+   Status: done.
+
+   Azimuth wrapping, polar-axis transfer, polar caps, probe points, and
+   half-open RPA ownership should resolve one time event; they should not
+   change the packed trace contract.
+
+7. Make active-face handling time-based in both branches.
+   Status: done.
+
+   A multi-face event is one crossing time with several active faces, not
+   several independent trace events. Zero-length hops may exist only to preserve
+   correct ownership across the event.
+
+   Deterministic ordering means each branch uses its native packed face and
+   subface order consistently. RPA traversal must not assume that spherical
+   cell corners or subfaces have the same geometric order as Cartesian cells;
+   RPA owner resolution should use RPA face ids, the octree neighbor table, and
+   destination-side RPA interval containment.
+
+   The Cartesian and spherical crossing modules keep matching traversal role
+   names and shared argument order where the coordinate geometry has the same
+   role; coordinate-specific scratch and ownership inputs stay local to their
+   branch.
+
+   The shared ray layer selects the coordinate crossing module before chunk
+   tracing and calls its `trace_buffer()` through the same argument layout.
+   Coordinate kernels share the `cell_depth` slot; spherical uses it for
+   polar-axis transfer and Cartesian keeps it unused.
+
+8. Keep accumulation branch-independent above traced segments.
+   Status: done.
+
+   Midpoint and trilinear image accumulation should consume known cell ids and time
+   intervals. Coordinate-specific interpolation details belong below that
+   boundary.
+
+9. Add trilinear RPA image accumulation only after RPA traversal is structurally stable.
+   Status: done.
+
+   RPA now produces the same kind of reliable time intervals as XYZ. Its
+   trilinear image path keeps those traced times and integrates the
+   spherical-coordinate cell interpolant by treating each traced RPA slab
+   segment as straight in local `(r, polar, azimuth)` coordinates. This is an
+   RPA-local slab approximation, not an exact Cartesian-ray solution inside the
+   curved cell.
+
+10. Add or preserve tests around the shared invariants.
+    Status: done.
+
+    Tests should check clipped interval coverage, strictly increasing
+    positive-length times, midpoint ownership, multi-face events, zero-hop
+    ownership transitions, RPA azimuth seams, and polar-axis transfer.
+
+11. Only optimize RPA after the structure is fixed.
+    Status: pending.
+
+    The RPA batch path is now Numba-compatible, face root solving uses fixed
+    scratch buffers, event coordinates are filled into reusable scratch arrays,
+    and `find_exit()` uses per-ray scratch. The public ray-step benchmark now
+    supports both XYZ and RPA trees. The standalone spherical trace starts with a 32
+    crossing-event buffer and grows it only when needed. The `environment.yml`
+    environment should contain exactly one `batcamp` install: an editable install
+    from this repository. Benchmark scripts and notebooks then import the same
+    checkout without any example-side import-path plumbing. The grid-vs-ray
+    benchmark uses trilinear ray accumulation by default for both XYZ and RPA
+    trees. It streams grid-sum resampling in small pixel chunks, bounds
+    scatter/CSV diagnostic payloads at large image sizes, and caches grid-sum
+    images under its output directory, keyed by dataset file metadata, benchmark
+    phase, variable, bounds, resolution, and `nx_sum`.
+    The cache stores the measured grid runtime with the image, with separate
+    cold-start and plotted-run entries, so repeated ray runs do not recompute
+    unchanged grid baselines or replace grid timings with cache-load timings. A local `32x32` RPA run on
+    `3d__var_2_n00060005.plt` measured warmed trace times of `1.465085s` and
+    `1.571065s` after scalar cleanup, versus `1.829208s` before that cleanup.
+    The same harness on the XYZ sample measured `0.009061s`, so RPA still needs
+    targeted event-solver timing before this task is done.
+
+## Explicit non-goals for ray traversal
+Traversal should work directly on the adaptive octree geometry.
 
 It should not rely on proxy-volume tricks such as:
 
@@ -59,16 +251,19 @@ Those approaches are out of scope for the intended design because they:
 - discard the main structural benefit of the octree
 - inflate memory and preprocessing cost
 - blur the geometric contract the tracer is supposed to honor
-- make it easier for path-length calculations to drift away from exact per-cell geometry
+- make it easier for path-length calculations to drift away from exact time intervals
 
-For this first pass, the tracer should intersect the supported cell geometry directly and produce exact per-cell intervals from that geometry.
+For this pass, the tracer should intersect the supported coordinate-slab cells
+directly and produce exact per-cell time intervals from that geometry.
 
 ### Cartesian-tree traversal geometry
 For `tree_coord="xyz"`, the intended traversal geometry is:
 
 - axis-aligned Cartesian leaf cells
 
-For these cells, "exact interval length" means the ray enters and exits the cell's actual Cartesian box, and the resulting `t_enter` and `t_exit` are exact for that supported geometry model.
+For these cells, "exact interval length" means the ray enters and exits the
+cell's actual Cartesian box, and the resulting time interval is exact for that
+supported geometry model.
 
 ### Spherical-tree traversal geometry
 For `tree_coord="rpa"`, the ray tracer is still conceptually and numerically in physical `xyz`.
@@ -79,28 +274,43 @@ That means:
 - interval endpoints are `xyz` ray parameters
 - segment lengths are defined in `xyz`, not in native `rpa` coordinates
 
-The intended traversal geometry is not "native-coordinate interval length along the ray". Instead, each spherical leaf cell should be treated for traversal as its corresponding squashed hexahedral cell in Cartesian space.
+The intended traversal model is slabs in `rpa` space with a curved coordinate
+trajectory. A straight physical ray
 
-For future work, the intended contract is:
+- `x(t) = origin + t * direction`
 
-- `t_enter` and `t_exit` are based on intersection with the cell's supported squashed-hexahedron geometry in `xyz`
-- they are not based on separately intersecting `r`, `polar`, and `azimuth` intervals and then treating the result as the physical path length
+induces coordinate functions:
 
-This distinction is important. Even when the tree is built and indexed in `rpa`, the traversal result should be a physical `xyz` segment through the represented cell geometry.
+- `r(t)`
+- `polar(t)`
+- `azimuth(t)`
 
-For the first astronomy-oriented shell-tracing pass, the inner radial boundary should be treated as opaque:
+Each spherical leaf is treated as an axis-aligned interval box in those
+coordinates. Crossing events occur when the curved coordinate trajectory reaches
+one or more cell-boundary slabs:
+
+- `r = const`
+- `polar = const`
+- `azimuth = const`
+
+The resulting segment intervals are still physical ray-parameter intervals in
+`t`. The tracer should not compute a native-coordinate path length and then
+convert it into a physical length.
+
+For astronomy-oriented shell tracing, the inner radial boundary should be treated as opaque:
 
 - the visible interval is the front shell segment only
 - when a forward ray reaches `r = rmin`, the ray is finished
 - the tracer does not continue through the central hole to a backside shell interval
 
-It is worth being explicit about why this is the preferred direction. Intersections against native `rpa` boundary surfaces are not impossible in principle:
+The native `rpa` boundary surfaces are:
 
 - `r = const` gives spherical surfaces
 - `polar = const` gives conical surfaces
 - `azimuth = const` gives half-planes through the axis
 
-But turning those into a robust per-cell ray interval algorithm is still materially nontrivial in practice because it requires consistent handling of:
+Turning those into a robust per-cell time-event algorithm requires consistent
+handling of:
 
 - periodic azimuth wrapping
 - pole-adjacent behavior
@@ -108,8 +318,6 @@ But turning those into a robust per-cell ray interval algorithm is still materia
 - face, edge, and corner coincidences
 - interval ordering along a Cartesian ray
 - agreement with the octree's own containment and boundary rules
-
-So the issue is not that native-`rpa` intersections are mathematically forbidden. The issue is that they are substantially harder to make exact, robust, and contract-consistent, and they are not the primary geometry target if the tracer's truth is defined in physical `xyz`.
 
 ## Current public octree surface
 The current octree-facing public entrypoints are:
@@ -120,7 +328,7 @@ The current octree-facing public entrypoints are:
 - `Octree.domain_bounds(coord=...)`
 - `OctreeInterpolator(tree, values)`
 
-The future traversal layer should be designed to rely on stable octree behavior, not on hidden implementation details beyond what is explicitly documented here.
+The traversal layer should be designed to rely on stable octree behavior, not on hidden implementation details beyond what is explicitly documented here.
 
 ## Octree invariants required before ray work
 
@@ -135,12 +343,12 @@ Supported meanings:
 Required invariant:
 
 - all octree geometry state is internally consistent with `tree_coord`
-- coordinate conversion is explicit, never inferred implicitly by downstream ray code
+- coordinate conversion is explicit, never inferred implicitly by public imaging code
 
-For future ray work this means:
+For ray work this means:
 
 - rays themselves should still be described in physical `xyz`
-- any conversion into tree-local coordinates belongs to octree-owned geometry logic, not to public imaging code
+- any conversion into tree-local coordinates belongs to geometry and traversal logic, not to public imaging code
 
 ### 2. Leaf ownership is unambiguous for interior points
 For any point strictly inside the represented domain and not lying on a cell boundary, `lookup_points` must resolve exactly one containing leaf cell.
@@ -169,7 +377,8 @@ At minimum, the project needs one clear rule for each of these cases:
 - query exactly on a shared corner
 - query exactly on the outer domain boundary
 
-The future tracer must not contain its own independent tie-breaking policy. It should be able to rely on the octree contract.
+The tracer must not contain its own independent tie-breaking policy. It should
+be able to rely on the octree contract.
 
 ### 4. Domain bounds are exact enough to be a clipping primitive
 `Octree.domain_bounds(...)` should be a reliable representation of the global represented domain in the tree's own coordinate system.
@@ -177,7 +386,7 @@ The future tracer must not contain its own independent tie-breaking policy. It s
 Required invariant:
 
 - the returned bounds are the intended traversal domain, not just a loose envelope
-- the same domain interpretation is used by lookup, interpolation, and future traversal
+- the same domain interpretation is used by lookup, interpolation, and traversal
 - points clearly outside the domain miss
 - points clearly inside the domain are not rejected by domain clipping
 
@@ -213,9 +422,9 @@ If skewed or non-axis-aligned Cartesian cells are out of scope, that should rema
 
 For `tree_coord="rpa"` the important contract is:
 
-- radial, polar, and azimuth intervals must be meaningful enough to support exact cell entry and exit calculations in spherical-tree traversal logic
-
-However, if the future ray tracer defines its intervals in physical `xyz` against squashed hexahedral cell geometry, then native `rpa` bounds alone are not the whole traversal geometry contract. In that case the octree must expose or support the corresponding `xyz` cell geometry clearly enough for exact `t_enter` and `t_exit` calculations.
+- radial, polar, and azimuth intervals define the supported traversal slabs
+- periodic azimuth behavior must be explicit enough for exact time-event ownership
+- pole-adjacent ownership must be explicit enough for exact time-event ownership
 
 ### 6. Runtime topology is correct and complete
 The rebuilt runtime tree arrays must represent one valid octree topology.
@@ -263,7 +472,7 @@ Required invariant:
 - corner ids for a leaf correspond to the same leaf that lookup returns
 - interpolation, resampling, and later traversal all agree on the meaning of a returned leaf id
 
-This matters because image formation will eventually combine:
+This matters because image formation combines:
 
 - ray segment geometry from traversal
 - corner-based interpolation or cellwise accumulation
@@ -280,7 +489,8 @@ Required invariant:
 - periodic azimuth handling does not create lookup disagreement
 - lookup behavior near the poles is deliberate and tested
 
-This consistency is especially important because the future imaging API should remain physically `xyz`-oriented even when the underlying tree is spherical.
+This consistency is especially important because the imaging API should remain
+physically `xyz`-oriented even when the underlying tree is spherical.
 
 ### 10. Domain occupancy is described in native coordinates
 The represented domain should be understood first in the tree's native coordinates.
@@ -318,18 +528,20 @@ This affects image formation directly. A synthetic image pipeline needs to know 
 That policy can live above the octree, but the octree behavior must make the distinction possible.
 
 ### 12. Lookup, interpolation, and traversal must share one geometry model
-The future tracer should not introduce a second geometry model.
+The tracer should not introduce a second geometry model.
 
 Required invariant:
 
-- point containment, interpolation fractions, and ray entry-exit computations all refer to the same cell geometry
+- point containment, interpolation fractions, and ray time-event computations all refer to the same coordinate-slab geometry
 - tolerances used in one layer do not contradict another layer's notion of inside versus outside
 - the same coordinate conventions and periodic rules are used everywhere
 
-If a future traversal method needs geometry that the current octree does not expose cleanly, the octree should be extended first rather than patched around downstream.
+If traversal needs geometry that the current octree does not expose cleanly, the
+octree should be extended first rather than patched around downstream.
 
-## Readiness checklist for new ray and imaging work
-Before adding the new traversal subsystem, the octree should be in a state where the following are true:
+## Readiness checklist for ray and imaging work
+Before extending the traversal subsystem, the octree should be in a state where
+the following are true:
 
 - `lookup_points` has stable documented boundary behavior
 - `domain_bounds` is trusted as the represented traversal domain
@@ -339,27 +551,27 @@ Before adding the new traversal subsystem, the octree should be in a state where
 - spherical periodic-axis behavior is explicit
 - native-domain occupancy rules are explicit, including the `rmin > 0` spherical case
 - the traversal geometry model is explicit for both `xyz` and `rpa` trees
-- exact segment intervals are defined in physical `xyz`
-- the first traversal path does not depend on densifying the tree to maximum resolution
+- exact segment time intervals are defined in physical `xyz` ray parameters
+- the traversal path does not depend on densifying the tree to maximum resolution
 - cross-coordinate lookup consistency is tested for interior points
 - the meaning of misses is clear enough for downstream integration
 - leaf ids are a stable contract for downstream data access
 
-## What the future ray layer should be allowed to assume
-Once the above is true, the new ray layer may assume:
+## What the ray layer should be allowed to assume
+Once the above is true, the ray layer may assume:
 
 - it can trace in physical `xyz`
-- the octree owns coordinate conversion details
+- geometry and traversal code own coordinate conversion details
 - the octree exposes one consistent notion of domain membership
 - neighboring cells differ by at most one refinement level
-- `t_enter` and `t_exit` are exact for the supported cell geometry model
-- for `rpa` trees, those exact intervals come from the supported squashed-hexahedron geometry in `xyz`
+- packed times define exact enter and exit parameters for the supported coordinate-slab geometry model
+- for `rpa` trees, those exact intervals come from crossing native `rpa` slabs along a physical `xyz` ray
 - traversal operates directly on adaptive cells rather than on a densified whole-domain proxy
 - leaf ids returned by traversal can be used for downstream sampling and integration
-- exact segment ordering can be built from exact cell geometry rather than from heuristic stepping
+- exact segment ordering can be built from exact time events rather than from heuristic stepping
 
-## What the future ray layer should not assume
-The new ray layer should not assume, unless the octree explicitly promises it:
+## What the ray layer should not assume
+The ray layer should not assume, unless the octree explicitly promises it:
 
 - arbitrary non-axis-aligned Cartesian cell geometry
 - fallback behavior for ambiguous boundary hits
@@ -368,10 +580,6 @@ The new ray layer should not assume, unless the octree explicitly promises it:
 - that old ray API shapes or names should be preserved
 
 ## Immediate development implication
-The next ray milestone should not be "restore ray code".
-
-The next ray-adjacent milestone should be:
-
-- write down and test the octree invariants that traversal depends on
-
-Only after that should the project define the minimal public surface for the new synthetic imaging code.
+The next ray milestone should be to make the current traversal code match the
+time-event contract while preserving the octree invariants that traversal
+depends on.

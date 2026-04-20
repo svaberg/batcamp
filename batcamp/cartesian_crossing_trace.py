@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Cartesian crossing-trace kernels."""
+"""Exact Cartesian leaf-crossing kernels for octree rays.
+
+This module is the low-level Cartesian traversal backend used by the public ray
+tracer. It clips one straight ray to the axis-aligned octree domain, finds the
+next exit face of the current leaf, and then follows the face/subface neighbor
+graph to determine the owner of the open interval after that event.
+
+The emphasis here is exact discrete ownership, not interpolation or rendering.
+Given one current leaf and one straight Cartesian ray, these kernels produce
+the packed sequence of visited leaves and event times that higher layers later
+use for accumulation.
+"""
 
 from __future__ import annotations
 
@@ -17,14 +28,15 @@ from .octree import _FACE_AXIS
 from .octree import _FACE_SIDE
 from .octree import _FACE_TANGENTIAL_AXES
 
-_DEFAULT_CROSSING_BUFFER_SIZE = 256
+DEFAULT_CROSSING_BUFFER_SIZE = 256
+TRACE_BUFFER_OVERFLOW = -1
 
 
 def trace_ray(
     tree: Octree,
-    start_cell_id: int,
     origin: np.ndarray,
     direction: np.ndarray,
+    start_cell_id: int,
     *,
     t_min: float = 0.0,
     t_max: float = np.inf,
@@ -33,9 +45,9 @@ def trace_ray(
 
     Args:
         tree (const): Built Cartesian octree.
-        start_cell_id (const): Fallback start cell if the clipped entry lookup lands outside.
         origin (const): Ray origin with shape `(3,)`.
         direction (const): Nonzero ray direction with shape `(3,)`.
+        start_cell_id (const): Fallback start cell if the clipped entry lookup lands outside.
         t_min (const): Lower parameter clip.
         t_max (const): Upper parameter clip.
 
@@ -56,7 +68,7 @@ def trace_ray(
     if not np.any(direction != 0.0):
         raise ValueError("direction must be nonzero.")
 
-    crossing_capacity = _DEFAULT_CROSSING_BUFFER_SIZE
+    crossing_capacity = DEFAULT_CROSSING_BUFFER_SIZE
     while True:
         cell_ids = np.empty(crossing_capacity, dtype=np.int64)
         times = np.empty(crossing_capacity + 1, dtype=np.float64)
@@ -64,7 +76,7 @@ def trace_ray(
             tree.root_cell_ids,
             tree.cell_child,
             tree.cell_bounds,
-            tree.domain_bounds_packed,
+            tree.packed_domain_bounds,
             tree.cell_neighbor,
             int(start_cell_id),
             origin,
@@ -134,9 +146,27 @@ def _trace_ray(
     for axis in range(3):
         start[axis] = float(origin[axis]) + float(start_t) * float(direction[axis])
         current[axis] = float(start[axis])
+    if float(start_t) == float(domain_enter):
+        for axis in range(3):
+            direction_value = float(direction[axis])
+            if direction_value == 0.0:
+                continue
+            lo_value = float(domain_bounds[axis, START])
+            hi_value = lo_value + float(domain_bounds[axis, WIDTH])
+            if direction_value > 0.0:
+                t0 = (lo_value - float(origin[axis])) / direction_value
+                face_value = lo_value
+            else:
+                t0 = (hi_value - float(origin[axis])) / direction_value
+                face_value = hi_value
+            if float(t0) == float(domain_enter):
+                start[axis] = face_value
+                current[axis] = face_value
     current_cell = find_cell(start, cell_child, root_cell_ids, cell_bounds, domain_bounds)
     if current_cell < 0:
         current_cell = int(start_cell_id)
+    if current_cell < 0:
+        return 0, 0
     n_cell = 0
     n_time = 1
     times_out[0] = float(start_t)
@@ -648,12 +678,13 @@ def walk_faces(
 
 
 @njit(cache=True, parallel=True)
-def trace_buffer(
+def trace_rays(
     root_cell_ids: np.ndarray,
     cell_child: np.ndarray,
     cell_bounds: np.ndarray,
     domain_bounds: np.ndarray,
     cell_neighbor: np.ndarray,
+    cell_depth: np.ndarray,
     origins: np.ndarray,
     directions: np.ndarray,
     t_min: float,
@@ -671,6 +702,7 @@ def trace_buffer(
         cell_bounds (const): Packed leaf bounds.
         domain_bounds (const): Cartesian domain bounds.
         cell_neighbor (const): Packed face/subface neighbor table.
+        cell_depth (const): Packed cell depths, unused for Cartesian traversal.
         origins (const): Flat origin array with shape `(n_rays, 3)`.
         directions (const): Flat direction array with shape `(n_rays, 3)`.
         t_min (const): Lower parameter clip.
@@ -698,38 +730,3 @@ def trace_buffer(
         )
         cell_counts[ray_id] = int(n_cell)
         time_counts[ray_id] = int(n_time)
-
-
-@njit(cache=True, parallel=True)
-def pack_buffer(
-    cell_counts: np.ndarray,
-    time_counts: np.ndarray,
-    cell_ids_scratch: np.ndarray,
-    times_scratch: np.ndarray,
-    cell_offsets: np.ndarray,
-    time_offsets: np.ndarray,
-    cell_ids_out: np.ndarray,
-    times_out: np.ndarray,
-) -> None:
-    """Pack scratch-traced rays into flat output arrays.
-
-    Args:
-        cell_counts (const): Per-ray packed cell counts.
-        time_counts (const): Per-ray packed time counts.
-        cell_ids_scratch (const): Per-ray scratch cell-id rows.
-        times_scratch (const): Per-ray scratch time rows.
-        cell_offsets (const): Flat packed cell offsets.
-        time_offsets (const): Flat packed time offsets.
-        cell_ids_out (output): Flat packed cell ids.
-        times_out (output): Flat packed times.
-    """
-    n_rays = int(cell_counts.shape[0])
-    for ray_id in prange(n_rays):
-        cell_count = int(cell_counts[ray_id])
-        cell_lo = int(cell_offsets[ray_id])
-        for cell_pos in range(cell_count):
-            cell_ids_out[cell_lo + cell_pos] = int(cell_ids_scratch[ray_id, cell_pos])
-        time_count = int(time_counts[ray_id])
-        time_lo = int(time_offsets[ray_id])
-        for time_pos in range(time_count):
-            times_out[time_lo + time_pos] = float(times_scratch[ray_id, time_pos])

@@ -18,6 +18,7 @@ from .octree import AXIS2
 from .octree import Octree
 from .octree import START
 from .octree import WIDTH
+from .spherical import xyz_to_rpa_components
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,69 @@ def _integrate_cell_xyz(
         out_row[:] += weight * point_values[corner_point_id]
 
 
+@njit(cache=True)
+def _integrate_cell_rpa_straight(
+    out_row: np.ndarray,
+    cell_id: int,
+    segment_span: float,
+    x_start: float,
+    y_start: float,
+    z_start: float,
+    x_stop: float,
+    y_stop: float,
+    z_stop: float,
+    cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    point_values: np.ndarray,
+) -> None:
+    """Write one RPA-local straight-slab trilinear segment integral row."""
+    cell_id = int(cell_id)
+    r_start, polar_start, azimuth_start = xyz_to_rpa_components(x_start, y_start, z_start)
+    r_stop, polar_stop, azimuth_stop = xyz_to_rpa_components(x_stop, y_stop, z_stop)
+    frac_r0 = _axis_fraction(r_start, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
+    frac_p0 = _axis_fraction(polar_start, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
+    frac_a0 = _periodic_axis_fraction(
+        azimuth_start,
+        cell_bounds[cell_id, AXIS2, START],
+        cell_bounds[cell_id, AXIS2, WIDTH],
+        _TWO_PI,
+    )
+    frac_r1 = _axis_fraction(r_stop, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
+    frac_p1 = _axis_fraction(polar_stop, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
+    frac_a1 = _periodic_axis_fraction(
+        azimuth_stop,
+        cell_bounds[cell_id, AXIS2, START],
+        cell_bounds[cell_id, AXIS2, WIDTH],
+        _TWO_PI,
+    )
+    d_frac_r = frac_r1 - frac_r0
+    d_frac_p = frac_p1 - frac_p0
+    d_frac_a = frac_a1 - frac_a0
+
+    cell_corner_ids = corners[cell_id]
+    out_row[:] = 0.0
+    for corner_ord in range(8):
+        bit_r = _RPA_TRILINEAR_BITS[corner_ord, AXIS0]
+        bit_p = _RPA_TRILINEAR_BITS[corner_ord, AXIS1]
+        bit_a = _RPA_TRILINEAR_BITS[corner_ord, AXIS2]
+
+        c_r = frac_r0 if bit_r else (1.0 - frac_r0)
+        c_p = frac_p0 if bit_p else (1.0 - frac_p0)
+        c_a = frac_a0 if bit_a else (1.0 - frac_a0)
+        d_r = d_frac_r if bit_r else -d_frac_r
+        d_p = d_frac_p if bit_p else -d_frac_p
+        d_a = d_frac_a if bit_a else -d_frac_a
+
+        w0 = c_r * c_p * c_a
+        w1 = d_r * c_p * c_a + c_r * d_p * c_a + c_r * c_p * d_a
+        w2 = d_r * d_p * c_a + d_r * c_p * d_a + c_r * d_p * d_a
+        w3 = d_r * d_p * d_a
+        weight = segment_span * (w0 + 0.5 * w1 + (w2 / 3.0) + 0.25 * w3)
+
+        corner_point_id = int(cell_corner_ids[corner_ord])
+        out_row[:] += weight * point_values[corner_point_id]
+
+
 @njit(cache=True, parallel=True)
 def _interp_cells_rpa(
     queries_rpa: np.ndarray,
@@ -370,6 +434,56 @@ def accumulate_exact_cells_xyz(
             if t_stop <= t_start:
                 continue
             _integrate_cell_xyz(
+                integral,
+                cell_id,
+                t_stop - t_start,
+                origin_x + t_start * direction_x,
+                origin_y + t_start * direction_y,
+                origin_z + t_start * direction_z,
+                origin_x + t_stop * direction_x,
+                origin_y + t_stop * direction_y,
+                origin_z + t_stop * direction_z,
+                cell_bounds,
+                corners,
+                point_values,
+            )
+            out[ray_id, :] += integral
+    return out
+
+
+@njit(cache=True, parallel=True)
+def accumulate_trilinear_cells_rpa(
+    origins_xyz: np.ndarray,
+    directions_xyz: np.ndarray,
+    cell_counts: np.ndarray,
+    cell_ids_scratch: np.ndarray,
+    times_scratch: np.ndarray,
+    cell_bounds: np.ndarray,
+    corners: np.ndarray,
+    point_values: np.ndarray,
+) -> np.ndarray:
+    """Accumulate RPA-local straight-slab trilinear segment integrals."""
+    n_rays = int(origins_xyz.shape[0])
+    n_components = int(point_values.shape[1])
+    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
+    for ray_id in prange(n_rays):
+        integral = np.empty(n_components, dtype=point_values.dtype)
+        origin_x = float(origins_xyz[ray_id, 0])
+        origin_y = float(origins_xyz[ray_id, 1])
+        origin_z = float(origins_xyz[ray_id, 2])
+        direction_x = float(directions_xyz[ray_id, 0])
+        direction_y = float(directions_xyz[ray_id, 1])
+        direction_z = float(directions_xyz[ray_id, 2])
+        n_cell = int(cell_counts[ray_id])
+        for cell_pos in range(n_cell):
+            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
+            if cell_id < 0:
+                continue
+            t_start = float(times_scratch[ray_id, cell_pos])
+            t_stop = float(times_scratch[ray_id, cell_pos + 1])
+            if t_stop <= t_start:
+                continue
+            _integrate_cell_rpa_straight(
                 integral,
                 cell_id,
                 t_stop - t_start,
