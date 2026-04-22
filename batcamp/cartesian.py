@@ -69,6 +69,39 @@ def _attach_cartesian_coord_state(
     return cell_bounds, domain_bounds, 0.0, False
 
 
+def cell_volumes_xyz(tree) -> np.ndarray:
+    """Return leaf-slot Cartesian cell volumes aligned with `tree.cell_levels`."""
+    cached = getattr(tree, "_cell_volumes", None)
+    if cached is not None:
+        return cached
+
+    volumes = np.full(int(tree.cell_count), np.nan, dtype=np.float64)
+    valid_leaf = np.asarray(tree.cell_levels, dtype=np.int64) >= 0
+    leaf_widths = np.asarray(tree.cell_bounds[: int(tree.cell_count), :, WIDTH], dtype=np.float64)
+    delta_x = leaf_widths[:, AXIS0]
+    delta_y = leaf_widths[:, AXIS1]
+    delta_z = leaf_widths[:, AXIS2]
+    volumes[valid_leaf] = delta_x[valid_leaf] * delta_y[valid_leaf] * delta_z[valid_leaf]
+    tree._cell_volumes = volumes
+    return volumes
+
+
+def cell_integrals_xyz(tree, point_values: np.ndarray, leaf_ids: np.ndarray) -> np.ndarray:
+    """Return exact whole-cell integrals of the Cartesian trilinear interpolant.
+
+    For ``tree_coord="xyz"``, cells are axis-aligned boxes, so the exact
+    whole-cell trilinear integral is
+
+        integral = (dx * dy * dz) * mean(corner values)
+    """
+    leaf_bounds = np.asarray(tree.cell_bounds[leaf_ids], dtype=np.float64)
+    delta_x = leaf_bounds[:, AXIS0, WIDTH]
+    delta_y = leaf_bounds[:, AXIS1, WIDTH]
+    delta_z = leaf_bounds[:, AXIS2, WIDTH]
+    corner_values = np.asarray(point_values[tree.corners[leaf_ids]], dtype=np.float64)
+    return (delta_x * delta_y * delta_z)[:, None] * np.mean(corner_values, axis=1)
+
+
 @njit(cache=True)
 def _contains_box_xyz(
     q: np.ndarray,

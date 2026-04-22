@@ -311,11 +311,95 @@ def _make_spherical_tree(
     )
 
 
+def _expected_rpa_cell_volumes(bounds: np.ndarray) -> np.ndarray:
+    """Return exact physical spherical cell volumes for packed `(r, polar, azimuth)` bounds."""
+    packed = np.asarray(bounds, dtype=float)
+    r0 = packed[..., 0, 0]
+    dr = packed[..., 0, 1]
+    r1 = r0 + dr
+    theta0 = packed[..., 1, 0]
+    dtheta = packed[..., 1, 1]
+    theta1 = theta0 + dtheta
+    dphi = packed[..., 2, 1]
+    return dphi * (np.cos(theta0) - np.cos(theta1)) * ((r1**3 - r0**3) / 3.0)
+
+
+def _expected_rpa_radial_integrals(bounds: np.ndarray) -> np.ndarray:
+    """Return exact physical-volume integrals of `f(r, polar, azimuth)=r` over spherical cells."""
+    packed = np.asarray(bounds, dtype=float)
+    r0 = packed[..., 0, 0]
+    dr = packed[..., 0, 1]
+    r1 = r0 + dr
+    theta0 = packed[..., 1, 0]
+    dtheta = packed[..., 1, 1]
+    theta1 = theta0 + dtheta
+    dphi = packed[..., 2, 1]
+    return dphi * (np.cos(theta0) - np.cos(theta1)) * ((r1**4 - r0**4) / 4.0)
+
+
+def _expected_rpa_polar_integrals(bounds: np.ndarray) -> np.ndarray:
+    """Return exact physical-volume integrals of `f(r, polar, azimuth)=polar` over spherical cells."""
+    packed = np.asarray(bounds, dtype=float)
+    r0 = packed[..., 0, 0]
+    dr = packed[..., 0, 1]
+    r1 = r0 + dr
+    theta0 = packed[..., 1, 0]
+    dtheta = packed[..., 1, 1]
+    theta1 = theta0 + dtheta
+    dphi = packed[..., 2, 1]
+    radial_factor = (r1**3 - r0**3) / 3.0
+    polar_antiderivative = np.sin(theta1) - theta1 * np.cos(theta1) - (
+        np.sin(theta0) - theta0 * np.cos(theta0)
+    )
+    return dphi * radial_factor * polar_antiderivative
+
+
+def _expected_rpa_unwrapped_azimuth_integrals(bounds: np.ndarray) -> np.ndarray:
+    """Return exact physical-volume integrals of `f(r, polar, azimuth)=azimuth` over spherical cells."""
+    packed = np.asarray(bounds, dtype=float)
+    r0 = packed[..., 0, 0]
+    dr = packed[..., 0, 1]
+    r1 = r0 + dr
+    theta0 = packed[..., 1, 0]
+    dtheta = packed[..., 1, 1]
+    theta1 = theta0 + dtheta
+    phi0 = packed[..., 2, 0]
+    dphi = packed[..., 2, 1]
+    phi1 = phi0 + dphi
+    return ((r1**3 - r0**3) / 3.0) * (np.cos(theta0) - np.cos(theta1)) * ((phi1**2 - phi0**2) / 2.0)
+
+
+def _rpa_pole_cell_ids(tree: Octree) -> np.ndarray:
+    """Return ids of leaf cells that touch either polar cap."""
+    bounds = np.asarray(tree.cell_bounds[: int(tree.cell_count)], dtype=float)
+    theta0 = bounds[:, 1, 0]
+    theta1 = theta0 + bounds[:, 1, 1]
+    return np.flatnonzero(np.isclose(theta0, 0.0, atol=1.0e-12) | np.isclose(theta1, math.pi, atol=1.0e-12))
+
+
+def _rpa_azimuth_seam_cell_ids(tree: Octree) -> np.ndarray:
+    """Return ids of leaf cells that touch the azimuth seam at `0 == 2pi`."""
+    bounds = np.asarray(tree.cell_bounds[: int(tree.cell_count)], dtype=float)
+    phi0 = bounds[:, 2, 0]
+    phi1 = phi0 + bounds[:, 2, 1]
+    return np.flatnonzero(np.isclose(phi0, 0.0, atol=1.0e-12) | np.isclose(phi1, 2.0 * math.pi, atol=1.0e-12))
+
+
 @pytest.fixture(scope="module")
 def cartesian_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
     ds = _build_regular_xyz_dataset()
     tree = Octree.from_ds(ds, tree_coord="xyz")
+    assert isinstance(tree, Octree)
+    interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
+    return ds, tree, interp
+
+
+@pytest.fixture(scope="module")
+def spherical_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator]:
+    """Build one reusable spherical octree/interpolator context for rpa-path tests."""
+    ds = _build_regular_dataset()
+    tree = Octree.from_ds(ds, tree_coord="rpa")
     assert isinstance(tree, Octree)
     interp = OctreeInterpolator(tree, np.asarray(ds["Scalar"]))
     return ds, tree, interp
@@ -351,6 +435,130 @@ def test_xyz_interp_matches_linear_field(cartesian_octree_context) -> None:
     values, cell_ids = interp(q, return_cell_ids=True)
     assert np.array_equal(np.array(cell_ids, dtype=np.int64), np.array(choose, dtype=np.int64))
     assert np.allclose(np.array(values, dtype=float), expected, atol=1e-12, rtol=0.0)
+
+
+def test_xyz_cell_volumes_match_regular_mesh(cartesian_octree_context) -> None:
+    """Regular Cartesian leaf volumes should be the product of the slab widths."""
+    _ds, tree, _interp = cartesian_octree_context
+    np.testing.assert_allclose(tree.cell_volumes, np.ones(int(tree.cell_count), dtype=float), atol=1.0e-12, rtol=0.0)
+
+
+def test_xyz_cell_volumes_match_adaptive_mesh() -> None:
+    """Adaptive Cartesian leaf volumes should stay aligned with the persisted leaf rows."""
+    ds, levels = _build_adaptive_xyz_dataset()
+    tree = _tree_from_state_build(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
+        tree_coord="xyz",
+        cell_levels=levels,
+    )
+    expected = np.where(levels == 0, 1.0, 0.125)
+    np.testing.assert_allclose(tree.cell_volumes, expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_xyz_cell_integrals_match_constant_field(cartesian_octree_context) -> None:
+    """Whole-cell trilinear integrals should reduce to constant times volume for constant data."""
+    ds, tree, _interp = cartesian_octree_context
+    const_value = 3.25
+    interp = OctreeInterpolator(tree, np.full(np.asarray(ds.points).shape[0], const_value, dtype=float))
+    np.testing.assert_allclose(
+        interp.cell_integrals(),
+        const_value * tree.cell_volumes,
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+
+def test_xyz_cell_integrals_match_linear_vector_subset(cartesian_octree_context) -> None:
+    """Whole-cell xyz integrals should be exact for linear data and preserve vector components."""
+    ds, tree, _interp = cartesian_octree_context
+    scalar = np.asarray(ds["Scalar"], dtype=float)
+    interp = OctreeInterpolator(tree, np.column_stack((scalar, 2.0 * scalar + 1.0)))
+    subset = np.array([0, int(tree.cell_count // 2), int(tree.cell_count - 1)], dtype=np.int64)
+
+    expected = np.empty((subset.size, 2), dtype=float)
+    for pos, cell_id in enumerate(subset.tolist()):
+        lo, hi = cell_bounds(tree, int(cell_id), coord="xyz")
+        center = 0.5 * (np.asarray(lo, dtype=float) + np.asarray(hi, dtype=float))
+        volume = float(tree.cell_volumes[int(cell_id)])
+        scalar_center = 1.2 * float(center[0]) - 0.3 * float(center[1]) + 0.8 * float(center[2]) + 0.5
+        expected[pos, 0] = volume * scalar_center
+        expected[pos, 1] = volume * (2.0 * scalar_center + 1.0)
+
+    np.testing.assert_allclose(interp.cell_integrals(subset), expected, atol=1.0e-12, rtol=0.0)
+    np.testing.assert_allclose(interp.cell_integrals(int(subset[0])), expected[0], atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_cell_volumes_match_physical_spherical_formula(spherical_octree_context) -> None:
+    """Spherical leaf volumes should match the exact physical shell-sector formula."""
+    _ds, tree, _interp = spherical_octree_context
+    expected = _expected_rpa_cell_volumes(tree.cell_bounds[: int(tree.cell_count)])
+    np.testing.assert_allclose(tree.cell_volumes, expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_cell_integrals_match_constant_field(spherical_octree_context) -> None:
+    """Whole-cell spherical integrals should reduce to constant times physical volume."""
+    ds, tree, _interp = spherical_octree_context
+    const_value = 2.75
+    interp = OctreeInterpolator(tree, np.full(np.asarray(ds.points).shape[0], const_value, dtype=float))
+    np.testing.assert_allclose(
+        interp.cell_integrals(),
+        const_value * tree.cell_volumes,
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+
+def test_rpa_cell_integrals_match_radial_and_polar_vector_subset(spherical_octree_context) -> None:
+    """Whole-cell spherical integrals should be exact for fields linear in `r` and `polar`."""
+    ds, tree, _interp = spherical_octree_context
+    points = np.asarray(ds.points, dtype=float)
+    radii = np.linalg.norm(points, axis=1)
+    polar = np.arccos(np.clip(points[:, 2] / radii, -1.0, 1.0))
+    interp = OctreeInterpolator(tree, np.column_stack((radii, polar)))
+    subset = np.array([0, int(tree.cell_count // 2), int(tree.cell_count - 1)], dtype=np.int64)
+
+    subset_bounds = tree.cell_bounds[subset]
+    expected = np.column_stack(
+        (
+            _expected_rpa_radial_integrals(subset_bounds),
+            _expected_rpa_polar_integrals(subset_bounds),
+        )
+    )
+
+    np.testing.assert_allclose(interp.cell_integrals(subset), expected, atol=1.0e-12, rtol=0.0)
+    np.testing.assert_allclose(interp.cell_integrals(int(subset[0])), expected[0], atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_cell_integrals_match_polar_field_on_pole_cells(spherical_octree_context) -> None:
+    """Pole-adjacent spherical cells should integrate the `polar` nodal field exactly."""
+    ds, tree, _interp = spherical_octree_context
+    points = np.asarray(ds.points, dtype=float)
+    radii = np.linalg.norm(points, axis=1)
+    polar = np.arccos(np.clip(points[:, 2] / radii, -1.0, 1.0))
+    interp = OctreeInterpolator(tree, polar)
+    pole_ids = _rpa_pole_cell_ids(tree)
+
+    assert pole_ids.size > 0
+    expected = _expected_rpa_polar_integrals(tree.cell_bounds[pole_ids])
+    np.testing.assert_allclose(interp.cell_integrals(pole_ids), expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_cell_integrals_match_unwrapped_azimuth_field_on_seam_cells(
+    spherical_octree_context,
+) -> None:
+    """Azimuth-seam cells should integrate an unwrapped azimuth nodal field exactly."""
+    _ds, tree, _interp = spherical_octree_context
+    n_phi_edge = int(tree.leaf_shape[2]) + 1
+    azimuth_nodes = (np.arange(np.asarray(tree._points).shape[0], dtype=np.float64) % n_phi_edge) * (
+        2.0 * math.pi / float(int(tree.leaf_shape[2]))
+    )
+    interp = OctreeInterpolator(tree, azimuth_nodes)
+    seam_ids = _rpa_azimuth_seam_cell_ids(tree)
+
+    assert seam_ids.size > 0
+    expected = _expected_rpa_unwrapped_azimuth_integrals(tree.cell_bounds[seam_ids])
+    np.testing.assert_allclose(interp.cell_integrals(seam_ids), expected, atol=1.0e-12, rtol=0.0)
 
 
 def test_build_rejects_missing_corners() -> None:

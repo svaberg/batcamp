@@ -16,6 +16,19 @@ from .octree import WIDTH
 
 _TWO_PI = 2.0 * math.pi
 _RPA_LOOKUP_TOL = 1.0e-10
+_RPA_CELL_BITS = np.array(
+    [
+        [0, 1, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+        [0, 1, 1],
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
+    ],
+    dtype=np.int8,
+)
 
 
 def _attach_spherical_coord_state(
@@ -98,6 +111,96 @@ def _attach_spherical_coord_state(
     domain_bounds[:, START] = np.array([r_min, 0.0, 0.0], dtype=np.float64)
     domain_bounds[:, WIDTH] = np.array([float(r_max - r_min), float(math.pi), float(_TWO_PI)], dtype=np.float64)
     return cell_bounds, domain_bounds, float(_TWO_PI), True
+
+
+def cell_volumes_rpa(tree) -> np.ndarray:
+    """Return leaf-slot physical spherical cell volumes aligned with `tree.cell_levels`.
+
+    For ``tree_coord="rpa"``, cell volume means the physical 3D measure
+
+        dV = r^2 sin(theta) dr dtheta dphi
+
+    rather than the coordinate-space measure ``dr dtheta dphi``.
+    """
+    cached = getattr(tree, "_cell_volumes", None)
+    if cached is not None:
+        return cached
+
+    volumes = np.full(int(tree.cell_count), np.nan, dtype=np.float64)
+    valid_leaf = np.asarray(tree.cell_levels, dtype=np.int64) >= 0
+    leaf_bounds = np.asarray(tree.cell_bounds[: int(tree.cell_count)], dtype=np.float64)
+    r0 = leaf_bounds[:, AXIS0, START]
+    dr = leaf_bounds[:, AXIS0, WIDTH]
+    r1 = r0 + dr
+    theta0 = leaf_bounds[:, AXIS1, START]
+    dtheta = leaf_bounds[:, AXIS1, WIDTH]
+    theta1 = theta0 + dtheta
+    dphi = leaf_bounds[:, AXIS2, WIDTH]
+
+    # Exact physical spherical cell volume:
+    # integral dV = dphi * (cos(theta0) - cos(theta1)) * (r1^3 - r0^3) / 3
+    volumes[valid_leaf] = (
+        dphi[valid_leaf]
+        * (np.cos(theta0[valid_leaf]) - np.cos(theta1[valid_leaf]))
+        * ((r1[valid_leaf] ** 3 - r0[valid_leaf] ** 3) / 3.0)
+    )
+    tree._cell_volumes = volumes
+    return volumes
+
+
+def cell_integrals_rpa(tree, point_values: np.ndarray, leaf_ids: np.ndarray) -> np.ndarray:
+    """Return exact physical-volume integrals of the spherical trilinear interpolant.
+
+    For ``tree_coord="rpa"``, whole-cell integrals use the physical 3D measure
+
+        dV = r^2 sin(theta) dr dtheta dphi
+
+    rather than the coordinate-space measure ``dr dtheta dphi``.
+
+    If ``f_ijk`` are the 8 corner values in BATSRUS spherical corner order, the
+    exact cell integral factorizes as
+
+        integral(cell) = sum_ijk f_ijk * R_i * Theta_j * Phi_k
+
+    where ``R_i``, ``Theta_j``, and ``Phi_k`` are the exact 1D basis integrals
+    against ``r^2``, ``sin(theta)``, and ``1``.
+    """
+    leaf_bounds = np.asarray(tree.cell_bounds[leaf_ids], dtype=np.float64)
+    r0 = leaf_bounds[:, AXIS0, START]
+    delta_r = leaf_bounds[:, AXIS0, WIDTH]
+    theta0 = leaf_bounds[:, AXIS1, START]
+    delta_theta = leaf_bounds[:, AXIS1, WIDTH]
+    theta1 = theta0 + delta_theta
+    delta_phi = leaf_bounds[:, AXIS2, WIDTH]
+    corner_values = np.asarray(point_values[tree.corners[leaf_ids]], dtype=np.float64)
+
+    radial_weights = np.empty((leaf_ids.size, 2), dtype=np.float64)
+    radial_weights[:, 0] = delta_r * (
+        0.5 * r0 * r0 + (r0 * delta_r) / 3.0 + (delta_r * delta_r) / 12.0
+    )
+    radial_weights[:, 1] = delta_r * (
+        0.5 * r0 * r0 + (2.0 * r0 * delta_r) / 3.0 + (delta_r * delta_r) / 4.0
+    )
+
+    sin_span = np.sin(theta1) - np.sin(theta0)
+    polar_weights = np.empty((leaf_ids.size, 2), dtype=np.float64)
+    polar_weights[:, 0] = np.cos(theta0) - (sin_span / delta_theta)
+    polar_weights[:, 1] = (sin_span / delta_theta) - np.cos(theta1)
+
+    azimuth_weights = np.empty((leaf_ids.size, 2), dtype=np.float64)
+    azimuth_weights[:, 0] = 0.5 * delta_phi
+    azimuth_weights[:, 1] = 0.5 * delta_phi
+
+    corner_weights = np.empty((leaf_ids.size, 8), dtype=np.float64)
+    for corner_ord in range(8):
+        bit_r = int(_RPA_CELL_BITS[corner_ord, AXIS0])
+        bit_p = int(_RPA_CELL_BITS[corner_ord, AXIS1])
+        bit_a = int(_RPA_CELL_BITS[corner_ord, AXIS2])
+        corner_weights[:, corner_ord] = (
+            radial_weights[:, bit_r] * polar_weights[:, bit_p] * azimuth_weights[:, bit_a]
+        )
+
+    return np.sum(corner_values * corner_weights[:, :, None], axis=1)
 
 
 @njit(cache=True)

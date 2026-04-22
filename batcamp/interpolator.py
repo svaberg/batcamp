@@ -660,6 +660,43 @@ class OctreeInterpolator:
         )
         return out2d.reshape(shape + self._value_shape_tail)
 
+    def cell_integrals(self, cell_ids: int | np.ndarray | None = None) -> np.ndarray:
+        """Return exact whole-cell integrals of the backend trilinear interpolant.
+
+        When `cell_ids` is omitted, the output is aligned with leaf slots and
+        unused slots are filled with `NaN`. Explicit `cell_ids` must refer to
+        valid leaf cells and preserve the input shape.
+
+        `tree_coord="xyz"` integrates over Cartesian cell volume.
+        `tree_coord="rpa"` integrates over physical spherical volume
+        `dV = r^2 sin(theta) dr dtheta dphi`.
+        """
+        if self.tree.tree_coord == "xyz":
+            from .cartesian import cell_integrals_xyz
+
+            integrate_leaf_ids = cell_integrals_xyz
+        elif self.tree.tree_coord == "rpa":
+            from .spherical import cell_integrals_rpa
+
+            integrate_leaf_ids = cell_integrals_rpa
+        else:
+            raise NotImplementedError(f"cell_integrals is unsupported for tree_coord={self.tree.tree_coord!r}.")
+
+        if cell_ids is None:
+            out2d = np.full((int(self.tree.cell_count), int(self._point_values_2d.shape[1])), np.nan, dtype=np.float64)
+            valid_leaf_ids = np.flatnonzero(self.tree.cell_levels >= 0).astype(np.int64)
+            if valid_leaf_ids.size:
+                out2d[valid_leaf_ids] = integrate_leaf_ids(self.tree, self._point_values_2d, valid_leaf_ids)
+            return out2d.reshape((int(self.tree.cell_count),) + self._value_shape_tail)
+
+        leaf_ids = self.tree._normalize_leaf_cell_ids(cell_ids)
+        shape = leaf_ids.shape
+        flat_leaf_ids = np.array(leaf_ids, dtype=np.int64, order="C").reshape(-1)
+        out2d = integrate_leaf_ids(self.tree, self._point_values_2d, flat_leaf_ids)
+        if leaf_ids.ndim == 0:
+            return out2d.reshape((1,) + self._value_shape_tail)[0]
+        return out2d.reshape(shape + self._value_shape_tail)
+
     def __call__(
         self,
         *args,

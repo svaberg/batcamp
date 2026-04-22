@@ -678,24 +678,39 @@ class Octree:
         """Return leaf-row corner point ids in Tecplot/BATSRUS brick order."""
         return self._corners
 
+    def _normalize_leaf_cell_ids(self, cell_id: int | np.ndarray) -> np.ndarray:
+        """Return validated leaf-slot ids as one `int64` array."""
+        leaf_ids = np.asarray(cell_id, dtype=np.int64)
+        if np.any(leaf_ids < 0) or np.any(leaf_ids >= self._leaf_slot_count):
+            raise ValueError("Only valid leaf cell ids are supported.")
+        if np.any(self._cell_depth[leaf_ids] < 0):
+            raise ValueError("Only valid leaf cell ids are supported.")
+        return leaf_ids
+
     def cell_points(self, cell_id: int | np.ndarray) -> np.ndarray:
         """Return explicit leaf corner point coordinates with shape `(..., 8, 3)`."""
-        leaf_ids = np.asarray(cell_id, dtype=np.int64)
+        leaf_ids = self._normalize_leaf_cell_ids(cell_id)
         if leaf_ids.ndim == 0:
-            leaf_id = int(leaf_ids)
-            if leaf_id < 0 or leaf_id >= self._leaf_slot_count or self._cell_depth[leaf_id] < 0:
-                raise ValueError("cell_points only supports valid leaf cell ids.")
-            return self._points[self._corners[leaf_id]]
-        if np.any(leaf_ids < 0) or np.any(leaf_ids >= self._leaf_slot_count):
-            raise ValueError("cell_points only supports valid leaf cell ids.")
-        if np.any(self._cell_depth[leaf_ids] < 0):
-            raise ValueError("cell_points only supports valid leaf cell ids.")
+            return self._points[self._corners[int(leaf_ids)]]
         return self._points[self._corners[leaf_ids]]
 
     @property
     def cell_bounds(self) -> np.ndarray:
         """Return packed `(n_cells, 3, 2)` start/width bounds for rebuilt cells."""
         return self._cell_bounds
+
+    @property
+    def cell_volumes(self) -> np.ndarray:
+        """Return leaf-slot cell volumes aligned with `cell_levels`."""
+        if self.tree_coord == "xyz":
+            from .cartesian import cell_volumes_xyz
+
+            return cell_volumes_xyz(self)
+        if self.tree_coord == "rpa":
+            from .spherical import cell_volumes_rpa
+
+            return cell_volumes_rpa(self)
+        raise NotImplementedError(f"cell_volumes is unsupported for tree_coord={self.tree_coord!r}.")
 
     @property
     def packed_domain_bounds(self) -> np.ndarray:
