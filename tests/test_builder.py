@@ -385,6 +385,29 @@ def _rpa_azimuth_seam_cell_ids(tree: Octree) -> np.ndarray:
     return np.flatnonzero(np.isclose(phi0, 0.0, atol=1.0e-12) | np.isclose(phi1, 2.0 * math.pi, atol=1.0e-12))
 
 
+def _expected_rpa_box_volume(lower: np.ndarray, upper: np.ndarray) -> float:
+    """Return exact physical volume of one spherical native box."""
+    lo = np.asarray(lower, dtype=float)
+    hi = np.asarray(upper, dtype=float)
+    return float((hi[2] - lo[2]) * (np.cos(lo[1]) - np.cos(hi[1])) * ((hi[0] ** 3 - lo[0] ** 3) / 3.0))
+
+
+def _expected_rpa_box_radial_integral(lower: np.ndarray, upper: np.ndarray) -> float:
+    """Return exact physical-volume integral of `f(r, polar, azimuth)=r` over one spherical native box."""
+    lo = np.asarray(lower, dtype=float)
+    hi = np.asarray(upper, dtype=float)
+    return float((hi[2] - lo[2]) * (np.cos(lo[1]) - np.cos(hi[1])) * ((hi[0] ** 4 - lo[0] ** 4) / 4.0))
+
+
+def _expected_rpa_box_polar_integral(lower: np.ndarray, upper: np.ndarray) -> float:
+    """Return exact physical-volume integral of `f(r, polar, azimuth)=polar` over one spherical native box."""
+    lo = np.asarray(lower, dtype=float)
+    hi = np.asarray(upper, dtype=float)
+    radial_factor = (hi[0] ** 3 - lo[0] ** 3) / 3.0
+    polar_factor = (np.sin(hi[1]) - hi[1] * np.cos(hi[1])) - (np.sin(lo[1]) - lo[1] * np.cos(lo[1]))
+    return float((hi[2] - lo[2]) * radial_factor * polar_factor)
+
+
 @pytest.fixture(scope="module")
 def cartesian_octree_context() -> tuple[_FakeDataset, Octree, OctreeInterpolator]:
     """Build one reusable Cartesian octree/interpolator context for xyz-path tests."""
@@ -489,6 +512,31 @@ def test_xyz_cell_integrals_match_linear_vector_subset(cartesian_octree_context)
     np.testing.assert_allclose(interp.cell_integrals(int(subset[0])), expected[0], atol=1.0e-12, rtol=0.0)
 
 
+def test_xyz_integrate_box_matches_constant_field(cartesian_octree_context) -> None:
+    """Cartesian box integrals should reduce to constant times box volume."""
+    ds, tree, _interp = cartesian_octree_context
+    const_value = -1.75
+    interp = OctreeInterpolator(tree, np.full(np.asarray(ds.points).shape[0], const_value, dtype=float))
+    lower = np.array([-1.25, -0.8, -0.45], dtype=float)
+    upper = np.array([1.5, 0.9, 0.7], dtype=float)
+    expected = const_value * float(np.prod(upper - lower))
+    np.testing.assert_allclose(interp.integrate_box(lower, upper), expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_xyz_integrate_box_matches_linear_vector_field(cartesian_octree_context) -> None:
+    """Cartesian box integrals should be exact for linear vector-valued data."""
+    ds, tree, _interp = cartesian_octree_context
+    scalar = np.asarray(ds["Scalar"], dtype=float)
+    interp = OctreeInterpolator(tree, np.column_stack((scalar, 2.0 * scalar + 1.0)))
+    lower = np.array([-1.3, -0.6, -0.3], dtype=float)
+    upper = np.array([1.1, 1.0, 0.95], dtype=float)
+    center = 0.5 * (lower + upper)
+    volume = float(np.prod(upper - lower))
+    scalar_center = 1.2 * float(center[0]) - 0.3 * float(center[1]) + 0.8 * float(center[2]) + 0.5
+    expected = np.array([volume * scalar_center, volume * (2.0 * scalar_center + 1.0)], dtype=float)
+    np.testing.assert_allclose(interp.integrate_box(lower, upper), expected, atol=1.0e-12, rtol=0.0)
+
+
 def test_rpa_cell_volumes_match_physical_spherical_formula(spherical_octree_context) -> None:
     """Spherical leaf volumes should match the exact physical shell-sector formula."""
     _ds, tree, _interp = spherical_octree_context
@@ -559,6 +607,36 @@ def test_rpa_cell_integrals_match_unwrapped_azimuth_field_on_seam_cells(
     assert seam_ids.size > 0
     expected = _expected_rpa_unwrapped_azimuth_integrals(tree.cell_bounds[seam_ids])
     np.testing.assert_allclose(interp.cell_integrals(seam_ids), expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_integrate_box_matches_constant_field(spherical_octree_context) -> None:
+    """Spherical box integrals should reduce to constant times physical box volume."""
+    ds, tree, _interp = spherical_octree_context
+    const_value = 4.25
+    interp = OctreeInterpolator(tree, np.full(np.asarray(ds.points).shape[0], const_value, dtype=float))
+    lower = np.array([1.2, 0.0, 0.0], dtype=float)
+    upper = np.array([2.6, 0.5 * math.pi, 2.0 * math.pi], dtype=float)
+    expected = const_value * _expected_rpa_box_volume(lower, upper)
+    np.testing.assert_allclose(interp.integrate_box(lower, upper), expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_integrate_box_matches_radial_and_polar_vector_field(spherical_octree_context) -> None:
+    """Spherical box integrals should be exact for vector-valued `r` and `polar` fields."""
+    ds, tree, _interp = spherical_octree_context
+    points = np.asarray(ds.points, dtype=float)
+    radii = np.linalg.norm(points, axis=1)
+    polar = np.arccos(np.clip(points[:, 2] / radii, -1.0, 1.0))
+    interp = OctreeInterpolator(tree, np.column_stack((radii, polar)))
+    lower = np.array([1.25, 0.25, 0.1], dtype=float)
+    upper = np.array([2.75, 2.4, 5.2], dtype=float)
+    expected = np.array(
+        [
+            _expected_rpa_box_radial_integral(lower, upper),
+            _expected_rpa_box_polar_integral(lower, upper),
+        ],
+        dtype=float,
+    )
+    np.testing.assert_allclose(interp.integrate_box(lower, upper), expected, atol=1.0e-12, rtol=0.0)
 
 
 def test_build_rejects_missing_corners() -> None:

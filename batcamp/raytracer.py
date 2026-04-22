@@ -8,7 +8,7 @@ crossing paths into `TracedRays`, and provides the direct midpoint/trilinear
 image accumulators built on those paths.
 
 The exact event logic for leaf entry, exit, and neighbor continuation lives in
-the coordinate-specific crossing-trace modules. This file owns the public
+the coordinate-specific raytracer backend modules. This file owns the public
 tracer API, packed segment representation, chunked scratch-buffer management,
 and status reporting for failed rays.
 """
@@ -23,9 +23,9 @@ import numpy as np
 from numba import njit
 from numba import prange
 
-from . import cartesian_crossing_trace
 from . import interpolator as interpolator_module
-from . import spherical_crossing_trace
+from . import raytracer_cartesian
+from . import raytracer_spherical
 from .octree import Octree
 
 logger = logging.getLogger(__name__)
@@ -342,15 +342,11 @@ class OctreeRayTracer:
         if not isinstance(tree, Octree):
             raise TypeError("OctreeRayTracer requires a built Octree as its first argument.")
         tree_coord = str(tree.tree_coord)
-        if tree_coord == "xyz":
-            trace_module = cartesian_crossing_trace
-        elif tree_coord == "rpa":
-            trace_module = spherical_crossing_trace
-        else:
+        if tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError("OctreeRayTracer currently supports only tree_coord='xyz' or 'rpa'.")
         self.tree = tree
-        self.trace_module = trace_module
-        self._crossing_buffer_size = int(trace_module.DEFAULT_CROSSING_BUFFER_SIZE)
+        self._raytracer_module = raytracer_cartesian if tree_coord == "xyz" else raytracer_spherical
+        self._crossing_buffer_size = int(self._raytracer_module.DEFAULT_CROSSING_BUFFER_SIZE)
         logger.info(
             "OctreeRayTracer.__init__: coord=%s crossing_buffer_size=%d",
             tree_coord,
@@ -382,20 +378,20 @@ class OctreeRayTracer:
         """
         chunk_n_rays = int(origins.shape[0])
         crossing_capacity = int(self._crossing_buffer_size)
-        buffer_overflow = int(self.trace_module.TRACE_BUFFER_OVERFLOW)
+        buffer_overflow = int(self._raytracer_module.TRACE_BUFFER_OVERFLOW)
         logger.debug(
             "_trace_chunk_to_scratch: coord=%s n_rays=%d crossing_buffer_size=%d default=%d",
             self.tree.tree_coord,
             chunk_n_rays,
             crossing_capacity,
-            int(self.trace_module.DEFAULT_CROSSING_BUFFER_SIZE),
+            int(self._raytracer_module.DEFAULT_CROSSING_BUFFER_SIZE),
         )
         while True:
             cell_counts = np.empty(chunk_n_rays, dtype=np.int64)
             time_counts = np.empty(chunk_n_rays, dtype=np.int64)
             cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
             time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
-            self.trace_module.trace_rays(
+            self._raytracer_module.trace_rays(
                 self.tree.root_cell_ids,
                 self.tree.cell_child,
                 self.tree.cell_bounds,
@@ -562,7 +558,7 @@ class OctreeRayTracer:
             directions=geometry_directions,
         )
 
-    def _midpoint_image(
+    def accumulate_chunked(
         self,
         interpolator,
         origins: np.ndarray,
@@ -571,136 +567,19 @@ class OctreeRayTracer:
         t_min: float,
         t_max: float,
         ray_shape: tuple[int, ...],
-        geometry_origins: np.ndarray,
-        geometry_directions: np.ndarray,
+        accumulator,
+        label: str,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and accumulate midpoint samples without packing segments.
-
-        Args:
-            interpolator (const): Interpolator bound to the tracer octree.
-            origins (const): Flat origin array with shape `(n_rays, 3)`.
-            directions (const): Flat direction array with shape `(n_rays, 3)`.
-            t_min (const): Lower parameter clip.
-            t_max (const): Upper parameter clip.
-            ray_shape (const): Requested output ray-grid shape.
-            geometry_origins (const): Ray origins in the original user-facing shape.
-            geometry_directions (const): Ray directions in the original user-facing shape.
-
-        Returns:
-            `(image, counts)` with one midpoint-sampled image and per-ray segment counts.
-        """
+        """Trace rays and accumulate one backend-provided chunked integral image."""
         if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
-            raise TypeError("midpoint_image requires one OctreeInterpolator.")
+            raise TypeError(f"{label} requires one OctreeInterpolator.")
         if interpolator.tree is not self.tree:
             raise ValueError("interpolator.tree must match the tracer octree.")
-        logger.debug(
-            "_midpoint_image: coord=%s ray_shape=%s",
-            self.tree.tree_coord,
-            tuple(int(v) for v in ray_shape),
-        )
-        if str(self.tree.tree_coord) != "xyz":
-            # Only the Cartesian backend has a direct midpoint accumulator.
-            # Spherical midpoint rendering reuses the packed-segment path.
-            logger.debug("_midpoint_image: using packed-segment render path for coord=%s", self.tree.tree_coord)
-            segments = self._trace_segments(
-                origins,
-                directions,
-                t_min=t_min,
-                t_max=t_max,
-                ray_shape=ray_shape,
-                geometry_origins=geometry_origins,
-                geometry_directions=geometry_directions,
-            )
-            image = render_midpoint_image(
-                interpolator,
-                np.asarray(origins, dtype=np.float64).reshape(tuple(ray_shape) + (3,)),
-                np.asarray(directions, dtype=np.float64).reshape(tuple(ray_shape) + (3,)),
-                segments,
-            )
-            counts = (segments.ray_offsets[1:] - segments.ray_offsets[:-1]).reshape(tuple(ray_shape))
-            return image, counts
-
         o_flat = np.asarray(origins, dtype=np.float64)
         d_flat = np.asarray(directions, dtype=np.float64)
         n_rays = int(o_flat.shape[0])
         n_components = int(interpolator.n_components)
-        logger.debug("_midpoint_image: using cartesian chunk accumulation for %d rays", n_rays)
-        accum = np.zeros((n_rays, n_components), dtype=np.float64)
-        cell_counts_out = np.zeros(n_rays, dtype=np.int64)
-        ray_status_all = np.full(n_rays, RAY_STATUS_OK, dtype=np.int64)
-        for chunk_lo in range(0, n_rays, RAY_CHUNK_SIZE):
-            chunk_hi = min(chunk_lo + RAY_CHUNK_SIZE, n_rays)
-            chunk_origins = o_flat[chunk_lo:chunk_hi]
-            chunk_directions = d_flat[chunk_lo:chunk_hi]
-            cell_counts, _time_counts, cell_buffer, time_buffer, ray_status = self._trace_chunk_to_scratch(
-                chunk_origins,
-                chunk_directions,
-                t_min=t_min,
-                t_max=t_max,
-            )
-            ray_status_all[chunk_lo:chunk_hi] = ray_status
-            cell_counts_out[chunk_lo:chunk_hi] = cell_counts
-            accum[chunk_lo:chunk_hi] = interpolator_module.accumulate_midpoint_cells_xyz(
-                chunk_origins,
-                chunk_directions,
-                cell_counts,
-                cell_buffer,
-                time_buffer,
-                self.tree.cell_bounds,
-                self.tree.corners,
-                interpolator.point_values_2d,
-            )
-        _log_ray_status("midpoint_image", self.tree.tree_coord, n_rays, ray_status_all)
-        return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
-
-    def _trilinear_image(
-        self,
-        interpolator,
-        origins: np.ndarray,
-        directions: np.ndarray,
-        *,
-        t_min: float,
-        t_max: float,
-        ray_shape: tuple[int, ...],
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Trace rays and integrate trilinear cell interpolants without packing segments.
-
-        Args:
-            interpolator (const): Interpolator bound to the tracer octree.
-            origins (const): Flat origin array with shape `(n_rays, 3)`.
-            directions (const): Flat direction array with shape `(n_rays, 3)`.
-            t_min (const): Lower parameter clip.
-            t_max (const): Upper parameter clip.
-            ray_shape (const): Requested output ray-grid shape.
-
-        Returns:
-            `(image, counts)` with one integrated image and per-ray segment counts.
-        """
-        if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
-            raise TypeError("trilinear_image requires one OctreeInterpolator.")
-        if interpolator.tree is not self.tree:
-            raise ValueError("interpolator.tree must match the tracer octree.")
-        tree_coord = str(self.tree.tree_coord)
-        logger.debug(
-            "_trilinear_image: coord=%s ray_shape=%s",
-            tree_coord,
-            tuple(int(v) for v in ray_shape),
-        )
-        if tree_coord == "xyz":
-            accumulator = interpolator_module.accumulate_exact_cells_xyz
-        elif tree_coord == "rpa":
-            accumulator = interpolator_module.accumulate_trilinear_cells_rpa
-        else:
-            raise NotImplementedError(
-                "OctreeRayTracer currently supports only "
-                f"tree_coord='xyz' or 'rpa', got {self.tree.tree_coord!r}."
-            )
-
-        o_flat = np.asarray(origins, dtype=np.float64)
-        d_flat = np.asarray(directions, dtype=np.float64)
-        n_rays = int(o_flat.shape[0])
-        n_components = int(interpolator.n_components)
-        logger.debug("_trilinear_image: using %s for %d rays", accumulator.__name__, n_rays)
+        logger.debug("%s: using %s for %d rays", label, accumulator.__name__, n_rays)
         accum = np.zeros((n_rays, n_components), dtype=np.float64)
         cell_counts_out = np.zeros(n_rays, dtype=np.int64)
         ray_status_all = np.full(n_rays, RAY_STATUS_OK, dtype=np.int64)
@@ -726,8 +605,48 @@ class OctreeRayTracer:
                 self.tree.corners,
                 interpolator.point_values_2d,
             )
-        _log_ray_status("trilinear_image", tree_coord, n_rays, ray_status_all)
+        _log_ray_status(label, self.tree.tree_coord, n_rays, ray_status_all)
         return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))
+
+    def render_midpoint_via_segments(
+        self,
+        interpolator,
+        origins: np.ndarray,
+        directions: np.ndarray,
+        *,
+        t_min: float,
+        t_max: float,
+        ray_shape: tuple[int, ...],
+        geometry_origins: np.ndarray,
+        geometry_directions: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Trace rays, pack segments, and render midpoint samples from those packed segments."""
+        if not isinstance(interpolator, interpolator_module.OctreeInterpolator):
+            raise TypeError("midpoint_image requires one OctreeInterpolator.")
+        if interpolator.tree is not self.tree:
+            raise ValueError("interpolator.tree must match the tracer octree.")
+        logger.debug(
+            "_render_midpoint_via_segments: coord=%s ray_shape=%s",
+            self.tree.tree_coord,
+            tuple(int(v) for v in ray_shape),
+        )
+        segments = self._trace_segments(
+            origins,
+            directions,
+            t_min=t_min,
+            t_max=t_max,
+            ray_shape=ray_shape,
+            geometry_origins=geometry_origins,
+            geometry_directions=geometry_directions,
+        )
+        image = render_midpoint_image(
+            interpolator,
+            np.asarray(origins, dtype=np.float64).reshape(tuple(ray_shape) + (3,)),
+            np.asarray(directions, dtype=np.float64).reshape(tuple(ray_shape) + (3,)),
+            segments,
+        )
+        counts = (segments.ray_offsets[1:] - segments.ray_offsets[:-1]).reshape(tuple(ray_shape))
+        return image, counts
 
     def trace(
         self,
@@ -801,7 +720,8 @@ class OctreeRayTracer:
         origins_array = np.asarray(origins, dtype=np.float64, order="C")
         directions_array = np.asarray(directions, dtype=np.float64, order="C")
         o_flat, d_flat, ray_shape = prepare_rays(origins_array, directions_array)
-        return self._midpoint_image(
+        return self._raytracer_module.midpoint_image(
+            self,
             interpolator,
             o_flat,
             d_flat,
@@ -842,7 +762,8 @@ class OctreeRayTracer:
         if t_hi < t_lo:
             raise ValueError("t_max must be greater than or equal to t_min.")
         o_flat, d_flat, ray_shape = prepare_rays(origins, directions)
-        return self._trilinear_image(
+        return self._raytracer_module.trilinear_image(
+            self,
             interpolator,
             o_flat,
             d_flat,

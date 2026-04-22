@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
-"""Cartesian coordinate support for octree lookup.
-
-Important modeling assumption for ``tree_coord="xyz"``:
-leaf cells are treated as axis-aligned Cartesian slabs from
-per-cell corner min/max values. Lookup/interpolation kernels in the
-Cartesian backend are exact under this axis-aligned representation.
-"""
+"""Cartesian-specific octree geometry and lookup helpers."""
 
 from __future__ import annotations
+
 import numpy as np
 from numba import njit
 from numba import prange
 
-from .octree import AXIS0
-from .octree import AXIS1
-from .octree import AXIS2
-from .octree import START
-from .octree import WIDTH
+from .octree import TREE_COORD_AXIS0
+from .octree import TREE_COORD_AXIS1
+from .octree import TREE_COORD_AXIS2
+from .octree import BOUNDS_START_SLOT
+from .octree import BOUNDS_WIDTH_SLOT
 
 
-def _attach_cartesian_coord_state(
+def attach_state(
     tree,
     points: np.ndarray,
     corners: np.ndarray,
@@ -60,60 +55,53 @@ def _attach_cartesian_coord_state(
             raise ValueError(
                 "Cartesian coord state requires separable axis-aligned slabs with resolvable line coordinates."
             )
-        cell_bounds[occupied_ids, axis, START] = cell_start
-        cell_bounds[occupied_ids, axis, WIDTH] = cell_stop - cell_start
+        cell_bounds[occupied_ids, axis, BOUNDS_START_SLOT] = cell_start
+        cell_bounds[occupied_ids, axis, BOUNDS_WIDTH_SLOT] = cell_stop - cell_start
 
     domain_bounds = np.empty((3, 2), dtype=np.float64)
-    domain_bounds[:, START] = xyz_min
-    domain_bounds[:, WIDTH] = xyz_max - xyz_min
+    domain_bounds[:, BOUNDS_START_SLOT] = xyz_min
+    domain_bounds[:, BOUNDS_WIDTH_SLOT] = xyz_max - xyz_min
     return cell_bounds, domain_bounds, 0.0, False
 
 
-def cell_volumes_xyz(tree) -> np.ndarray:
+def cell_volumes(tree) -> np.ndarray:
     """Return leaf-slot Cartesian cell volumes aligned with `tree.cell_levels`."""
-    cached = getattr(tree, "_cell_volumes", None)
-    if cached is not None:
-        return cached
-
     volumes = np.full(int(tree.cell_count), np.nan, dtype=np.float64)
     valid_leaf = np.asarray(tree.cell_levels, dtype=np.int64) >= 0
-    leaf_widths = np.asarray(tree.cell_bounds[: int(tree.cell_count), :, WIDTH], dtype=np.float64)
-    delta_x = leaf_widths[:, AXIS0]
-    delta_y = leaf_widths[:, AXIS1]
-    delta_z = leaf_widths[:, AXIS2]
+    leaf_widths = np.asarray(tree.cell_bounds[: int(tree.cell_count), :, BOUNDS_WIDTH_SLOT], dtype=np.float64)
+    delta_x = leaf_widths[:, TREE_COORD_AXIS0]
+    delta_y = leaf_widths[:, TREE_COORD_AXIS1]
+    delta_z = leaf_widths[:, TREE_COORD_AXIS2]
     volumes[valid_leaf] = delta_x[valid_leaf] * delta_y[valid_leaf] * delta_z[valid_leaf]
-    tree._cell_volumes = volumes
     return volumes
 
 
-def cell_integrals_xyz(tree, point_values: np.ndarray, leaf_ids: np.ndarray) -> np.ndarray:
-    """Return exact whole-cell integrals of the Cartesian trilinear interpolant.
-
-    For ``tree_coord="xyz"``, cells are axis-aligned boxes, so the exact
-    whole-cell trilinear integral is
-
-        integral = (dx * dy * dz) * mean(corner values)
-    """
-    leaf_bounds = np.asarray(tree.cell_bounds[leaf_ids], dtype=np.float64)
-    delta_x = leaf_bounds[:, AXIS0, WIDTH]
-    delta_y = leaf_bounds[:, AXIS1, WIDTH]
-    delta_z = leaf_bounds[:, AXIS2, WIDTH]
-    corner_values = np.asarray(point_values[tree.corners[leaf_ids]], dtype=np.float64)
-    return (delta_x * delta_y * delta_z)[:, None] * np.mean(corner_values, axis=1)
+def lookup_points(tree, queries: np.ndarray, coord: str) -> np.ndarray:
+    """Resolve one batch of Cartesian queries to leaf cell ids."""
+    if coord != "xyz":
+        raise ValueError("Cartesian lookup supports only coord='xyz'.")
+    return find_cells(
+        queries,
+        tree.cell_child,
+        tree.root_cell_ids,
+        tree.cell_parent,
+        tree.cell_bounds,
+        tree.packed_domain_bounds,
+    )
 
 
 @njit(cache=True)
-def _contains_box_xyz(
-    q: np.ndarray,
+def _contains_box(
+    query_point: np.ndarray,
     bounds: np.ndarray,
     domain_bounds: np.ndarray,
 ) -> bool:
     """Return whether one Cartesian query lies in one exact half-open slab box."""
     for axis in range(3):
-        value = float(q[axis])
-        start = float(bounds[axis, START])
-        stop = start + float(bounds[axis, WIDTH])
-        domain_start = float(domain_bounds[axis, START])
+        value = float(query_point[axis])
+        start = float(bounds[axis, BOUNDS_START_SLOT])
+        stop = start + float(bounds[axis, BOUNDS_WIDTH_SLOT])
+        domain_start = float(domain_bounds[axis, BOUNDS_START_SLOT])
         if start == domain_start:
             if value < start or value > stop:
                 return False
@@ -124,7 +112,7 @@ def _contains_box_xyz(
 
 
 @njit(cache=True, parallel=True)
-def _find_cells_xyz(
+def find_cells(
     queries: np.ndarray,
     cell_child: np.ndarray,
     root_cell_ids: np.ndarray,
@@ -142,20 +130,24 @@ def _find_cells_xyz(
         end = min(n_query, start + chunk_size)
         hint_cell_id = -1
         for i in range(start, end):
-            q = queries[i]
-            if not (np.isfinite(q[AXIS0]) and np.isfinite(q[AXIS1]) and np.isfinite(q[AXIS2])):
+            query_point = queries[i]
+            if not (
+                np.isfinite(query_point[TREE_COORD_AXIS0])
+                and np.isfinite(query_point[TREE_COORD_AXIS1])
+                and np.isfinite(query_point[TREE_COORD_AXIS2])
+            ):
                 cell_id = -1
-            elif not _contains_box_xyz(q, domain_bounds, domain_bounds):
+            elif not _contains_box(query_point, domain_bounds, domain_bounds):
                 cell_id = -1
             else:
                 current = int(hint_cell_id)
-                while current >= 0 and not _contains_box_xyz(q, cell_bounds[current], domain_bounds):
+                while current >= 0 and not _contains_box(query_point, cell_bounds[current], domain_bounds):
                     current = int(cell_parent[current])
 
                 if current < 0:
                     for root_pos in range(int(root_cell_ids.shape[0])):
                         root_cell_id = int(root_cell_ids[root_pos])
-                        if _contains_box_xyz(q, cell_bounds[root_cell_id], domain_bounds):
+                        if _contains_box(query_point, cell_bounds[root_cell_id], domain_bounds):
                             current = root_cell_id
                             break
                 if current < 0:
@@ -167,7 +159,7 @@ def _find_cells_xyz(
                             child_id = int(cell_child[current, child_ord])
                             if child_id < 0:
                                 continue
-                            if _contains_box_xyz(q, cell_bounds[child_id], domain_bounds):
+                            if _contains_box(query_point, cell_bounds[child_id], domain_bounds):
                                 next_cell_id = child_id
                                 break
                         if next_cell_id < 0:

@@ -9,7 +9,7 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
-from batcamp import cartesian_crossing_trace
+from batcamp import raytracer_cartesian
 from batcamp import render_midpoint_image
 from fake_dataset import build_cartesian_hex_mesh
 from sample_data_helper import data_file
@@ -660,12 +660,12 @@ def test_trace_broadcasts_one_direction_vector_over_batched_origins() -> None:
 
 def test_trace_grows_chunk_event_capacity_when_the_initial_capacity_is_too_small(monkeypatch, caplog) -> None:
     tree = _build_long_x_tree()
-    monkeypatch.setattr(cartesian_crossing_trace, "DEFAULT_CROSSING_BUFFER_SIZE", 32)
+    monkeypatch.setattr(raytracer_cartesian, "DEFAULT_CROSSING_BUFFER_SIZE", 32)
     tracer = OctreeRayTracer(tree)
 
     origin = np.array([-1.0, 0.5, 0.5], dtype=float)
     direction = np.array([1.0, 0.0, 0.0], dtype=float)
-    with caplog.at_level(logging.DEBUG, logger="batcamp.raytracing"):
+    with caplog.at_level(logging.DEBUG, logger="batcamp.raytracer"):
         segments = tracer.trace(origin, direction)
 
     positive_cell_ids, positive_times = _positive_trace(*_ray_slice(segments, 0))
@@ -804,7 +804,7 @@ def test_trace_skips_failed_rays_with_empty_segments(monkeypatch) -> None:
         cell_counts[1] = -2
         time_counts[1] = -2
 
-    monkeypatch.setattr(tracer.trace_module, "trace_rays", fake_trace_rays)
+    monkeypatch.setattr(tracer._raytracer_module, "trace_rays", fake_trace_rays)
 
     origins = np.array([[-2.0, -0.3, -0.2], [-2.0, -0.3, -0.2]], dtype=float)
     directions = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=float)

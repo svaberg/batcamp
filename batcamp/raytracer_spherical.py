@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Exact spherical leaf-crossing kernels for octree rays.
+"""Spherical raytracer backend.
 
-This module is the low-level spherical traversal backend used by the public ray
-tracer. Rays are still straight in Cartesian space, but the leaf ownership and
-face events are expressed in spherical `(r, polar, azimuth)` coordinates. The
-kernels therefore solve analytic intersections with spherical coordinate
-surfaces, convert those events into exact half-open leaf ownership decisions,
-and walk the face/subface neighbor graph through multiface crossings.
+This module is the spherical backend used by the public ray tracer. Rays are
+still straight in Cartesian space, but the leaf ownership and face events are
+expressed in spherical `(r, polar, azimuth)` coordinates. The kernels
+therefore solve analytic intersections with spherical coordinate surfaces,
+convert those events into exact half-open leaf ownership decisions, walk the
+face/subface neighbor graph through multiface crossings, and provide the
+spherical midpoint/trilinear accumulation hooks built on those traced paths.
 
 The tricky parts specific to spherical traversal live here: azimuth periodicity,
 ownership at shared boundaries, and transfers through polar-axis cells where
@@ -22,12 +23,13 @@ import numpy as np
 from numba import njit
 from numba import prange
 
-from .octree import START
-from .octree import WIDTH
-from .octree import _FACE_AXIS
-from .octree import _FACE_SIDE
-from .octree import _FACE_TANGENTIAL_AXES
-from .spherical import xyz_to_rpa_components
+from . import interpolator_spherical
+from .octree import BOUNDS_START_SLOT
+from .octree import BOUNDS_WIDTH_SLOT
+from .octree import _FACE_ID_TO_AXIS
+from .octree import _FACE_ID_TO_SIDE
+from .octree import _FACE_ID_TO_TANGENTIAL_AXES
+from .octree_spherical import xyz_to_rpa_components
 
 # Start with one small per-ray scratch row; the public tracer grows this
 # lazily on overflow so short/common traces do not pay for a large default.
@@ -339,9 +341,9 @@ def _face_roots(
         Number of written roots.
     """
     bounds = cell_bounds[int(cell_id)]
-    axis = int(_FACE_AXIS[int(face_id)])
-    side = int(_FACE_SIDE[int(face_id)])
-    face_value = float(bounds[axis, START]) + float(side) * float(bounds[axis, WIDTH])
+    axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+    side = int(_FACE_ID_TO_SIDE[int(face_id)])
+    face_value = float(bounds[axis, BOUNDS_START_SLOT]) + float(side) * float(bounds[axis, BOUNDS_WIDTH_SLOT])
     return _rpa_coordinate_roots(origin_xyz, direction_xyz, axis, face_value, roots_out)
 
 
@@ -437,11 +439,11 @@ def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.n
     """
     for axis in range(3):
         value = float(query_rpa[axis])
-        start = float(bounds[axis, START])
-        width = float(bounds[axis, WIDTH])
+        start = float(bounds[axis, BOUNDS_START_SLOT])
+        width = float(bounds[axis, BOUNDS_WIDTH_SLOT])
         stop = start + width
-        domain_start = float(domain_bounds[axis, START])
-        domain_width = float(domain_bounds[axis, WIDTH])
+        domain_start = float(domain_bounds[axis, BOUNDS_START_SLOT])
+        domain_width = float(domain_bounds[axis, BOUNDS_WIDTH_SLOT])
         if int(axis) == 2:
             # Azimuth ownership is periodic, so compare the query and the
             # interval after unwrapping both around the query itself.
@@ -490,8 +492,8 @@ def _axis_transfer_time(
         Next axis-transfer time, or `math.inf` when no pole-axis transfer exists.
     """
     bounds = cell_bounds[int(cell_id)]
-    polar_start = float(bounds[1, START])
-    polar_stop = float(bounds[1, START] + bounds[1, WIDTH])
+    polar_start = float(bounds[1, BOUNDS_START_SLOT])
+    polar_stop = float(bounds[1, BOUNDS_START_SLOT] + bounds[1, BOUNDS_WIDTH_SLOT])
     touches_north_pole = _times_close(polar_start, 0.0)
     touches_south_pole = _times_close(polar_stop, math.pi)
     if not touches_north_pole and not touches_south_pole:
@@ -594,8 +596,8 @@ def _axis_transfer_destination_cell(
         if not is_leaf:
             continue
         bounds = cell_bounds[int(cell_id)]
-        r_start = float(bounds[0, START])
-        r_stop = r_start + float(bounds[0, WIDTH])
+        r_start = float(bounds[0, BOUNDS_START_SLOT])
+        r_stop = r_start + float(bounds[0, BOUNDS_WIDTH_SLOT])
         if radial_outward:
             if r_crossing < r_start and not _times_close(r_crossing, r_start):
                 continue
@@ -607,8 +609,8 @@ def _axis_transfer_destination_cell(
             if r_crossing > r_stop and not _times_close(r_crossing, r_stop):
                 continue
 
-        p_start = float(bounds[1, START])
-        p_stop = p_start + float(bounds[1, WIDTH])
+        p_start = float(bounds[1, BOUNDS_START_SLOT])
+        p_stop = p_start + float(bounds[1, BOUNDS_WIDTH_SLOT])
         if north_pole:
             if not _times_close(p_start, 0.0):
                 continue
@@ -616,8 +618,8 @@ def _axis_transfer_destination_cell(
             if not _times_close(p_stop, math.pi):
                 continue
 
-        a_start = float(bounds[2, START])
-        a_width = float(bounds[2, WIDTH])
+        a_start = float(bounds[2, BOUNDS_START_SLOT])
+        a_width = float(bounds[2, BOUNDS_WIDTH_SLOT])
         a_start_u, a_stop_u = _axis_interval_unwrapped(2, a_start, a_width, azimuth_after)
         a_value_u = _axis_value_unwrapped(2, azimuth_after, azimuth_after)
         tol = _TIME_ATOL + _TIME_RTOL * max(abs(a_start_u), abs(a_stop_u), abs(a_value_u), 1.0)
@@ -626,7 +628,7 @@ def _axis_transfer_destination_cell(
         if a_value_u > a_stop_u + tol or _times_close(a_value_u, a_stop_u):
             continue
 
-        p_width = float(bounds[1, WIDTH])
+        p_width = float(bounds[1, BOUNDS_WIDTH_SLOT])
         if matched_cell < 0 or p_width < matched_p_width:
             matched_cell = int(cell_id)
             matched_p_width = p_width
@@ -699,7 +701,7 @@ def find_domain_interval(
     Returns:
         `(has_interval, t_enter, t_exit)`.
     """
-    r_max = float(domain_bounds[0, START] + domain_bounds[0, WIDTH])
+    r_max = float(domain_bounds[0, BOUNDS_START_SLOT] + domain_bounds[0, BOUNDS_WIDTH_SLOT])
     roots = np.empty(2, dtype=np.float64)
     n_root = _sphere_roots(origin_xyz, direction_xyz, r_max, roots)
     if n_root < 2:
@@ -801,8 +803,8 @@ def find_exit(
         if math.isinf(candidate_time):
             continue
         _fill_xyz_at_time(origin_xyz, direction_xyz, float(candidate_time), candidate_xyz)
-        axis = int(_FACE_AXIS[int(face_id)])
-        side = int(_FACE_SIDE[int(face_id)])
+        axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+        side = int(_FACE_ID_TO_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(candidate_xyz, direction_xyz, axis)
         # Spherical coordinate surfaces can be met tangentially. Keep only roots
         # where the local coordinate velocity points out through this face.
@@ -864,7 +866,7 @@ def _fill_active_face_state(
     current_face_order = -1
     for order in range(n_active_face):
         face_id = int(active_faces[order])
-        active_face_by_axis[int(_FACE_AXIS[face_id])] = face_id
+        active_face_by_axis[int(_FACE_ID_TO_AXIS[face_id])] = face_id
         active_face_order[face_id] = int(order)
         if face_id == int(current_face_id):
             current_face_order = int(order)
@@ -890,18 +892,18 @@ def is_on_face(
         Whether the crossing lies on that face carrier.
     """
     bounds = cell_bounds[int(cell_id)]
-    axis = int(_FACE_AXIS[int(face_id)])
-    width = float(bounds[axis, WIDTH])
-    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, START]), width, float(crossing_xyz[axis]))
+    axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+    width = float(bounds[axis, BOUNDS_WIDTH_SLOT])
+    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, BOUNDS_START_SLOT]), width, float(crossing_xyz[axis]))
     value_u = _axis_value_unwrapped(axis, float(crossing_xyz[axis]), float(crossing_xyz[axis]))
-    face_value = start_u if int(_FACE_SIDE[int(face_id)]) == 0 else stop_u
+    face_value = start_u if int(_FACE_ID_TO_SIDE[int(face_id)]) == 0 else stop_u
     scale = max(abs(face_value), abs(value_u), 1.0)
     if abs(value_u - face_value) > (_TIME_ATOL + _TIME_RTOL * scale):
         return False
-    for tangential_axis in _FACE_TANGENTIAL_AXES[int(face_id)]:
+    for tangential_axis in _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]:
         tangential_axis = int(tangential_axis)
-        tangential_start = float(bounds[tangential_axis, START])
-        tangential_width = float(bounds[tangential_axis, WIDTH])
+        tangential_start = float(bounds[tangential_axis, BOUNDS_START_SLOT])
+        tangential_width = float(bounds[tangential_axis, BOUNDS_WIDTH_SLOT])
         tangential_start_u, tangential_stop_u = _axis_interval_unwrapped(
             tangential_axis,
             tangential_start,
@@ -975,7 +977,7 @@ def find_subface(
     current_bounds = cell_bounds[int(cell_id)]
     matched_subface = -1
     matched_neighbor = -1
-    tangential_axes = _FACE_TANGENTIAL_AXES[int(face_id)]
+    tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]
     for subface_id in range(4):
         neighbor_id = int(cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
@@ -987,20 +989,20 @@ def find_subface(
             value = float(crossing_rpa[axis])
             current_start_u, current_stop_u = _axis_interval_unwrapped(
                 axis,
-                float(current_bounds[axis, START]),
-                float(current_bounds[axis, WIDTH]),
+                float(current_bounds[axis, BOUNDS_START_SLOT]),
+                float(current_bounds[axis, BOUNDS_WIDTH_SLOT]),
                 value,
             )
             neighbor_start_u, neighbor_stop_u = _axis_interval_unwrapped(
                 axis,
-                float(neighbor_bounds[axis, START]),
-                float(neighbor_bounds[axis, WIDTH]),
+                float(neighbor_bounds[axis, BOUNDS_START_SLOT]),
+                float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT]),
                 value,
             )
             domain_start_u, _domain_stop_u = _axis_interval_unwrapped(
                 axis,
-                float(domain_bounds[axis, START]),
-                float(domain_bounds[axis, WIDTH]),
+                float(domain_bounds[axis, BOUNDS_START_SLOT]),
+                float(domain_bounds[axis, BOUNDS_WIDTH_SLOT]),
                 value,
             )
             value_u = _axis_value_unwrapped(axis, value, value)
@@ -1026,7 +1028,7 @@ def find_subface(
                 # destination neighbor must inherit the whole current tangential
                 # interval or match the active boundary exactly.
                 if active_face_id >= 0:
-                    active_side = int(_FACE_SIDE[int(active_face_id)])
+                    active_side = int(_FACE_ID_TO_SIDE[int(active_face_id)])
                     if int(active_face_order[int(active_face_id)]) < int(current_face_order):
                         active_side = 1 - active_side
                 else:
@@ -1120,14 +1122,14 @@ def _write_crossing(
     bounds = cell_bounds[int(cell_id)]
     for face_pos in range(n_active_face):
         face_id = int(active_faces[face_pos])
-        axis = int(_FACE_AXIS[int(face_id)])
-        side = int(_FACE_SIDE[int(face_id)])
+        axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+        side = int(_FACE_ID_TO_SIDE[int(face_id)])
         # Re-snap active axes onto the exact stored face coordinate so later
         # half-open ownership tests do not depend on the raw xyz->rpa roundoff.
         if side == 0:
-            crossing_rpa[axis] = float(bounds[axis, START])
+            crossing_rpa[axis] = float(bounds[axis, BOUNDS_START_SLOT])
         else:
-            crossing_rpa[axis] = float(bounds[axis, START] + bounds[axis, WIDTH])
+            crossing_rpa[axis] = float(bounds[axis, BOUNDS_START_SLOT] + bounds[axis, BOUNDS_WIDTH_SLOT])
 
 
 @njit(cache=True)
@@ -1253,8 +1255,8 @@ def _start_active_faces(
                 break
         if not face_at_start:
             continue
-        axis = int(_FACE_AXIS[int(face_id)])
-        side = int(_FACE_SIDE[int(face_id)])
+        axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+        side = int(_FACE_ID_TO_SIDE[int(face_id)])
         direction_sign = _coordinate_velocity_sign(start_xyz, direction_xyz, axis)
         # At the exact start event we only keep faces that the ray immediately
         # exits through, i.e. faces that bound the open interval after the start.
@@ -1314,8 +1316,8 @@ def _start_cell_owner(
     # Domain-entry roots can land a few ulps outside the closed radial/polar bounds.
     # Snap those nonperiodic axes back onto the exact domain face before the half-open lookup.
     for axis in range(2):
-        domain_start = float(domain_bounds[axis, START])
-        domain_stop = domain_start + float(domain_bounds[axis, WIDTH])
+        domain_start = float(domain_bounds[axis, BOUNDS_START_SLOT])
+        domain_stop = domain_start + float(domain_bounds[axis, BOUNDS_WIDTH_SLOT])
         value = float(start_rpa[axis])
         scale = max(abs(value), abs(domain_start), abs(domain_stop), 1.0)
         tol = max(8.0 * np.finfo(np.float64).eps * scale, DOMAIN_CONTAINS_ATOL)
@@ -1580,3 +1582,51 @@ def trace_rays(
         )
         cell_counts[ray_id] = int(n_cell)
         time_counts[ray_id] = int(n_time)
+
+
+def midpoint_image(
+    tracer,
+    interpolator,
+    origins,
+    directions,
+    *,
+    t_min: float,
+    t_max: float,
+    ray_shape: tuple[int, ...],
+    geometry_origins,
+    geometry_directions,
+):
+    """Render midpoint-sampled spherical rays through the packed-segment path."""
+    return tracer.render_midpoint_via_segments(
+        interpolator,
+        origins,
+        directions,
+        t_min=t_min,
+        t_max=t_max,
+        ray_shape=ray_shape,
+        geometry_origins=geometry_origins,
+        geometry_directions=geometry_directions,
+    )
+
+
+def trilinear_image(
+    tracer,
+    interpolator,
+    origins,
+    directions,
+    *,
+    t_min: float,
+    t_max: float,
+    ray_shape: tuple[int, ...],
+):
+    """Accumulate spherical trilinear ray integrals directly from traced chunks."""
+    return tracer.accumulate_chunked(
+        interpolator,
+        origins,
+        directions,
+        t_min=t_min,
+        t_max=t_max,
+        ray_shape=ray_shape,
+        accumulator=interpolator_spherical.accumulate_trilinear_cells,
+        label="trilinear_image",
+    )

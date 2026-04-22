@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_RAYTRACING_PATH = _REPO_ROOT / "batcamp" / "raytracing.py"
+_RAYTRACER_PATH = _REPO_ROOT / "batcamp" / "raytracer.py"
 
 
 @dataclass(frozen=True)
@@ -99,39 +99,39 @@ def _constant_like_imports(path: Path) -> list[_ImportedName]:
     return sorted(imports, key=lambda item: (item.lineno, item.col_offset, item.name))
 
 
-def test_raytracing_module_contains_no_float_literals() -> None:
-    """Guard against inline float literals in the raytracing module."""
-    literals = _float_literals(_RAYTRACING_PATH)
+def test_raytracer_module_contains_no_float_literals() -> None:
+    """Guard against inline float literals in the raytracer module."""
+    literals = _float_literals(_RAYTRACER_PATH)
     if not literals:
         return
 
     detail_lines = [
-        f"batcamp/raytracing.py:{item.lineno}:{item.col_offset + 1}: {item.source}"
+        f"batcamp/raytracer.py:{item.lineno}:{item.col_offset + 1}: {item.source}"
         for item in literals[:50]
     ]
     if len(literals) > 50:
         detail_lines.append(f"... and {len(literals) - 50} more")
     details = "\n".join(detail_lines)
     raise AssertionError(
-        f"Found {len(literals)} float literals in batcamp/raytracing.py.\n"
+        f"Found {len(literals)} float literals in batcamp/raytracer.py.\n"
         "Remove them or replace them with named non-inline definitions.\n"
         f"{details}"
     )
 
 
-def test_raytracing_module_imports_no_constant_like_names() -> None:
-    """Guard against importing names that look like constants into the raytracing module."""
-    imports = _constant_like_imports(_RAYTRACING_PATH)
+def test_raytracer_module_imports_no_constant_like_names() -> None:
+    """Guard against importing names that look like constants into the raytracer module."""
+    imports = _constant_like_imports(_RAYTRACER_PATH)
     if not imports:
         return
 
     detail_lines = [
-        f"batcamp/raytracing.py:{item.lineno}:{item.col_offset + 1}: {item.name}: {item.source}"
+        f"batcamp/raytracer.py:{item.lineno}:{item.col_offset + 1}: {item.name}: {item.source}"
         for item in imports
     ]
     details = "\n".join(detail_lines)
     raise AssertionError(
-        f"Found {len(imports)} constant-like imports in batcamp/raytracing.py.\n"
+        f"Found {len(imports)} constant-like imports in batcamp/raytracer.py.\n"
         "Import modules or ordinary names instead of constant-like bindings.\n"
         f"{details}"
     )

@@ -6,7 +6,7 @@ from batread import Dataset
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp.constants import XYZ_VARS
-from batcamp.spherical import xyz_to_rpa_components
+from batcamp.octree_spherical import xyz_to_rpa_components
 
 
 def test_xyz_to_rpa_components_stable_and_finite() -> None:

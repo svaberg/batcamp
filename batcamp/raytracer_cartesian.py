@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Exact Cartesian leaf-crossing kernels for octree rays.
+"""Cartesian raytracer backend.
 
-This module is the low-level Cartesian traversal backend used by the public ray
-tracer. It clips one straight ray to the axis-aligned octree domain, finds the
-next exit face of the current leaf, and then follows the face/subface neighbor
-graph to determine the owner of the open interval after that event.
+This module is the Cartesian backend used by the public ray tracer. It clips
+one straight ray to the axis-aligned octree domain, finds the next exit face of
+the current leaf, follows the face/subface neighbor graph to determine the
+owner of the open interval after that event, and provides the Cartesian direct
+midpoint and trilinear accumulators that sit on top of those traced segments.
 
 The emphasis here is exact discrete ownership, not interpolation or rendering.
 Given one current leaf and one straight Cartesian ray, these kernels produce
@@ -20,15 +21,21 @@ import numpy as np
 from numba import njit
 from numba import prange
 
-from .cartesian import _contains_box_xyz
+from . import interpolator_cartesian
+from .octree_cartesian import _contains_box
 from .octree import Octree
-from .octree import START
-from .octree import WIDTH
-from .octree import _FACE_AXIS
-from .octree import _FACE_SIDE
-from .octree import _FACE_TANGENTIAL_AXES
+from .octree import BOUNDS_START_SLOT
+from .octree import BOUNDS_WIDTH_SLOT
+from .octree import _FACE_ID_TO_AXIS
+from .octree import _FACE_ID_TO_SIDE
+from .octree import _FACE_ID_TO_TANGENTIAL_AXES
 
+# Start with a moderate Cartesian scratch row because straight box crossings
+# are cheap and often visit more cells than the spherical default path.
 DEFAULT_CROSSING_BUFFER_SIZE = 256
+
+# Scratch trace sentinel returned when one per-ray row fills before the public
+# tracer has a chance to grow the buffers and retry.
 TRACE_BUFFER_OVERFLOW = -1
 
 
@@ -151,8 +158,8 @@ def _trace_ray(
             direction_value = float(direction[axis])
             if direction_value == 0.0:
                 continue
-            lo_value = float(domain_bounds[axis, START])
-            hi_value = lo_value + float(domain_bounds[axis, WIDTH])
+            lo_value = float(domain_bounds[axis, BOUNDS_START_SLOT])
+            hi_value = lo_value + float(domain_bounds[axis, BOUNDS_WIDTH_SLOT])
             if direction_value > 0.0:
                 t0 = (lo_value - float(origin[axis])) / direction_value
                 face_value = lo_value
@@ -262,8 +269,8 @@ def find_domain_interval(
     for axis in range(3):
         direction_value = float(direction[axis])
         origin_value = float(origin[axis])
-        lo_value = float(domain_bounds[axis, START])
-        hi_value = lo_value + float(domain_bounds[axis, WIDTH])
+        lo_value = float(domain_bounds[axis, BOUNDS_START_SLOT])
+        hi_value = lo_value + float(domain_bounds[axis, BOUNDS_WIDTH_SLOT])
         if direction_value == 0.0:
             if origin_value < lo_value or origin_value > hi_value:
                 return False, 0.0, 0.0
@@ -305,12 +312,12 @@ def find_cell(
     """
     if not (np.isfinite(query[0]) and np.isfinite(query[1]) and np.isfinite(query[2])):
         return -1
-    if not _contains_box_xyz(query, domain_bounds, domain_bounds):
+    if not _contains_box(query, domain_bounds, domain_bounds):
         return -1
     current = -1
     for root_pos in range(int(root_cell_ids.shape[0])):
         root_cell_id = int(root_cell_ids[root_pos])
-        if _contains_box_xyz(query, cell_bounds[root_cell_id], domain_bounds):
+        if _contains_box(query, cell_bounds[root_cell_id], domain_bounds):
             current = root_cell_id
             break
     if current < 0:
@@ -321,7 +328,7 @@ def find_cell(
             child_id = int(cell_child[current, child_ord])
             if child_id < 0:
                 continue
-            if _contains_box_xyz(query, cell_bounds[child_id], domain_bounds):
+            if _contains_box(query, cell_bounds[child_id], domain_bounds):
                 next_cell_id = child_id
                 break
         if next_cell_id < 0:
@@ -359,10 +366,10 @@ def find_exit(
         direction_value = float(direction[axis])
         if direction_value > 0.0:
             face_id = 2 * axis + 1
-            face_value = float(bounds[axis, START] + bounds[axis, WIDTH])
+            face_value = float(bounds[axis, BOUNDS_START_SLOT] + bounds[axis, BOUNDS_WIDTH_SLOT])
         elif direction_value < 0.0:
             face_id = 2 * axis
-            face_value = float(bounds[axis, START])
+            face_value = float(bounds[axis, BOUNDS_START_SLOT])
         else:
             continue
         t_face = float(t_current) + (face_value - float(current[axis])) / direction_value
@@ -407,7 +414,7 @@ def _fill_active_face_state(
     current_face_order = -1
     for order in range(n_active_face):
         face_id = int(active_faces[order])
-        active_face_by_axis[int(_FACE_AXIS[face_id])] = face_id
+        active_face_by_axis[int(_FACE_ID_TO_AXIS[face_id])] = face_id
         active_face_order[face_id] = int(order)
         if face_id == int(current_face_id):
             current_face_order = int(order)
@@ -433,15 +440,15 @@ def is_on_face(
         Whether the crossing lies on that face carrier.
     """
     bounds = cell_bounds[int(cell_id)]
-    axis = int(_FACE_AXIS[int(face_id)])
-    side = int(_FACE_SIDE[int(face_id)])
-    face_value = float(bounds[axis, START]) if side == 0 else float(bounds[axis, START] + bounds[axis, WIDTH])
+    axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+    side = int(_FACE_ID_TO_SIDE[int(face_id)])
+    face_value = float(bounds[axis, BOUNDS_START_SLOT]) if side == 0 else float(bounds[axis, BOUNDS_START_SLOT] + bounds[axis, BOUNDS_WIDTH_SLOT])
     if float(crossing[axis]) != face_value:
         return False
-    for tangential_axis in _FACE_TANGENTIAL_AXES[int(face_id)]:
+    for tangential_axis in _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]:
         axis = int(tangential_axis)
-        start = float(bounds[axis, START])
-        stop = start + float(bounds[axis, WIDTH])
+        start = float(bounds[axis, BOUNDS_START_SLOT])
+        stop = start + float(bounds[axis, BOUNDS_WIDTH_SLOT])
         value = float(crossing[axis])
         if value < start or value > stop:
             return False
@@ -478,7 +485,7 @@ def find_subface(
     Returns:
         Face-patch slot id, `-1` for no owner, or `-2` for ambiguity.
     """
-    tangential_axes = _FACE_TANGENTIAL_AXES[int(face_id)]
+    tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]
     row = cell_neighbor[int(cell_id), int(face_id)]
     first_neighbor = -1
     first_slot = -1
@@ -510,8 +517,8 @@ def find_subface(
         for tangential_pos in range(2):
             axis = int(tangential_axes[tangential_pos])
             value = float(crossing[axis])
-            current_start = float(current_bounds[axis, START])
-            current_stop = current_start + float(current_bounds[axis, WIDTH])
+            current_start = float(current_bounds[axis, BOUNDS_START_SLOT])
+            current_stop = current_start + float(current_bounds[axis, BOUNDS_WIDTH_SLOT])
             active_face_id = int(active_face_by_axis[axis])
             direction_value = float(direction[axis])
             implicit_active_side = -1
@@ -520,10 +527,10 @@ def find_subface(
             elif value == current_stop and direction_value > 0.0:
                 implicit_active_side = 1
             if active_face_id >= 0 or implicit_active_side >= 0:
-                neighbor_start = float(neighbor_bounds[axis, START])
-                neighbor_stop = neighbor_start + float(neighbor_bounds[axis, WIDTH])
+                neighbor_start = float(neighbor_bounds[axis, BOUNDS_START_SLOT])
+                neighbor_stop = neighbor_start + float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT])
                 if active_face_id >= 0:
-                    active_side = int(_FACE_SIDE[active_face_id])
+                    active_side = int(_FACE_ID_TO_SIDE[active_face_id])
                     if int(active_face_order[active_face_id]) < int(current_face_order):
                         active_side = 1 - active_side
                 else:
@@ -542,8 +549,8 @@ def find_subface(
                     contains = False
                     break
                 continue
-            start = float(neighbor_bounds[axis, START])
-            stop = start + float(neighbor_bounds[axis, WIDTH])
+            start = float(neighbor_bounds[axis, BOUNDS_START_SLOT])
+            stop = start + float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT])
             if direction_value > 0.0:
                 if value < start or value >= stop:
                     contains = False
@@ -553,7 +560,7 @@ def find_subface(
                     contains = False
                     break
             else:
-                if start == float(domain_bounds[axis, START]):
+                if start == float(domain_bounds[axis, BOUNDS_START_SLOT]):
                     if value < start or value > stop:
                         contains = False
                         break
@@ -602,12 +609,12 @@ def _write_crossing(
     bounds = cell_bounds[int(cell_id)]
     for face_pos in range(n_active_face):
         face_id = int(active_faces[face_pos])
-        axis = int(_FACE_AXIS[int(face_id)])
-        side = int(_FACE_SIDE[int(face_id)])
+        axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+        side = int(_FACE_ID_TO_SIDE[int(face_id)])
         if side == 0:
-            crossing[axis] = float(bounds[axis, START])
+            crossing[axis] = float(bounds[axis, BOUNDS_START_SLOT])
         else:
-            crossing[axis] = float(bounds[axis, START] + bounds[axis, WIDTH])
+            crossing[axis] = float(bounds[axis, BOUNDS_START_SLOT] + bounds[axis, BOUNDS_WIDTH_SLOT])
 
 
 @njit(cache=True)
@@ -730,3 +737,51 @@ def trace_rays(
         )
         cell_counts[ray_id] = int(n_cell)
         time_counts[ray_id] = int(n_time)
+
+
+def midpoint_image(
+    tracer,
+    interpolator,
+    origins,
+    directions,
+    *,
+    t_min: float,
+    t_max: float,
+    ray_shape: tuple[int, ...],
+    geometry_origins,
+    geometry_directions,
+):
+    """Accumulate midpoint-sampled Cartesian rays directly from traced chunks."""
+    return tracer.accumulate_chunked(
+        interpolator,
+        origins,
+        directions,
+        t_min=t_min,
+        t_max=t_max,
+        ray_shape=ray_shape,
+        accumulator=interpolator_cartesian.accumulate_midpoint_cells,
+        label="midpoint_image",
+    )
+
+
+def trilinear_image(
+    tracer,
+    interpolator,
+    origins,
+    directions,
+    *,
+    t_min: float,
+    t_max: float,
+    ray_shape: tuple[int, ...],
+):
+    """Accumulate exact Cartesian trilinear ray integrals directly from traced chunks."""
+    return tracer.accumulate_chunked(
+        interpolator,
+        origins,
+        directions,
+        t_min=t_min,
+        t_max=t_max,
+        ray_shape=ray_shape,
+        accumulator=interpolator_cartesian.accumulate_trilinear_cells,
+        label="trilinear_image",
+    )

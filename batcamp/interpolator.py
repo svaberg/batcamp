@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Octree interpolator and interpolation kernels."""
+"""Public octree interpolator wrapper."""
 
 from __future__ import annotations
 
@@ -8,498 +8,15 @@ import math
 import time
 from typing import Literal
 
-from numba import njit
-from numba import prange
 import numpy as np
-
-from .octree import AXIS0
-from .octree import AXIS1
-from .octree import AXIS2
+from . import interpolator_cartesian
+from . import interpolator_spherical
+from .octree import TREE_COORD_AXIS0
+from .octree import TREE_COORD_AXIS1
+from .octree import TREE_COORD_AXIS2
 from .octree import Octree
-from .octree import START
-from .octree import WIDTH
-from .spherical import xyz_to_rpa_components
 
 logger = logging.getLogger(__name__)
-
-_TWO_PI = 2.0 * math.pi
-_TINY = np.finfo(np.float64).tiny
-_XYZ_TRILINEAR_BITS = np.array(
-    [
-        [0, 0, 0],
-        [1, 0, 0],
-        [1, 1, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-        [1, 0, 1],
-        [1, 1, 1],
-        [0, 1, 1],
-    ],
-    dtype=np.int8,
-)
-# BATSRUS spherical cells arrive in a fixed corner order that differs from the
-# plain `(axis0, axis1, axis2)` low/high bit order used by Cartesian hexes.
-_RPA_TRILINEAR_BITS = np.array(
-    [
-        [0, 1, 0],
-        [1, 1, 0],
-        [1, 1, 1],
-        [0, 1, 1],
-        [0, 0, 0],
-        [1, 0, 0],
-        [1, 0, 1],
-        [0, 0, 1],
-    ],
-    dtype=np.int8,
-)
-
-
-@njit(cache=True)
-def _clamp_unit_interval(value: float) -> float:
-    """Clamp one interpolation fraction onto the unit interval."""
-    if value < 0.0:
-        return 0.0
-    if value > 1.0:
-        return 1.0
-    return value
-
-
-@njit(cache=True)
-def _axis_fraction(value: float, start: float, width: float) -> float:
-    """Return one clamped affine cell fraction along a non-periodic axis."""
-    return _clamp_unit_interval((value - start) / max(width, _TINY))
-
-
-@njit(cache=True)
-def _periodic_axis_fraction(value: float, start: float, width: float, period: float) -> float:
-    """Return one clamped affine cell fraction along a periodic axis."""
-    if width <= _TINY:
-        return 0.0
-    wrapped = (value - start) % period
-    if width < (period - 1.0e-10) and wrapped > width:
-        wrapped = width
-    return _clamp_unit_interval(wrapped / max(width, _TINY))
-
-
-@njit(cache=True)
-def _accumulate_trilinear(
-    out_row: np.ndarray,
-    cell_id: int,
-    frac_axis0: float,
-    frac_axis1: float,
-    frac_axis2: float,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-    bits: np.ndarray,
-) -> None:
-    """Write one trilinear interpolation row from one 8-corner low/high bit table."""
-    cell_id = int(cell_id)
-    frac_axis0_lo = 1.0 - frac_axis0
-    frac_axis1_lo = 1.0 - frac_axis1
-    frac_axis2_lo = 1.0 - frac_axis2
-    cell_corner_ids = corners[cell_id]
-    out_row[:] = 0.0
-    for corner_ord in range(8):
-        bit0 = bits[corner_ord, AXIS0]
-        bit1 = bits[corner_ord, AXIS1]
-        bit2 = bits[corner_ord, AXIS2]
-        weight = frac_axis0 if bit0 else frac_axis0_lo
-        weight *= frac_axis1 if bit1 else frac_axis1_lo
-        weight *= frac_axis2 if bit2 else frac_axis2_lo
-        corner_point_id = int(cell_corner_ids[corner_ord])
-        out_row[:] += weight * point_values[corner_point_id]
-
-
-@njit(cache=True)
-def _interp_cell_rpa(
-    out_row: np.ndarray,
-    cell_id: int,
-    r: float,
-    polar: float,
-    azimuth: float,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> None:
-    """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
-    cell_id = int(cell_id)
-    frac_r = _axis_fraction(r, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
-    frac_p = _axis_fraction(polar, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
-    frac_a = _periodic_axis_fraction(
-        azimuth,
-        cell_bounds[cell_id, AXIS2, START],
-        cell_bounds[cell_id, AXIS2, WIDTH],
-        _TWO_PI,
-    )
-
-    _accumulate_trilinear(
-        out_row,
-        cell_id,
-        frac_r,
-        frac_p,
-        frac_a,
-        corners,
-        point_values,
-        _RPA_TRILINEAR_BITS,
-    )
-
-
-@njit(cache=True)
-def _interp_cell_xyz(
-    out_row: np.ndarray,
-    cell_id: int,
-    x: float,
-    y: float,
-    z: float,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> None:
-    """Write one Cartesian trilinear interpolation result row for one leaf cell using flat point values."""
-    cell_id = int(cell_id)
-    frac_x = _axis_fraction(x, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
-    frac_y = _axis_fraction(y, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
-    frac_z = _axis_fraction(z, cell_bounds[cell_id, AXIS2, START], cell_bounds[cell_id, AXIS2, WIDTH])
-
-    _accumulate_trilinear(
-        out_row,
-        cell_id,
-        frac_x,
-        frac_y,
-        frac_z,
-        corners,
-        point_values,
-        _XYZ_TRILINEAR_BITS,
-    )
-
-
-@njit(cache=True)
-def _integrate_cell_xyz(
-    out_row: np.ndarray,
-    cell_id: int,
-    segment_span: float,
-    x_start: float,
-    y_start: float,
-    z_start: float,
-    x_stop: float,
-    y_stop: float,
-    z_stop: float,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> None:
-    """Write one exact Cartesian trilinear segment integral row for one leaf cell."""
-    cell_id = int(cell_id)
-    frac_x0 = _axis_fraction(x_start, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
-    frac_y0 = _axis_fraction(y_start, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
-    frac_z0 = _axis_fraction(z_start, cell_bounds[cell_id, AXIS2, START], cell_bounds[cell_id, AXIS2, WIDTH])
-    frac_x1 = _axis_fraction(x_stop, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
-    frac_y1 = _axis_fraction(y_stop, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
-    frac_z1 = _axis_fraction(z_stop, cell_bounds[cell_id, AXIS2, START], cell_bounds[cell_id, AXIS2, WIDTH])
-    d_frac_x = frac_x1 - frac_x0
-    d_frac_y = frac_y1 - frac_y0
-    d_frac_z = frac_z1 - frac_z0
-
-    cell_corner_ids = corners[cell_id]
-    out_row[:] = 0.0
-    for corner_ord in range(8):
-        bit_x = _XYZ_TRILINEAR_BITS[corner_ord, AXIS0]
-        bit_y = _XYZ_TRILINEAR_BITS[corner_ord, AXIS1]
-        bit_z = _XYZ_TRILINEAR_BITS[corner_ord, AXIS2]
-
-        c_x = frac_x0 if bit_x else (1.0 - frac_x0)
-        c_y = frac_y0 if bit_y else (1.0 - frac_y0)
-        c_z = frac_z0 if bit_z else (1.0 - frac_z0)
-        d_x = d_frac_x if bit_x else -d_frac_x
-        d_y = d_frac_y if bit_y else -d_frac_y
-        d_z = d_frac_z if bit_z else -d_frac_z
-
-        w0 = c_x * c_y * c_z
-        w1 = d_x * c_y * c_z + c_x * d_y * c_z + c_x * c_y * d_z
-        w2 = d_x * d_y * c_z + d_x * c_y * d_z + c_x * d_y * d_z
-        w3 = d_x * d_y * d_z
-        weight = segment_span * (w0 + 0.5 * w1 + (w2 / 3.0) + 0.25 * w3)
-
-        corner_point_id = int(cell_corner_ids[corner_ord])
-        out_row[:] += weight * point_values[corner_point_id]
-
-
-@njit(cache=True)
-def _integrate_cell_rpa_straight(
-    out_row: np.ndarray,
-    cell_id: int,
-    segment_span: float,
-    x_start: float,
-    y_start: float,
-    z_start: float,
-    x_stop: float,
-    y_stop: float,
-    z_stop: float,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> None:
-    """Write one RPA-local straight-slab trilinear segment integral row."""
-    cell_id = int(cell_id)
-    r_start, polar_start, azimuth_start = xyz_to_rpa_components(x_start, y_start, z_start)
-    r_stop, polar_stop, azimuth_stop = xyz_to_rpa_components(x_stop, y_stop, z_stop)
-    frac_r0 = _axis_fraction(r_start, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
-    frac_p0 = _axis_fraction(polar_start, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
-    frac_a0 = _periodic_axis_fraction(
-        azimuth_start,
-        cell_bounds[cell_id, AXIS2, START],
-        cell_bounds[cell_id, AXIS2, WIDTH],
-        _TWO_PI,
-    )
-    frac_r1 = _axis_fraction(r_stop, cell_bounds[cell_id, AXIS0, START], cell_bounds[cell_id, AXIS0, WIDTH])
-    frac_p1 = _axis_fraction(polar_stop, cell_bounds[cell_id, AXIS1, START], cell_bounds[cell_id, AXIS1, WIDTH])
-    frac_a1 = _periodic_axis_fraction(
-        azimuth_stop,
-        cell_bounds[cell_id, AXIS2, START],
-        cell_bounds[cell_id, AXIS2, WIDTH],
-        _TWO_PI,
-    )
-    d_frac_r = frac_r1 - frac_r0
-    d_frac_p = frac_p1 - frac_p0
-    d_frac_a = frac_a1 - frac_a0
-
-    cell_corner_ids = corners[cell_id]
-    out_row[:] = 0.0
-    for corner_ord in range(8):
-        bit_r = _RPA_TRILINEAR_BITS[corner_ord, AXIS0]
-        bit_p = _RPA_TRILINEAR_BITS[corner_ord, AXIS1]
-        bit_a = _RPA_TRILINEAR_BITS[corner_ord, AXIS2]
-
-        c_r = frac_r0 if bit_r else (1.0 - frac_r0)
-        c_p = frac_p0 if bit_p else (1.0 - frac_p0)
-        c_a = frac_a0 if bit_a else (1.0 - frac_a0)
-        d_r = d_frac_r if bit_r else -d_frac_r
-        d_p = d_frac_p if bit_p else -d_frac_p
-        d_a = d_frac_a if bit_a else -d_frac_a
-
-        w0 = c_r * c_p * c_a
-        w1 = d_r * c_p * c_a + c_r * d_p * c_a + c_r * c_p * d_a
-        w2 = d_r * d_p * c_a + d_r * c_p * d_a + c_r * d_p * d_a
-        w3 = d_r * d_p * d_a
-        weight = segment_span * (w0 + 0.5 * w1 + (w2 / 3.0) + 0.25 * w3)
-
-        corner_point_id = int(cell_corner_ids[corner_ord])
-        out_row[:] += weight * point_values[corner_point_id]
-
-
-@njit(cache=True, parallel=True)
-def _interp_cells_rpa(
-    queries_rpa: np.ndarray,
-    cell_ids: np.ndarray,
-    fill_values: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> np.ndarray:
-    """Evaluate spherical-tree interpolation for spherical queries with known leaf cell ids using flat point values."""
-    n_query = queries_rpa.shape[0]
-    ncomp = point_values.shape[1]
-    out = np.empty((n_query, ncomp), dtype=point_values.dtype)
-    for i in prange(n_query):
-        out[i, :] = fill_values
-        cell_id = int(cell_ids[i])
-        if cell_id < 0:
-            continue
-        _interp_cell_rpa(
-            out[i],
-            cell_id,
-            queries_rpa[i, 0],
-            queries_rpa[i, 1],
-            queries_rpa[i, 2] % _TWO_PI,
-            cell_bounds,
-            corners,
-            point_values,
-        )
-    return out
-
-
-@njit(cache=True, parallel=True)
-def _interp_cells_xyz(
-    queries_xyz: np.ndarray,
-    cell_ids: np.ndarray,
-    fill_values: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> np.ndarray:
-    """Evaluate Cartesian-tree interpolation for Cartesian queries with known leaf cell ids using flat point values.
-
-    Assumes the Cartesian backend cell model (axis-aligned per-cell bounds).
-    """
-    n_query = queries_xyz.shape[0]
-    ncomp = point_values.shape[1]
-    out = np.empty((n_query, ncomp), dtype=point_values.dtype)
-    for i in prange(n_query):
-        out[i, :] = fill_values
-        cell_id = int(cell_ids[i])
-        if cell_id < 0:
-            continue
-        _interp_cell_xyz(
-            out[i],
-            cell_id,
-            queries_xyz[i, 0],
-            queries_xyz[i, 1],
-            queries_xyz[i, 2],
-            cell_bounds,
-            corners,
-            point_values,
-        )
-    return out
-
-
-@njit(cache=True, parallel=True)
-def accumulate_midpoint_cells_xyz(
-    origins_xyz: np.ndarray,
-    directions_xyz: np.ndarray,
-    cell_counts: np.ndarray,
-    cell_ids_scratch: np.ndarray,
-    times_scratch: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> np.ndarray:
-    """Accumulate midpoint-sampled known-cell Cartesian segments into one `(n_rays, n_components)` array."""
-    n_rays = int(origins_xyz.shape[0])
-    n_components = int(point_values.shape[1])
-    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
-    for ray_id in prange(n_rays):
-        sample = np.empty(n_components, dtype=point_values.dtype)
-        origin_x = float(origins_xyz[ray_id, 0])
-        origin_y = float(origins_xyz[ray_id, 1])
-        origin_z = float(origins_xyz[ray_id, 2])
-        direction_x = float(directions_xyz[ray_id, 0])
-        direction_y = float(directions_xyz[ray_id, 1])
-        direction_z = float(directions_xyz[ray_id, 2])
-        n_cell = int(cell_counts[ray_id])
-        for cell_pos in range(n_cell):
-            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
-            if cell_id < 0:
-                continue
-            t_start = float(times_scratch[ray_id, cell_pos])
-            t_stop = float(times_scratch[ray_id, cell_pos + 1])
-            segment_length = t_stop - t_start
-            if segment_length <= 0.0:
-                continue
-            midpoint_t = 0.5 * (t_start + t_stop)
-            _interp_cell_xyz(
-                sample,
-                cell_id,
-                origin_x + midpoint_t * direction_x,
-                origin_y + midpoint_t * direction_y,
-                origin_z + midpoint_t * direction_z,
-                cell_bounds,
-                corners,
-                point_values,
-            )
-            for component_id in range(n_components):
-                out[ray_id, component_id] += segment_length * sample[component_id]
-    return out
-
-
-@njit(cache=True, parallel=True)
-def accumulate_exact_cells_xyz(
-    origins_xyz: np.ndarray,
-    directions_xyz: np.ndarray,
-    cell_counts: np.ndarray,
-    cell_ids_scratch: np.ndarray,
-    times_scratch: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> np.ndarray:
-    """Accumulate exact known-cell Cartesian segment integrals into one `(n_rays, n_components)` array."""
-    n_rays = int(origins_xyz.shape[0])
-    n_components = int(point_values.shape[1])
-    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
-    for ray_id in prange(n_rays):
-        integral = np.empty(n_components, dtype=point_values.dtype)
-        origin_x = float(origins_xyz[ray_id, 0])
-        origin_y = float(origins_xyz[ray_id, 1])
-        origin_z = float(origins_xyz[ray_id, 2])
-        direction_x = float(directions_xyz[ray_id, 0])
-        direction_y = float(directions_xyz[ray_id, 1])
-        direction_z = float(directions_xyz[ray_id, 2])
-        n_cell = int(cell_counts[ray_id])
-        for cell_pos in range(n_cell):
-            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
-            if cell_id < 0:
-                continue
-            t_start = float(times_scratch[ray_id, cell_pos])
-            t_stop = float(times_scratch[ray_id, cell_pos + 1])
-            if t_stop <= t_start:
-                continue
-            _integrate_cell_xyz(
-                integral,
-                cell_id,
-                t_stop - t_start,
-                origin_x + t_start * direction_x,
-                origin_y + t_start * direction_y,
-                origin_z + t_start * direction_z,
-                origin_x + t_stop * direction_x,
-                origin_y + t_stop * direction_y,
-                origin_z + t_stop * direction_z,
-                cell_bounds,
-                corners,
-                point_values,
-            )
-            out[ray_id, :] += integral
-    return out
-
-
-@njit(cache=True, parallel=True)
-def accumulate_trilinear_cells_rpa(
-    origins_xyz: np.ndarray,
-    directions_xyz: np.ndarray,
-    cell_counts: np.ndarray,
-    cell_ids_scratch: np.ndarray,
-    times_scratch: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
-) -> np.ndarray:
-    """Accumulate RPA-local straight-slab trilinear segment integrals."""
-    n_rays = int(origins_xyz.shape[0])
-    n_components = int(point_values.shape[1])
-    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
-    for ray_id in prange(n_rays):
-        integral = np.empty(n_components, dtype=point_values.dtype)
-        origin_x = float(origins_xyz[ray_id, 0])
-        origin_y = float(origins_xyz[ray_id, 1])
-        origin_z = float(origins_xyz[ray_id, 2])
-        direction_x = float(directions_xyz[ray_id, 0])
-        direction_y = float(directions_xyz[ray_id, 1])
-        direction_z = float(directions_xyz[ray_id, 2])
-        n_cell = int(cell_counts[ray_id])
-        for cell_pos in range(n_cell):
-            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
-            if cell_id < 0:
-                continue
-            t_start = float(times_scratch[ray_id, cell_pos])
-            t_stop = float(times_scratch[ray_id, cell_pos + 1])
-            if t_stop <= t_start:
-                continue
-            _integrate_cell_rpa_straight(
-                integral,
-                cell_id,
-                t_stop - t_start,
-                origin_x + t_start * direction_x,
-                origin_y + t_start * direction_y,
-                origin_z + t_start * direction_z,
-                origin_x + t_stop * direction_x,
-                origin_y + t_stop * direction_y,
-                origin_z + t_stop * direction_z,
-                cell_bounds,
-                corners,
-                point_values,
-            )
-            out[ray_id, :] += integral
-    return out
-
 
 class OctreeInterpolator:
     """LinearNDInterpolator-like callable built on octree leaf lookup.
@@ -529,6 +46,7 @@ class OctreeInterpolator:
         logger.info("OctreeInterpolator.__init__: coord=%s", tree.tree_coord)
         t0 = time.perf_counter()
         self.tree = tree
+        self._interpolator_module = interpolator_cartesian if tree.tree_coord == "xyz" else interpolator_spherical
         self.fill_value = fill_value
         logger.info("_flatten_point_values...")
         t_flat = time.perf_counter()
@@ -574,7 +92,7 @@ class OctreeInterpolator:
         - `xi` with shape `(..., 3)`
         - tuple/list of 3 broadcastable arrays
         - three separate coordinate arrays.
-        Returns `(q, shape)` where `q` has shape `(N, 3)` and `shape` is the
+        Returns `(queries_flat, shape)` where `queries_flat` has shape `(N, 3)` and `shape` is the
         broadcasted leading output shape.
         """
         if len(args) == 1:
@@ -596,8 +114,8 @@ class OctreeInterpolator:
         if len(args) == 3:
             a0, a1, a2 = np.broadcast_arrays(*[np.array(v, dtype=float) for v in args])
             shape = a0.shape
-            q = np.stack((a0, a1, a2), axis=-1).reshape(-1, 3)
-            return q, shape
+            queries_flat = np.stack((a0, a1, a2), axis=-1).reshape(-1, 3)
+            return queries_flat, shape
 
         raise ValueError("Call with xi or with x1, x2, x3.")
 
@@ -617,19 +135,14 @@ class OctreeInterpolator:
 
     def _kernel_inputs(
         self,
-        q_array: np.ndarray,
+        query_points: np.ndarray,
         query_coord: Literal["xyz", "rpa"],
     ) -> tuple[np.ndarray, callable]:
         """Return kernel-local queries and the matching interpolation kernel."""
-        if self.tree.tree_coord == "xyz":
-            return q_array, _interp_cells_xyz
-        if query_coord == "rpa":
-            return q_array, _interp_cells_rpa
-
-        from .spherical import xyz_arrays_to_rpa
-
-        kernel_queries = np.column_stack(xyz_arrays_to_rpa(q_array[:, 0], q_array[:, 1], q_array[:, 2]))
-        return kernel_queries, _interp_cells_rpa
+        return (
+            self._interpolator_module.prepare_queries(query_points, str(query_coord)),
+            self._interpolator_module.interp_cells,
+        )
 
     def interp_cells_xyz(self, queries_xyz: np.ndarray, cell_ids: np.ndarray) -> np.ndarray:
         """Evaluate Cartesian queries in already-known leaf cells.
@@ -643,15 +156,15 @@ class OctreeInterpolator:
         if self.tree.tree_coord != "xyz":
             raise NotImplementedError("interp_cells_xyz requires tree_coord='xyz'.")
 
-        q, shape = self._normalize_queries(queries_xyz)
-        q_array = np.array(q, dtype=np.float64, order="C")
+        query_points_flat, shape = self._normalize_queries(queries_xyz)
+        query_points = np.array(query_points_flat, dtype=np.float64, order="C")
         cell_id_array = np.array(cell_ids, dtype=np.int64, order="C").reshape(-1)
-        n = int(q_array.shape[0])
+        n = int(query_points.shape[0])
         if int(cell_id_array.size) != n:
             raise ValueError("cell_ids must match the query count.")
 
-        out2d = _interp_cells_xyz(
-            q_array,
+        out2d = self._interpolator_module.interp_cells(
+            query_points,
             cell_id_array,
             self._normalize_fill_value(int(self._point_values_2d.shape[1])),
             self.tree.cell_bounds,
@@ -659,6 +172,35 @@ class OctreeInterpolator:
             self._point_values_2d,
         )
         return out2d.reshape(shape + self._value_shape_tail)
+
+    def integrate_box(self, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
+        """Return the exact integral of the backend trilinear interpolant over one native box.
+
+        `lower` and `upper` are native-coordinate box corners with shape `(3,)`
+        and componentwise `lower <= upper`.
+
+        For `tree_coord="rpa"`, azimuth is one non-wrapping interval inside
+        `[0, 2pi]`.
+        """
+        lower_array = np.asarray(lower, dtype=np.float64)
+        upper_array = np.asarray(upper, dtype=np.float64)
+        if lower_array.shape != (3,) or upper_array.shape != (3,):
+            raise ValueError("lower and upper must both have shape (3,).")
+        if not (np.all(np.isfinite(lower_array)) and np.all(np.isfinite(upper_array))):
+            raise ValueError("lower and upper must be finite.")
+        if np.any(lower_array > upper_array):
+            raise ValueError("lower must be componentwise <= upper.")
+
+        if self.tree.tree_coord == "rpa":
+            if lower_array[TREE_COORD_AXIS1] < 0.0 or upper_array[TREE_COORD_AXIS1] > math.pi:
+                raise ValueError("For tree_coord='rpa', polar bounds must lie in [0, pi].")
+            if lower_array[TREE_COORD_AXIS2] < 0.0 or upper_array[TREE_COORD_AXIS2] > (2.0 * math.pi):
+                raise ValueError("For tree_coord='rpa', azimuth bounds must lie in [0, 2pi].")
+
+        out1d = self._interpolator_module.integrate_box(self.tree, self._point_values_2d, lower_array, upper_array)
+        if len(self._value_shape_tail) == 0:
+            return out1d[0]
+        return out1d.reshape(self._value_shape_tail)
 
     def cell_integrals(self, cell_ids: int | np.ndarray | None = None) -> np.ndarray:
         """Return exact whole-cell integrals of the backend trilinear interpolant.
@@ -671,28 +213,21 @@ class OctreeInterpolator:
         `tree_coord="rpa"` integrates over physical spherical volume
         `dV = r^2 sin(theta) dr dtheta dphi`.
         """
-        if self.tree.tree_coord == "xyz":
-            from .cartesian import cell_integrals_xyz
-
-            integrate_leaf_ids = cell_integrals_xyz
-        elif self.tree.tree_coord == "rpa":
-            from .spherical import cell_integrals_rpa
-
-            integrate_leaf_ids = cell_integrals_rpa
-        else:
-            raise NotImplementedError(f"cell_integrals is unsupported for tree_coord={self.tree.tree_coord!r}.")
-
         if cell_ids is None:
             out2d = np.full((int(self.tree.cell_count), int(self._point_values_2d.shape[1])), np.nan, dtype=np.float64)
             valid_leaf_ids = np.flatnonzero(self.tree.cell_levels >= 0).astype(np.int64)
             if valid_leaf_ids.size:
-                out2d[valid_leaf_ids] = integrate_leaf_ids(self.tree, self._point_values_2d, valid_leaf_ids)
+                out2d[valid_leaf_ids] = self._interpolator_module.cell_integrals(
+                    self.tree,
+                    self._point_values_2d,
+                    valid_leaf_ids,
+                )
             return out2d.reshape((int(self.tree.cell_count),) + self._value_shape_tail)
 
-        leaf_ids = self.tree._normalize_leaf_cell_ids(cell_ids)
+        leaf_ids = self.tree.normalize_leaf_cell_ids(cell_ids)
         shape = leaf_ids.shape
         flat_leaf_ids = np.array(leaf_ids, dtype=np.int64, order="C").reshape(-1)
-        out2d = integrate_leaf_ids(self.tree, self._point_values_2d, flat_leaf_ids)
+        out2d = self._interpolator_module.cell_integrals(self.tree, self._point_values_2d, flat_leaf_ids)
         if leaf_ids.ndim == 0:
             return out2d.reshape((1,) + self._value_shape_tail)[0]
         return out2d.reshape(shape + self._value_shape_tail)
@@ -714,21 +249,21 @@ class OctreeInterpolator:
         Returns values reshaped to the query broadcast shape.
         If `return_cell_ids=True`, also returns the resolved cell ids.
         """
-        qs = str(query_coord)
-        if qs not in {"xyz", "rpa"}:
+        resolved_query_coord = str(query_coord)
+        if resolved_query_coord not in {"xyz", "rpa"}:
             raise ValueError("query_coord must be 'xyz' or 'rpa'.")
-        if self.tree.tree_coord == "xyz" and qs == "rpa":
+        if self.tree.tree_coord == "xyz" and resolved_query_coord == "rpa":
             raise ValueError("query_coord='rpa' is only supported for tree_coord='rpa'.")
 
-        q, shape = self._normalize_queries(*args)
-        q_array = np.array(q, dtype=np.float64, order="C")
-        n = q_array.shape[0]
+        query_points_flat, shape = self._normalize_queries(*args)
+        query_points = np.array(query_points_flat, dtype=np.float64, order="C")
+        n = query_points.shape[0]
         trailing = self._value_shape_tail
         n_components = int(self._point_values_2d.shape[1])
         fill = self._normalize_fill_value(n_components)
 
-        cell_ids = self.tree.lookup_points(q_array, coord=qs).reshape(-1)
-        kernel_queries, kernel = self._kernel_inputs(q_array, qs)
+        cell_ids = self.tree.lookup_points(query_points, coord=resolved_query_coord).reshape(-1)
+        kernel_queries, kernel = self._kernel_inputs(query_points, resolved_query_coord)
         out2d = kernel(
             kernel_queries,
             cell_ids,

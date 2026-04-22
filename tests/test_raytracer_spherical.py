@@ -11,7 +11,7 @@ from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import render_midpoint_image
-from batcamp import spherical_crossing_trace
+from batcamp import raytracer_spherical
 from fake_dataset import build_spherical_hex_mesh
 
 _PI = math.pi
@@ -143,7 +143,7 @@ def _cell_exit_event_rpa(
     candidate_times = np.empty(6, dtype=np.float64)
     roots = np.empty(2, dtype=np.float64)
     candidate_xyz = np.empty(3, dtype=np.float64)
-    t_exit, n_active_face, axis_transfer = spherical_crossing_trace.find_exit(
+    t_exit, n_active_face, axis_transfer = raytracer_spherical.find_exit(
         cell_bounds,
         cell_id,
         origin_xyz,
@@ -163,7 +163,7 @@ def _fill_active_face_state_rpa(active_faces: tuple[int, ...]) -> tuple[np.ndarr
     active_face_by_axis = np.full(3, -1, dtype=np.int64)
     active_face_order = np.full(6, -1, dtype=np.int64)
     current_face_id = int(active_faces_array[0]) if active_faces_array.size else -1
-    spherical_crossing_trace._fill_active_face_state(
+    raytracer_spherical._fill_active_face_state(
         active_faces_array,
         int(active_faces_array.size),
         current_face_id,
@@ -188,7 +188,7 @@ def _event_subface_id_rpa(
 ) -> int:
     """Test wrapper around the production subface selector."""
     return int(
-        spherical_crossing_trace.find_subface(
+        raytracer_spherical.find_subface(
             cell_neighbor,
             domain_bounds,
             cell_bounds,
@@ -208,7 +208,7 @@ def _find_cell_rpa_single(tree: Octree, query_xyz: np.ndarray) -> int:
     """Test wrapper around the production spherical cell lookup."""
     query_xyz = np.asarray(query_xyz, dtype=float)
     query_rpa = np.asarray(
-        spherical_crossing_trace.xyz_to_rpa_components(
+        raytracer_spherical.xyz_to_rpa_components(
             float(query_xyz[0]),
             float(query_xyz[1]),
             float(query_xyz[2]),
@@ -216,7 +216,7 @@ def _find_cell_rpa_single(tree: Octree, query_xyz: np.ndarray) -> int:
         dtype=float,
     )
     return int(
-        spherical_crossing_trace.find_cell(
+        raytracer_spherical.find_cell(
             query_rpa,
             tree.cell_child,
             tree._root_cell_ids,
@@ -280,7 +280,7 @@ def walk_faces_rpa(
     path = np.empty(3, dtype=np.int64)
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
-    path_count = spherical_crossing_trace.walk_faces(
+    path_count = raytracer_spherical.walk_faces(
         tree.cell_neighbor,
         tree._domain_bounds,
         tree.cell_bounds,
@@ -1086,7 +1086,7 @@ def test_rpa_midpoint_image_preserves_vector_components() -> None:
 
 def test_rpa_trace_chunk_uses_spherical_initial_crossing_capacity(monkeypatch) -> None:
     tree = _build_uniform_rpa_tree()
-    monkeypatch.setattr(spherical_crossing_trace, "DEFAULT_CROSSING_BUFFER_SIZE", 1)
+    monkeypatch.setattr(raytracer_spherical, "DEFAULT_CROSSING_BUFFER_SIZE", 1)
     tracer = OctreeRayTracer(tree)
 
     segments = tracer.trace(

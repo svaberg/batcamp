@@ -8,10 +8,10 @@ from pathlib import Path
 
 import numpy as np
 
-from .octree import Octree
 from .shared_types import GridShape
 from .shared_types import TreeCoord
 
+# Persisted `.npz` octree-state format version.
 OCTREE_FILE_VERSION = 6
 
 
@@ -25,7 +25,7 @@ class OctreeState:
     cell_ijk: np.ndarray
 
     @classmethod
-    def from_tree(cls, tree: Octree) -> "OctreeState":
+    def from_tree(cls, tree) -> "OctreeState":
         """Capture one octree as minimal persisted state."""
         leaf_row_count = int(tree.cell_levels.shape[0])
         return cls(

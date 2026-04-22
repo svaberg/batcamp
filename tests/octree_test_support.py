@@ -5,26 +5,26 @@ import math
 import numpy as np
 
 from batcamp import Octree
-from batcamp.octree import AXIS0
-from batcamp.octree import AXIS1
-from batcamp.octree import AXIS2
-from batcamp.octree import START
-from batcamp.octree import WIDTH
+from batcamp.octree import TREE_COORD_AXIS0
+from batcamp.octree import TREE_COORD_AXIS1
+from batcamp.octree import TREE_COORD_AXIS2
+from batcamp.octree import BOUNDS_START_SLOT
+from batcamp.octree import BOUNDS_WIDTH_SLOT
 
 
 def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.ndarray, np.ndarray]:
     cell_id = int(cell_id)
     if coord == "xyz" and str(tree.tree_coord) == "xyz":
-        lo = np.array(tree.cell_bounds[cell_id, :, START], dtype=float)
-        hi = np.array(tree.cell_bounds[cell_id, :, START] + tree.cell_bounds[cell_id, :, WIDTH], dtype=float)
+        lo = np.array(tree.cell_bounds[cell_id, :, BOUNDS_START_SLOT], dtype=float)
+        hi = np.array(tree.cell_bounds[cell_id, :, BOUNDS_START_SLOT] + tree.cell_bounds[cell_id, :, BOUNDS_WIDTH_SLOT], dtype=float)
         return lo, hi
     if coord == "xyz" and str(tree.tree_coord) == "rpa":
-        r0 = float(tree.cell_bounds[cell_id, AXIS0, START])
-        r1 = float(tree.cell_bounds[cell_id, AXIS0, START] + tree.cell_bounds[cell_id, AXIS0, WIDTH])
-        polar0 = float(tree.cell_bounds[cell_id, AXIS1, START])
-        polar1 = float(tree.cell_bounds[cell_id, AXIS1, START] + tree.cell_bounds[cell_id, AXIS1, WIDTH])
-        azimuth0 = float(tree.cell_bounds[cell_id, AXIS2, START])
-        azimuth_width = float(tree.cell_bounds[cell_id, AXIS2, WIDTH] % (2.0 * math.pi))
+        r0 = float(tree.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT])
+        r1 = float(tree.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT] + tree.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
+        polar0 = float(tree.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT])
+        polar1 = float(tree.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT] + tree.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
+        azimuth0 = float(tree.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT])
+        azimuth_width = float(tree.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT] % (2.0 * math.pi))
         if np.isclose(azimuth_width, 0.0, atol=1e-12):
             azimuth_width = 2.0 * math.pi
         r = 0.5 * (r0 + r1)
@@ -43,17 +43,17 @@ def cell_bounds(tree: Octree, cell_id: int, *, coord: str = "xyz") -> tuple[np.n
     if coord == "rpa" and str(tree.tree_coord) == "rpa":
         lo = np.array(
             [
-                tree.cell_bounds[cell_id, AXIS0, START],
-                tree.cell_bounds[cell_id, AXIS1, START],
-                tree.cell_bounds[cell_id, AXIS2, START],
+                tree.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+                tree.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+                tree.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
             ],
             dtype=float,
         )
         hi = np.array(
             [
-                tree.cell_bounds[cell_id, AXIS0, START] + tree.cell_bounds[cell_id, AXIS0, WIDTH],
-                tree.cell_bounds[cell_id, AXIS1, START] + tree.cell_bounds[cell_id, AXIS1, WIDTH],
-                (tree.cell_bounds[cell_id, AXIS2, START] + tree.cell_bounds[cell_id, AXIS2, WIDTH])
+                tree.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT] + tree.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+                tree.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT] + tree.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+                (tree.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT] + tree.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT])
                 % (2.0 * math.pi),
             ],
             dtype=float,

@@ -3,41 +3,45 @@
 
 from __future__ import annotations
 
+from functools import cached_property
 import logging
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING
 
 import numpy as np
 from batread import Dataset
 from numba import njit
 from numba import prange
 
+from .builder import _build_octree_state
+from .builder import _warn_if_blocks_aux_mismatch
 from .constants import XYZ_VARS
 from .constants import SUPPORTED_TREE_COORDS
+from .persistence import OctreeState
 from .shared_types import GridShape
 from .shared_types import LevelCountTable
 from .shared_types import TreeCoord
 from .timing import timed_info_decorator
 
-if TYPE_CHECKING:
-    from .persistence import OctreeState
-
 logger = logging.getLogger(__name__)
 
-AXIS0 = 0  # Packed bounds axis index for the first tree coordinate.
-AXIS1 = 1  # Packed bounds axis index for the second tree coordinate.
-AXIS2 = 2  # Packed bounds axis index for the third tree coordinate.
-START = 0  # Packed bounds slot index for interval start.
-WIDTH = 1  # Packed bounds slot index for interval width.
+TREE_COORD_AXIS0 = 0  # Packed bounds axis index for the first tree coordinate.
+TREE_COORD_AXIS1 = 1  # Packed bounds axis index for the second tree coordinate.
+TREE_COORD_AXIS2 = 2  # Packed bounds axis index for the third tree coordinate.
+BOUNDS_START_SLOT = 0  # Packed bounds slot index for interval start.
+BOUNDS_WIDTH_SLOT = 1  # Packed bounds slot index for interval width.
 
-_CHILD_IJK_OFFSETS = np.array(
+# Map child ordinal 0..7 to its `(i, j, k)` low/high bits within a parent cell.
+_CHILD_ORDINAL_TO_IJK_BITS = np.array(
     [[(k >> 2) & 1, (k >> 1) & 1, k & 1] for k in range(8)],
     dtype=np.int64,
 )
-_FACE_AXIS = np.array([0, 0, 1, 1, 2, 2], dtype=np.int8)
-_FACE_SIDE = np.array([0, 1, 0, 1, 0, 1], dtype=np.int8)
-_FACE_TANGENTIAL_AXES = np.array(
+# Map face id 0..5 to the tree-coordinate axis normal to that face.
+_FACE_ID_TO_AXIS = np.array([0, 0, 1, 1, 2, 2], dtype=np.int8)
+# Map face id 0..5 to side 0/1, where 0 is the lower face and 1 is the upper face.
+_FACE_ID_TO_SIDE = np.array([0, 1, 0, 1, 0, 1], dtype=np.int8)
+# Map face id 0..5 to the two tangential axes that lie in that face.
+_FACE_ID_TO_TANGENTIAL_AXES = np.array(
     [
         [1, 2],
         [1, 2],
@@ -48,27 +52,28 @@ _FACE_TANGENTIAL_AXES = np.array(
     ],
     dtype=np.int8,
 )
-_AXIS_CHILD_SHIFT = np.array([2, 1, 0], dtype=np.int8)
+# Map tree-coordinate axis 0/1/2 to the child-bit shift used in Morton-style child ordinals.
+_AXIS_TO_CHILD_BIT_SHIFT = np.array([2, 1, 0], dtype=np.int8)
 
 
 @njit(cache=True)
 def _contains_box(
-    q: np.ndarray,
+    query_point: np.ndarray,
     bounds: np.ndarray,
     axis2_period: float,
     axis2_periodic: bool,
     tol: float,
 ) -> bool:
     """Return whether one query lies inside one packed axis-0/1/2 box."""
-    for axis in range(AXIS2):
-        value = float(q[axis])
-        start = float(bounds[axis, START])
-        width = float(bounds[axis, WIDTH])
+    for axis in range(TREE_COORD_AXIS2):
+        value = float(query_point[axis])
+        start = float(bounds[axis, BOUNDS_START_SLOT])
+        width = float(bounds[axis, BOUNDS_WIDTH_SLOT])
         if value < (start - tol) or value > (start + width + tol):
             return False
-    value = float(q[AXIS2])
-    start = float(bounds[AXIS2, START])
-    width = float(bounds[AXIS2, WIDTH])
+    value = float(query_point[TREE_COORD_AXIS2])
+    start = float(bounds[TREE_COORD_AXIS2, BOUNDS_START_SLOT])
+    width = float(bounds[TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT])
     if axis2_periodic:
         if width >= (float(axis2_period) - tol):
             return True
@@ -97,15 +102,19 @@ def _find_cells(
         end = min(n_query, start + chunk_size)
         hint_cell_id = -1
         for i in range(start, end):
-            q = queries[i]
-            if not (np.isfinite(q[AXIS0]) and np.isfinite(q[AXIS1]) and np.isfinite(q[AXIS2])):
+            query_point = queries[i]
+            if not (
+                np.isfinite(query_point[TREE_COORD_AXIS0])
+                and np.isfinite(query_point[TREE_COORD_AXIS1])
+                and np.isfinite(query_point[TREE_COORD_AXIS2])
+            ):
                 cell_id = -1
-            elif not _contains_box(q, domain_bounds, axis2_period, axis2_periodic, tol=0.0):
+            elif not _contains_box(query_point, domain_bounds, axis2_period, axis2_periodic, tol=0.0):
                 cell_id = -1
             else:
                 current = int(hint_cell_id)
                 while current >= 0 and not _contains_box(
-                    q,
+                    query_point,
                     cell_bounds[current],
                     axis2_period,
                     axis2_periodic,
@@ -116,7 +125,7 @@ def _find_cells(
                 if current < 0:
                     for root_pos in range(int(root_cell_ids.shape[0])):
                         root_cell_id = int(root_cell_ids[root_pos])
-                        if _contains_box(q, cell_bounds[root_cell_id], axis2_period, axis2_periodic, 1.0e-10):
+                        if _contains_box(query_point, cell_bounds[root_cell_id], axis2_period, axis2_periodic, 1.0e-10):
                             current = root_cell_id
                             break
                 if current < 0:
@@ -128,7 +137,7 @@ def _find_cells(
                             child_id = int(cell_child[current, child_ord])
                             if child_id < 0:
                                 continue
-                            if _contains_box(q, cell_bounds[child_id], axis2_period, axis2_periodic, 1.0e-10):
+                            if _contains_box(query_point, cell_bounds[child_id], axis2_period, axis2_periodic, 1.0e-10):
                                 next_cell_id = child_id
                                 break
                         if next_cell_id < 0:
@@ -267,9 +276,9 @@ def _build_cell_topology(
         axis_bases,
     )
     leaf_child_ord = (
-        ((leaf_ijk[leaf_mask, AXIS0] & 1) << 2)
-        | ((leaf_ijk[leaf_mask, AXIS1] & 1) << 1)
-        | (leaf_ijk[leaf_mask, AXIS2] & 1)
+        ((leaf_ijk[leaf_mask, TREE_COORD_AXIS0] & 1) << 2)
+        | ((leaf_ijk[leaf_mask, TREE_COORD_AXIS1] & 1) << 1)
+        | (leaf_ijk[leaf_mask, TREE_COORD_AXIS2] & 1)
     ).astype(np.int64)
 
     internal_mask = internal_depth > 0
@@ -280,9 +289,9 @@ def _build_cell_topology(
         axis_bases,
     )
     internal_child_ord = (
-        ((internal_ijk[internal_mask, AXIS0] & 1) << 2)
-        | ((internal_ijk[internal_mask, AXIS1] & 1) << 1)
-        | (internal_ijk[internal_mask, AXIS2] & 1)
+        ((internal_ijk[internal_mask, TREE_COORD_AXIS0] & 1) << 2)
+        | ((internal_ijk[internal_mask, TREE_COORD_AXIS1] & 1) << 1)
+        | (internal_ijk[internal_mask, TREE_COORD_AXIS2] & 1)
     ).astype(np.int64)
 
     child_ids = np.concatenate((leaf_child_ids, internal_child_ids))
@@ -342,9 +351,9 @@ def _rebuild_cell_state(
 def _child_ord_from_cell_ijk(cell_ijk: np.ndarray, cell_id: int) -> int:
     """Return one runtime cell's child ordinal inside its parent."""
     return (
-        ((int(cell_ijk[cell_id, AXIS0]) & 1) << 2)
-        | ((int(cell_ijk[cell_id, AXIS1]) & 1) << 1)
-        | (int(cell_ijk[cell_id, AXIS2]) & 1)
+        ((int(cell_ijk[cell_id, TREE_COORD_AXIS0]) & 1) << 2)
+        | ((int(cell_ijk[cell_id, TREE_COORD_AXIS1]) & 1) << 1)
+        | (int(cell_ijk[cell_id, TREE_COORD_AXIS2]) & 1)
     )
 
 
@@ -366,17 +375,17 @@ def _neighbor_child_for_subface(
     if not has_child:
         return int(neighbor_id)
 
-    axis = int(_FACE_AXIS[face_id])
-    side = int(_FACE_SIDE[face_id])
-    tangential_axes = _FACE_TANGENTIAL_AXES[face_id]
+    axis = int(_FACE_ID_TO_AXIS[face_id])
+    side = int(_FACE_ID_TO_SIDE[face_id])
+    tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[face_id]
     child_bits = np.zeros(3, dtype=np.int64)
     child_bits[axis] = 1 if side == 0 else 0
     child_bits[int(tangential_axes[0])] = (int(subface_id) >> 1) & 1
     child_bits[int(tangential_axes[1])] = int(subface_id) & 1
     child_ord = (
-        ((int(child_bits[AXIS0]) & 1) << 2)
-        | ((int(child_bits[AXIS1]) & 1) << 1)
-        | (int(child_bits[AXIS2]) & 1)
+        ((int(child_bits[TREE_COORD_AXIS0]) & 1) << 2)
+        | ((int(child_bits[TREE_COORD_AXIS1]) & 1) << 1)
+        | (int(child_bits[TREE_COORD_AXIS2]) & 1)
     )
     return int(cell_child[neighbor_id, child_ord])
 
@@ -430,7 +439,7 @@ def _build_cell_neighbor_graph(
         depth_cursor[depth] = pos + 1
 
     root_lookup = np.full(
-        (int(root_shape[AXIS0]), int(root_shape[AXIS1]), int(root_shape[AXIS2])),
+        (int(root_shape[TREE_COORD_AXIS0]), int(root_shape[TREE_COORD_AXIS1]), int(root_shape[TREE_COORD_AXIS2])),
         -1,
         dtype=np.int64,
     )
@@ -439,35 +448,35 @@ def _build_cell_neighbor_graph(
         if root_id < 0:
             continue
         root_ijk = cell_ijk[root_id]
-        root_lookup[int(root_ijk[AXIS0]), int(root_ijk[AXIS1]), int(root_ijk[AXIS2])] = root_id
+        root_lookup[int(root_ijk[TREE_COORD_AXIS0]), int(root_ijk[TREE_COORD_AXIS1]), int(root_ijk[TREE_COORD_AXIS2])] = root_id
 
     for pos in range(int(depth_offset[0]), int(depth_offset[1])):
         cell_id = int(cells_by_depth[pos])
         ijk = cell_ijk[cell_id]
         for face_id in range(6):
-            axis = int(_FACE_AXIS[face_id])
-            side = int(_FACE_SIDE[face_id])
-            neighbor_ijk0 = int(ijk[AXIS0])
-            neighbor_ijk1 = int(ijk[AXIS1])
-            neighbor_ijk2 = int(ijk[AXIS2])
-            if axis == AXIS0:
+            axis = int(_FACE_ID_TO_AXIS[face_id])
+            side = int(_FACE_ID_TO_SIDE[face_id])
+            neighbor_ijk0 = int(ijk[TREE_COORD_AXIS0])
+            neighbor_ijk1 = int(ijk[TREE_COORD_AXIS1])
+            neighbor_ijk2 = int(ijk[TREE_COORD_AXIS2])
+            if axis == TREE_COORD_AXIS0:
                 neighbor_ijk0 += -1 if side == 0 else 1
-            elif axis == AXIS1:
+            elif axis == TREE_COORD_AXIS1:
                 neighbor_ijk1 += -1 if side == 0 else 1
             else:
                 neighbor_ijk2 += -1 if side == 0 else 1
                 if axis2_periodic:
                     if neighbor_ijk2 < 0:
-                        neighbor_ijk2 += int(root_shape[AXIS2])
-                    elif neighbor_ijk2 >= int(root_shape[AXIS2]):
-                        neighbor_ijk2 -= int(root_shape[AXIS2])
+                        neighbor_ijk2 += int(root_shape[TREE_COORD_AXIS2])
+                    elif neighbor_ijk2 >= int(root_shape[TREE_COORD_AXIS2]):
+                        neighbor_ijk2 -= int(root_shape[TREE_COORD_AXIS2])
             if (
                 neighbor_ijk0 < 0
-                or neighbor_ijk0 >= int(root_shape[AXIS0])
+                or neighbor_ijk0 >= int(root_shape[TREE_COORD_AXIS0])
                 or neighbor_ijk1 < 0
-                or neighbor_ijk1 >= int(root_shape[AXIS1])
+                or neighbor_ijk1 >= int(root_shape[TREE_COORD_AXIS1])
                 or neighbor_ijk2 < 0
-                or neighbor_ijk2 >= int(root_shape[AXIS2])
+                or neighbor_ijk2 >= int(root_shape[TREE_COORD_AXIS2])
             ):
                 neighbor_id = -1
             else:
@@ -485,17 +494,17 @@ def _build_cell_neighbor_graph(
             parent_id = int(cell_parent[cell_id])
             child_ord = _child_ord_from_cell_ijk(cell_ijk, cell_id)
             for face_id in range(6):
-                axis = int(_FACE_AXIS[face_id])
-                side = int(_FACE_SIDE[face_id])
-                shift = int(_AXIS_CHILD_SHIFT[axis])
+                axis = int(_FACE_ID_TO_AXIS[face_id])
+                side = int(_FACE_ID_TO_SIDE[face_id])
+                shift = int(_AXIS_TO_CHILD_BIT_SHIFT[axis])
                 side_bit = (child_ord >> shift) & 1
 
                 if (side == 0 and side_bit == 1) or (side == 1 and side_bit == 0):
                     base_neighbor_id = int(cell_child[parent_id, child_ord ^ (1 << shift)])
                 else:
-                    tangential_axes = _FACE_TANGENTIAL_AXES[face_id]
-                    first_bit = (child_ord >> int(_AXIS_CHILD_SHIFT[int(tangential_axes[0])])) & 1
-                    second_bit = (child_ord >> int(_AXIS_CHILD_SHIFT[int(tangential_axes[1])])) & 1
+                    tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[face_id]
+                    first_bit = (child_ord >> int(_AXIS_TO_CHILD_BIT_SHIFT[int(tangential_axes[0])])) & 1
+                    second_bit = (child_ord >> int(_AXIS_TO_CHILD_BIT_SHIFT[int(tangential_axes[1])])) & 1
                     parent_subface_id = 2 * first_bit + second_bit
                     base_neighbor_id = int(next_cell[parent_id, face_id, parent_subface_id])
 
@@ -505,6 +514,10 @@ def _build_cell_neighbor_graph(
                     )
 
     return next_cell
+
+
+from . import octree_cartesian
+from . import octree_spherical
 
 
 class Octree:
@@ -529,8 +542,6 @@ class Octree:
         `tree_coord` optionally fixes the coordinate system. The `build_*`
         arguments only affect geometric inference during construction.
         """
-        from .builder import _build_octree_state
-
         state = _build_octree_state(
             points,
             corners,
@@ -612,19 +623,20 @@ class Octree:
         )
         logger.info("_build_cell_neighbor_graph complete in %.2fs", float(time.perf_counter() - t0))
         self._leaf_slot_count = int(leaf_levels.shape[0])
-        if self._tree_coord == "xyz":
-            from .cartesian import _attach_cartesian_coord_state
-
-            attach_coord_state = _attach_cartesian_coord_state
-        else:
-            from .spherical import _attach_spherical_coord_state
-
-            attach_coord_state = _attach_spherical_coord_state
-        logger.info("%s: coord=%s", attach_coord_state.__name__, self._tree_coord)
-        logger.debug("%s...", attach_coord_state.__name__)
+        self._octree_module = octree_cartesian if self._tree_coord == "xyz" else octree_spherical
+        logger.info("%s: coord=%s", self._octree_module.attach_state.__name__, self._tree_coord)
+        logger.debug("%s...", self._octree_module.attach_state.__name__)
         t0 = time.perf_counter()
-        cell_bounds, domain_bounds, axis2_period, axis2_periodic = attach_coord_state(self, points, corner_rows)
-        logger.info("%s complete in %.2fs", attach_coord_state.__name__, float(time.perf_counter() - t0))
+        cell_bounds, domain_bounds, axis2_period, axis2_periodic = self._octree_module.attach_state(
+            self,
+            points,
+            corner_rows,
+        )
+        logger.info(
+            "%s complete in %.2fs",
+            self._octree_module.attach_state.__name__,
+            float(time.perf_counter() - t0),
+        )
         self._corners = corner_rows
         self._cell_bounds = cell_bounds
         self._domain_bounds = domain_bounds
@@ -678,7 +690,7 @@ class Octree:
         """Return leaf-row corner point ids in Tecplot/BATSRUS brick order."""
         return self._corners
 
-    def _normalize_leaf_cell_ids(self, cell_id: int | np.ndarray) -> np.ndarray:
+    def normalize_leaf_cell_ids(self, cell_id: int | np.ndarray) -> np.ndarray:
         """Return validated leaf-slot ids as one `int64` array."""
         leaf_ids = np.asarray(cell_id, dtype=np.int64)
         if np.any(leaf_ids < 0) or np.any(leaf_ids >= self._leaf_slot_count):
@@ -689,7 +701,7 @@ class Octree:
 
     def cell_points(self, cell_id: int | np.ndarray) -> np.ndarray:
         """Return explicit leaf corner point coordinates with shape `(..., 8, 3)`."""
-        leaf_ids = self._normalize_leaf_cell_ids(cell_id)
+        leaf_ids = self.normalize_leaf_cell_ids(cell_id)
         if leaf_ids.ndim == 0:
             return self._points[self._corners[int(leaf_ids)]]
         return self._points[self._corners[leaf_ids]]
@@ -699,18 +711,10 @@ class Octree:
         """Return packed `(n_cells, 3, 2)` start/width bounds for rebuilt cells."""
         return self._cell_bounds
 
-    @property
+    @cached_property
     def cell_volumes(self) -> np.ndarray:
         """Return leaf-slot cell volumes aligned with `cell_levels`."""
-        if self.tree_coord == "xyz":
-            from .cartesian import cell_volumes_xyz
-
-            return cell_volumes_xyz(self)
-        if self.tree_coord == "rpa":
-            from .spherical import cell_volumes_rpa
-
-            return cell_volumes_rpa(self)
-        raise NotImplementedError(f"cell_volumes is unsupported for tree_coord={self.tree_coord!r}.")
+        return self._octree_module.cell_volumes(self)
 
     @property
     def packed_domain_bounds(self) -> np.ndarray:
@@ -769,8 +773,6 @@ class Octree:
 
     def save(self, path: str | Path) -> None:
         """Save this tree to a compressed `.npz` file."""
-        from .persistence import OctreeState
-
         state = OctreeState.from_tree(self)
         out_path = Path(path)
         state.save_npz(out_path)
@@ -791,8 +793,6 @@ class Octree:
         `tree_coord` optionally fixes the coordinate system. The `build_*`
         arguments only affect geometric inference during construction.
         """
-        from .builder import _warn_if_blocks_aux_mismatch
-
         if ds.corners is None:
             raise ValueError("Dataset has no corners; cannot build octree.")
         logger.debug("from_ds...")
@@ -846,8 +846,6 @@ class Octree:
         corners: np.ndarray,
     ) -> "Octree":
         """Load a tree from `.npz` and bind it to explicit point/corner geometry."""
-        from .persistence import OctreeState
-
         in_path = Path(path)
         state = OctreeState.load_npz(in_path)
         tree = cls.from_state(state, points=points, corners=corners)
@@ -877,56 +875,17 @@ class Octree:
 
     def lookup_points(self, points: np.ndarray, *, coord: TreeCoord) -> np.ndarray:
         """Resolve one batch of query points to leaf cell ids, with `-1` for misses."""
-        q = np.array(points, dtype=np.float64, order="C")
-        if q.ndim == 0 or q.shape[-1] != 3:
+        query_points = np.array(points, dtype=np.float64, order="C")
+        if query_points.ndim == 0 or query_points.shape[-1] != 3:
             raise ValueError("points must have shape (..., 3).")
-        shape = (1,) if q.ndim == 1 else q.shape[:-1]
-        q = q.reshape(-1, 3)
+        shape = (1,) if query_points.ndim == 1 else query_points.shape[:-1]
+        query_points = query_points.reshape(-1, 3)
         resolved_coord = str(coord)
         if resolved_coord not in SUPPORTED_TREE_COORDS:
             raise ValueError(
                 f"Unsupported lookup coord '{resolved_coord}'; expected one of {SUPPORTED_TREE_COORDS}."
             )
-        if self.tree_coord == "xyz":
-            if resolved_coord != "xyz":
-                raise ValueError("Cartesian lookup supports only coord='xyz'.")
-            from .cartesian import _find_cells_xyz
-
-            q_local = q
-            cell_ids = _find_cells_xyz(
-                q_local,
-                self._cell_child,
-                self._root_cell_ids,
-                self._cell_parent,
-                self._cell_bounds,
-                self._domain_bounds,
-            )
-        elif resolved_coord == "rpa":
-            q_local = q
-            cell_ids = _find_cells(
-                q_local,
-                self._cell_child,
-                self._root_cell_ids,
-                self._cell_parent,
-                self._cell_bounds,
-                self._domain_bounds,
-                self._axis2_period,
-                self._axis2_periodic,
-            )
-        else:
-            from .spherical import xyz_arrays_to_rpa
-
-            q_local = np.column_stack(xyz_arrays_to_rpa(q[:, 0], q[:, 1], q[:, 2]))
-            cell_ids = _find_cells(
-                q_local,
-                self._cell_child,
-                self._root_cell_ids,
-                self._cell_parent,
-                self._cell_bounds,
-                self._domain_bounds,
-                self._axis2_period,
-                self._axis2_periodic,
-            )
+        cell_ids = self._octree_module.lookup_points(self, query_points, resolved_coord)
         return cell_ids.reshape(shape)
 
     def domain_bounds(self, *, coord: TreeCoord = "xyz") -> tuple[np.ndarray, np.ndarray]:
@@ -938,6 +897,6 @@ class Octree:
             )
         if resolved_coord != self.tree_coord:
             raise ValueError(f"domain_bounds only supports coord={self.tree_coord!r} for this tree.")
-        lo = np.array(self._domain_bounds[:, START], dtype=float)
-        hi = np.array(self._domain_bounds[:, START] + self._domain_bounds[:, WIDTH], dtype=float)
+        lo = np.array(self._domain_bounds[:, BOUNDS_START_SLOT], dtype=float)
+        hi = np.array(self._domain_bounds[:, BOUNDS_START_SLOT] + self._domain_bounds[:, BOUNDS_WIDTH_SLOT], dtype=float)
         return lo, hi

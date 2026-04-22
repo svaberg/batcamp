@@ -4,16 +4,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 from typing import TypeAlias
 
 import numpy as np
 from batread import Dataset
 
 from .shared_types import TreeCoord
-
-if TYPE_CHECKING:
-    from .persistence import OctreeState
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""
@@ -125,6 +121,11 @@ def _resolve_cell_levels(
     return levels, max_level
 
 
+from . import builder_cartesian
+from . import builder_spherical
+from .persistence import OctreeState
+
+
 def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
     """Warn when BLOCKS metadata is malformed or disagrees with the dataset cell count."""
     raw = ds.aux.get("BLOCKS")
@@ -189,10 +190,7 @@ def _build_octree_state(
     logger.info("resolve tree coord: coord=%s", tree_coord)
 
     if tree_coord == "rpa":
-        from .builder_spherical import infer_levels
-        from .builder_spherical import populate_tree_state
-
-        levels, max_level, leaf_shape = infer_levels(
+        levels, max_level, leaf_shape = builder_spherical.infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
@@ -201,10 +199,7 @@ def _build_octree_state(
             level_atol=level_atol,
         )
     elif tree_coord == "xyz":
-        from .builder_cartesian import infer_levels
-        from .builder_cartesian import populate_tree_state
-
-        levels, max_level, leaf_shape = infer_levels(
+        levels, max_level, leaf_shape = builder_cartesian.infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
@@ -254,6 +249,9 @@ def _build_octree_state(
     )
 
     axis_tol_kwargs = {"axis_tol": axis_tol} if tree_coord == "rpa" else {}
+    populate_tree_state = (
+        builder_spherical.populate_tree_state if tree_coord == "rpa" else builder_cartesian.populate_tree_state
+    )
     built_state = populate_tree_state(
         leaf_shape=leaf_shape,
         max_level=tree_depth,
@@ -263,7 +261,6 @@ def _build_octree_state(
         **axis_tol_kwargs,
     )
     logger.info("populate tree state: coord=%s", tree_coord)
-    from .persistence import OctreeState
     cell_levels = np.asarray(built_state["cell_levels"], dtype=np.int64)
     cell_ijk = np.asarray(built_state["cell_ijk"], dtype=np.int64)
 

@@ -6,14 +6,14 @@ import numpy as np
 import pytest
 
 from batcamp import Octree
-from batcamp.cartesian_crossing_trace import find_exit
-from batcamp.cartesian_crossing_trace import _fill_active_face_state
-from batcamp.cartesian_crossing_trace import find_subface
-from batcamp.cartesian_crossing_trace import walk_faces
-from batcamp.cartesian_crossing_trace import trace_ray
-from batcamp.octree import _FACE_AXIS
-from batcamp.octree import _FACE_SIDE
-from batcamp.octree import _FACE_TANGENTIAL_AXES
+from batcamp.raytracer_cartesian import find_exit
+from batcamp.raytracer_cartesian import _fill_active_face_state
+from batcamp.raytracer_cartesian import find_subface
+from batcamp.raytracer_cartesian import walk_faces
+from batcamp.raytracer_cartesian import trace_ray
+from batcamp.octree import _FACE_ID_TO_AXIS
+from batcamp.octree import _FACE_ID_TO_SIDE
+from batcamp.octree import _FACE_ID_TO_TANGENTIAL_AXES
 from fake_dataset import build_cartesian_hex_mesh
 
 # Distinct situations covered by this toy suite:
@@ -368,8 +368,8 @@ def _face_patch_bounds(
     patch[:, 0] = bounds[:, 0]
     patch[:, 1] = bounds[:, 0] + bounds[:, 1]
 
-    axis = int(_FACE_AXIS[int(face_id)])
-    side = int(_FACE_SIDE[int(face_id)])
+    axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+    side = int(_FACE_ID_TO_SIDE[int(face_id)])
     face_value = patch[axis, side]
     patch[axis, 0] = face_value
     patch[axis, 1] = face_value
@@ -377,7 +377,7 @@ def _face_patch_bounds(
     if subface_id is None:
         return patch
 
-    for bit_shift, tangential_axis in zip((1, 0), _FACE_TANGENTIAL_AXES[int(face_id)]):
+    for bit_shift, tangential_axis in zip((1, 0), _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]):
         tangential_axis = int(tangential_axis)
         start = patch[tangential_axis, 0]
         stop = patch[tangential_axis, 1]
@@ -393,8 +393,8 @@ def _is_domain_boundary_face(tree: Octree, cell_id: int, face_id: int) -> bool:
     """Return whether one leaf face lies on the Cartesian domain boundary."""
     domain_lo, domain_hi = tree.domain_bounds(coord="xyz")
     bounds = np.asarray(tree.cell_bounds[int(cell_id)], dtype=float)
-    axis = int(_FACE_AXIS[int(face_id)])
-    side = int(_FACE_SIDE[int(face_id)])
+    axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+    side = int(_FACE_ID_TO_SIDE[int(face_id)])
     face_value = float(bounds[axis, 0]) if side == 0 else float(bounds[axis, 0] + bounds[axis, 1])
     boundary_value = float(domain_lo[axis]) if side == 0 else float(domain_hi[axis])
     return face_value == boundary_value
@@ -434,8 +434,8 @@ def _assert_same_level_face_neighbors_match_ijk(tree: Octree) -> None:
     """Check exact `ijk` offsets for same-level leaf neighbors."""
     for cell_id in _leaf_ids(tree):
         for face_id in range(6):
-            axis = int(_FACE_AXIS[int(face_id)])
-            side = int(_FACE_SIDE[int(face_id)])
+            axis = int(_FACE_ID_TO_AXIS[int(face_id)])
+            side = int(_FACE_ID_TO_SIDE[int(face_id)])
             for subface_id in range(4):
                 neighbor_id = int(tree.cell_neighbor[int(cell_id), face_id, subface_id])
                 if neighbor_id < 0:

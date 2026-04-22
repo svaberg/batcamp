@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from batcamp import spherical_crossing_trace
+from batcamp import raytracer_spherical
 from sample_data_helper import local_data_file
 
 
@@ -29,7 +29,7 @@ _EXAMPLE_LOGGERS = (
     "batcamp.builder",
     "batcamp.octree",
     "batcamp.interpolator",
-    "batcamp.raytracing",
+    "batcamp.raytracer",
 )
 
 
@@ -374,7 +374,7 @@ def test_star_movie_local_example_first_frame_has_no_start_owner_drops() -> None
         t_min=0.0,
         t_max=np.inf,
     )
-    no_root_owner = int(np.count_nonzero(ray_status == spherical_crossing_trace.TRACE_START_NO_ROOT_OWNER))
+    no_root_owner = int(np.count_nonzero(ray_status == raytracer_spherical.TRACE_START_NO_ROOT_OWNER))
     assert no_root_owner == 0
 
     image, counts = module._render_frame(
