@@ -716,6 +716,27 @@ class Octree:
         """Return leaf-slot cell volumes aligned with `cell_levels`."""
         return self._octree_module.cell_volumes(self)
 
+    def native_axis_slabs(self, axis: int) -> np.ndarray:
+        """Return consecutive native-axis slab bounds induced by occupied leaf cells."""
+        resolved_axis = int(axis)
+        if resolved_axis < 0 or resolved_axis > 2:
+            raise ValueError("axis must be one of 0, 1, or 2.")
+
+        occupied_leaf_ids = np.flatnonzero(self.cell_levels >= 0)
+        leaf_bounds = np.asarray(
+            self.cell_bounds[occupied_leaf_ids, resolved_axis, :],
+            dtype=np.float64,
+        )
+        slab_edges = np.unique(
+            np.concatenate(
+                (
+                    leaf_bounds[:, BOUNDS_START_SLOT],
+                    leaf_bounds[:, BOUNDS_START_SLOT] + leaf_bounds[:, BOUNDS_WIDTH_SLOT],
+                )
+            )
+        )
+        return np.column_stack((slab_edges[:-1], slab_edges[1:]))
+
     @property
     def packed_domain_bounds(self) -> np.ndarray:
         """Return packed `(3, 2)` start/width domain bounds in tree coordinates."""

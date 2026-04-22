@@ -10,6 +10,10 @@ _CELL_TIMEOUT_SECONDS = 1200
 
 _NOTEBOOK_CASES = [
     pytest.param(
+        "integrals.ipynb",
+        id="integrals_notebook_exec",
+    ),
+    pytest.param(
         "ray_image.ipynb",
         id="ray_image_exec",
     ),

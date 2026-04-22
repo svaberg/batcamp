@@ -466,6 +466,21 @@ def test_xyz_cell_volumes_match_regular_mesh(cartesian_octree_context) -> None:
     np.testing.assert_allclose(tree.cell_volumes, np.ones(int(tree.cell_count), dtype=float), atol=1.0e-12, rtol=0.0)
 
 
+def test_xyz_native_axis_slabs_match_leaf_x_breaks(cartesian_octree_context) -> None:
+    """Cartesian native-axis slabs should recover the occupied x-interval partition."""
+    _ds, tree, _interp = cartesian_octree_context
+    expected = np.array(
+        [
+            [-2.0, -1.0],
+            [-1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 2.0],
+        ],
+        dtype=float,
+    )
+    np.testing.assert_allclose(tree.native_axis_slabs(0), expected, atol=1.0e-12, rtol=0.0)
+
+
 def test_xyz_cell_volumes_match_adaptive_mesh() -> None:
     """Adaptive Cartesian leaf volumes should stay aligned with the persisted leaf rows."""
     ds, levels = _build_adaptive_xyz_dataset()
@@ -542,6 +557,19 @@ def test_rpa_cell_volumes_match_physical_spherical_formula(spherical_octree_cont
     _ds, tree, _interp = spherical_octree_context
     expected = _expected_rpa_cell_volumes(tree.cell_bounds[: int(tree.cell_count)])
     np.testing.assert_allclose(tree.cell_volumes, expected, atol=1.0e-12, rtol=0.0)
+
+
+def test_rpa_native_axis_slabs_match_leaf_radial_breaks(spherical_octree_context) -> None:
+    """Spherical native-axis slabs should recover the occupied radial partition."""
+    _ds, tree, _interp = spherical_octree_context
+    expected = np.array(
+        [
+            [1.0, 2.0],
+            [2.0, 3.0],
+        ],
+        dtype=float,
+    )
+    np.testing.assert_allclose(tree.native_axis_slabs(0), expected, atol=1.0e-12, rtol=0.0)
 
 
 def test_rpa_cell_integrals_match_constant_field(spherical_octree_context) -> None:
