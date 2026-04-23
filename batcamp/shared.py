@@ -16,6 +16,7 @@ from typing import NamedTuple
 from typing import TypeAlias
 
 import numpy as np
+from numba import njit
 
 __all__ = [
     "DEFAULT_TREE_COORD",
@@ -25,11 +26,13 @@ __all__ = [
     "LevelCountRow",
     "LevelCountTable",
     "LookupTree",
+    "resolved_active_side",
     "TraceScratch",
     "SUPPORTED_TREE_COORDS",
     "TraversalTree",
     "TrilinearField",
     "TreeCoord",
+    "quick_subface_slot",
     "XYZ_VARS",
     "timed_info_decorator",
 ]
@@ -99,6 +102,47 @@ class TraceScratch(NamedTuple):
     cell_counts: np.ndarray
     cell_ids: np.ndarray
     times: np.ndarray
+
+
+@njit(cache=True)
+def quick_subface_slot(
+    cell_neighbor: np.ndarray,
+    cell_id: int,
+    face_id: int,
+) -> tuple[int, bool]:
+    """Return an immediately-resolved subface slot when one neighbor row is uniform."""
+    first_neighbor = -1
+    first_slot = -1
+    for subface_id in range(4):
+        neighbor_id = int(cell_neighbor[int(cell_id), int(face_id), subface_id])
+        if neighbor_id < 0:
+            continue
+        if first_neighbor < 0:
+            first_neighbor = neighbor_id
+            first_slot = int(subface_id)
+            continue
+        if neighbor_id != first_neighbor:
+            return -1, False
+    if first_neighbor < 0:
+        return 0, True
+    return int(first_slot), True
+
+
+@njit(cache=True)
+def resolved_active_side(
+    face_id_to_side: np.ndarray,
+    active_face_id: int,
+    active_face_order: np.ndarray,
+    current_face_order: int,
+    implicit_active_side: int,
+) -> int:
+    """Return the tangential side chosen by explicit or implicit active-face ownership."""
+    if active_face_id >= 0:
+        active_side = int(face_id_to_side[int(active_face_id)])
+        if int(active_face_order[int(active_face_id)]) < int(current_face_order):
+            active_side = 1 - active_side
+        return int(active_side)
+    return int(implicit_active_side)
 
 
 def timed_info_decorator(func):

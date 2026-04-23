@@ -29,6 +29,8 @@ from .octree import BOUNDS_WIDTH_SLOT
 from .octree import _FACE_ID_TO_AXIS
 from .octree import _FACE_ID_TO_SIDE
 from .octree import _FACE_ID_TO_TANGENTIAL_AXES
+from .shared import quick_subface_slot
+from .shared import resolved_active_side
 from .shared import TraversalTree
 
 # Start with a moderate Cartesian scratch row because straight box crossings
@@ -446,6 +448,113 @@ def is_on_face(
 
 
 @njit(cache=True)
+def _implicit_active_side(
+    value: float,
+    current_start: float,
+    current_stop: float,
+    direction_value: float,
+) -> int:
+    """Return an implicit active-side marker when the crossing sits on one interval boundary."""
+    if value == current_start and direction_value < 0.0:
+        return 0
+    if value == current_stop and direction_value > 0.0:
+        return 1
+    return -1
+
+
+@njit(cache=True)
+def _contains_active_interval(
+    current_start: float,
+    current_stop: float,
+    neighbor_start: float,
+    neighbor_stop: float,
+    active_side: int,
+    value: float,
+) -> bool:
+    """Return whether one neighbor owns a tangential axis constrained by another active face."""
+    contains_current_interval = neighbor_start <= current_start and current_stop <= neighbor_stop
+    if not contains_current_interval:
+        if active_side == 0:
+            if neighbor_start != current_start:
+                return False
+        else:
+            if neighbor_stop != current_stop:
+                return False
+    return not (value < current_start or value > current_stop)
+
+
+@njit(cache=True)
+def _contains_open_interval(
+    value: float,
+    start: float,
+    stop: float,
+    direction_value: float,
+    domain_start: float,
+) -> bool:
+    """Return whether one neighbor owns the open interval after the crossing on one axis."""
+    if direction_value > 0.0:
+        return not (value < start or value >= stop)
+    if direction_value < 0.0:
+        return not (value <= start or value > stop)
+    if start == domain_start:
+        return not (value < start or value > stop)
+    return not (value <= start or value > stop)
+
+
+@njit(cache=True)
+def _axis_contains_neighbor(
+    current_bounds: np.ndarray,
+    neighbor_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis: int,
+    active_face_by_axis: np.ndarray,
+    active_face_order: np.ndarray,
+    current_face_order: int,
+    crossing: np.ndarray,
+    direction: np.ndarray,
+) -> bool:
+    """Return whether one neighbor owns one Cartesian tangential axis after the crossing."""
+    value = float(crossing[axis])
+    current_start = float(current_bounds[axis, BOUNDS_START_SLOT])
+    current_stop = current_start + float(current_bounds[axis, BOUNDS_WIDTH_SLOT])
+    active_face_id = int(active_face_by_axis[axis])
+    direction_value = float(direction[axis])
+    implicit_active_side = _implicit_active_side(
+        value,
+        current_start,
+        current_stop,
+        direction_value,
+    )
+    if active_face_id >= 0 or implicit_active_side >= 0:
+        neighbor_start = float(neighbor_bounds[axis, BOUNDS_START_SLOT])
+        neighbor_stop = neighbor_start + float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT])
+        active_side = resolved_active_side(
+            _FACE_ID_TO_SIDE,
+            active_face_id,
+            active_face_order,
+            current_face_order,
+            implicit_active_side,
+        )
+        return _contains_active_interval(
+            current_start,
+            current_stop,
+            neighbor_start,
+            neighbor_stop,
+            active_side,
+            value,
+        )
+    start = float(neighbor_bounds[axis, BOUNDS_START_SLOT])
+    stop = start + float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT])
+    return _contains_open_interval(
+        value,
+        start,
+        stop,
+        direction_value,
+        float(domain_bounds[axis, BOUNDS_START_SLOT]),
+    )
+
+
+@njit(cache=True)
 def find_subface(
     traversal: TraversalTree,
     cell_id: int,
@@ -472,24 +581,9 @@ def find_subface(
         Face-patch slot id, `-1` for no owner, or `-2` for ambiguity.
     """
     tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]
-    first_neighbor = -1
-    first_slot = -1
-    has_multiple_neighbors = False
-    for subface_id in range(4):
-        neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
-        if neighbor_id < 0:
-            continue
-        if first_neighbor < 0:
-            first_neighbor = neighbor_id
-            first_slot = int(subface_id)
-            continue
-        if neighbor_id != first_neighbor:
-            has_multiple_neighbors = True
-            break
-    if first_neighbor < 0:
-        return 0
-    if not has_multiple_neighbors:
-        return int(first_slot)
+    direct_slot, is_resolved = quick_subface_slot(traversal.cell_neighbor, cell_id, face_id)
+    if is_resolved:
+        return int(direct_slot)
     matched_subface = -1
     matched_neighbor = -1
     current_bounds = traversal.cell_bounds[int(cell_id)]
@@ -497,70 +591,28 @@ def find_subface(
         neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
             continue
-        contains = True
         neighbor_bounds = traversal.cell_bounds[neighbor_id]
         for tangential_pos in range(2):
             axis = int(tangential_axes[tangential_pos])
-            value = float(crossing[axis])
-            current_start = float(current_bounds[axis, BOUNDS_START_SLOT])
-            current_stop = current_start + float(current_bounds[axis, BOUNDS_WIDTH_SLOT])
-            active_face_id = int(active_face_by_axis[axis])
-            direction_value = float(direction[axis])
-            implicit_active_side = -1
-            if value == current_start and direction_value < 0.0:
-                implicit_active_side = 0
-            elif value == current_stop and direction_value > 0.0:
-                implicit_active_side = 1
-            if active_face_id >= 0 or implicit_active_side >= 0:
-                neighbor_start = float(neighbor_bounds[axis, BOUNDS_START_SLOT])
-                neighbor_stop = neighbor_start + float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT])
-                if active_face_id >= 0:
-                    active_side = int(_FACE_ID_TO_SIDE[active_face_id])
-                    if int(active_face_order[active_face_id]) < int(current_face_order):
-                        active_side = 1 - active_side
-                else:
-                    active_side = int(implicit_active_side)
-                contains_current_interval = neighbor_start <= current_start and current_stop <= neighbor_stop
-                if not contains_current_interval:
-                    if active_side == 0:
-                        if neighbor_start != current_start:
-                            contains = False
-                            break
-                    else:
-                        if neighbor_stop != current_stop:
-                            contains = False
-                            break
-                if value < current_start or value > current_stop:
-                    contains = False
-                    break
+            if not _axis_contains_neighbor(
+                current_bounds,
+                neighbor_bounds,
+                traversal.domain_bounds,
+                axis,
+                active_face_by_axis,
+                active_face_order,
+                current_face_order,
+                crossing,
+                direction,
+            ):
+                break
+        else:
+            if matched_neighbor < 0:
+                matched_subface = int(subface_id)
+                matched_neighbor = int(neighbor_id)
                 continue
-            start = float(neighbor_bounds[axis, BOUNDS_START_SLOT])
-            stop = start + float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT])
-            if direction_value > 0.0:
-                if value < start or value >= stop:
-                    contains = False
-                    break
-            elif direction_value < 0.0:
-                if value <= start or value > stop:
-                    contains = False
-                    break
-            else:
-                if start == float(traversal.domain_bounds[axis, BOUNDS_START_SLOT]):
-                    if value < start or value > stop:
-                        contains = False
-                        break
-                else:
-                    if value <= start or value > stop:
-                        contains = False
-                        break
-        if not contains:
-            continue
-        if matched_neighbor < 0:
-            matched_subface = int(subface_id)
-            matched_neighbor = int(neighbor_id)
-            continue
-        if neighbor_id != matched_neighbor:
-            return -2
+            if neighbor_id != matched_neighbor:
+                return -2
     if matched_subface < 0:
         return -1
     return int(matched_subface)

@@ -30,6 +30,8 @@ from .octree import _FACE_ID_TO_AXIS
 from .octree import _FACE_ID_TO_SIDE
 from .octree import _FACE_ID_TO_TANGENTIAL_AXES
 from .octree_spherical import xyz_to_rpa_components
+from .shared import quick_subface_slot
+from .shared import resolved_active_side
 from .shared import TraversalTree
 
 # Start with one small per-ray scratch row; the public tracer grows this
@@ -426,6 +428,21 @@ def _axis_value_unwrapped(axis: int, value: float, reference: float) -> float:
 
 
 @njit(cache=True)
+def _bounds_interval_unwrapped(
+    bounds: np.ndarray,
+    axis: int,
+    reference: float,
+) -> tuple[float, float]:
+    """Return one stored cell/domain interval unwrapped around one reference value."""
+    return _axis_interval_unwrapped(
+        axis,
+        float(bounds[axis, BOUNDS_START_SLOT]),
+        float(bounds[axis, BOUNDS_WIDTH_SLOT]),
+        reference,
+    )
+
+
+@njit(cache=True)
 def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.ndarray, atol: float = 0.0) -> int:
     """Return whether one RPA query lies in one exact half-open cell box plus one miss code.
 
@@ -449,7 +466,7 @@ def _contains_box(query_rpa: np.ndarray, bounds: np.ndarray, domain_bounds: np.n
             # Azimuth ownership is periodic, so compare the query and the
             # interval after unwrapping both around the query itself.
             start_u, stop_u = _axis_interval_unwrapped(axis, start, width, value)
-            value_u = _axis_value_unwrapped(axis, value, value)
+            value_u = value
             domain_start_u, _domain_stop_u = _axis_interval_unwrapped(axis, domain_start, domain_width, value)
             scale = max(abs(start_u), abs(stop_u), abs(value_u), 1.0)
             tol = max(8.0 * np.finfo(np.float64).eps * scale, float(atol))
@@ -618,7 +635,7 @@ def _axis_transfer_destination_cell(
         a_start = float(bounds[2, BOUNDS_START_SLOT])
         a_width = float(bounds[2, BOUNDS_WIDTH_SLOT])
         a_start_u, a_stop_u = _axis_interval_unwrapped(2, a_start, a_width, azimuth_after)
-        a_value_u = _axis_value_unwrapped(2, azimuth_after, azimuth_after)
+        a_value_u = azimuth_after
         tol = _TIME_ATOL + _TIME_RTOL * max(abs(a_start_u), abs(a_stop_u), abs(a_value_u), 1.0)
         if a_value_u < a_start_u - tol:
             continue
@@ -889,38 +906,151 @@ def is_on_face(
     """
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_ID_TO_AXIS[int(face_id)])
-    width = float(bounds[axis, BOUNDS_WIDTH_SLOT])
-    start_u, stop_u = _axis_interval_unwrapped(
-        axis,
-        float(bounds[axis, BOUNDS_START_SLOT]),
-        width,
-        float(crossing_xyz[axis]),
-    )
-    value_u = _axis_value_unwrapped(axis, float(crossing_xyz[axis]), float(crossing_xyz[axis]))
+    value_u = float(crossing_xyz[axis])
+    start_u, stop_u = _bounds_interval_unwrapped(bounds, axis, value_u)
     face_value = start_u if int(_FACE_ID_TO_SIDE[int(face_id)]) == 0 else stop_u
     scale = max(abs(face_value), abs(value_u), 1.0)
     if abs(value_u - face_value) > (_TIME_ATOL + _TIME_RTOL * scale):
         return False
     for tangential_axis in _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]:
         tangential_axis = int(tangential_axis)
-        tangential_start = float(bounds[tangential_axis, BOUNDS_START_SLOT])
-        tangential_width = float(bounds[tangential_axis, BOUNDS_WIDTH_SLOT])
-        tangential_start_u, tangential_stop_u = _axis_interval_unwrapped(
+        tangential_value_u = float(crossing_xyz[tangential_axis])
+        tangential_start_u, tangential_stop_u = _bounds_interval_unwrapped(
+            bounds,
             tangential_axis,
-            tangential_start,
-            tangential_width,
-            float(crossing_xyz[tangential_axis]),
-        )
-        tangential_value_u = _axis_value_unwrapped(
-            tangential_axis,
-            float(crossing_xyz[tangential_axis]),
-            float(crossing_xyz[tangential_axis]),
+            tangential_value_u,
         )
         scale = max(abs(tangential_start_u), abs(tangential_stop_u), abs(tangential_value_u), 1.0)
         tol = _TIME_ATOL + _TIME_RTOL * scale
         if tangential_value_u < tangential_start_u - tol or tangential_value_u > tangential_stop_u + tol:
             return False
     return True
+
+
+@njit(cache=True)
+def _implicit_active_side_spherical(
+    value_u: float,
+    current_start_u: float,
+    current_stop_u: float,
+    direction_sign: int,
+    tol: float,
+) -> int:
+    """Return an implicit active-side marker when the crossing sits on one interval boundary."""
+    if abs(value_u - current_start_u) <= tol and direction_sign < 0:
+        return 0
+    if abs(value_u - current_stop_u) <= tol and direction_sign > 0:
+        return 1
+    return -1
+
+
+@njit(cache=True)
+def _contains_active_interval_spherical(
+    current_start_u: float,
+    current_stop_u: float,
+    neighbor_start_u: float,
+    neighbor_stop_u: float,
+    active_side: int,
+    value_u: float,
+    tol: float,
+) -> bool:
+    """Return whether one neighbor owns a tangential axis constrained by another active face."""
+    contains_current_interval = (
+        neighbor_start_u <= current_start_u + tol
+        and current_stop_u <= neighbor_stop_u + tol
+    )
+    if not contains_current_interval:
+        if active_side == 0:
+            if abs(neighbor_start_u - current_start_u) > tol:
+                return False
+        else:
+            if abs(neighbor_stop_u - current_stop_u) > tol:
+                return False
+    return not (value_u < current_start_u - tol or value_u > current_stop_u + tol)
+
+
+@njit(cache=True)
+def _contains_open_interval_spherical(
+    neighbor_start_u: float,
+    neighbor_stop_u: float,
+    domain_start_u: float,
+    value_u: float,
+    direction_sign: int,
+    tol: float,
+) -> bool:
+    """Return whether one neighbor owns the open interval after the crossing on one axis."""
+    if value_u < neighbor_start_u - tol or value_u > neighbor_stop_u + tol:
+        return False
+    if direction_sign > 0:
+        return abs(value_u - neighbor_stop_u) > tol
+    if direction_sign < 0:
+        return abs(value_u - neighbor_start_u) > tol
+    if abs(neighbor_start_u - domain_start_u) <= tol:
+        return True
+    return abs(value_u - neighbor_start_u) > tol
+
+
+@njit(cache=True)
+def _axis_contains_neighbor_spherical(
+    current_bounds: np.ndarray,
+    neighbor_bounds: np.ndarray,
+    domain_bounds: np.ndarray,
+    axis: int,
+    active_face_by_axis: np.ndarray,
+    active_face_order: np.ndarray,
+    current_face_order: int,
+    crossing_xyz: np.ndarray,
+    direction_xyz: np.ndarray,
+    crossing_rpa: np.ndarray,
+) -> bool:
+    """Return whether one neighbor owns one spherical tangential axis after the crossing."""
+    value = float(crossing_rpa[axis])
+    current_start_u, current_stop_u = _bounds_interval_unwrapped(current_bounds, axis, value)
+    neighbor_start_u, neighbor_stop_u = _bounds_interval_unwrapped(neighbor_bounds, axis, value)
+    domain_start_u, _domain_stop_u = _bounds_interval_unwrapped(domain_bounds, axis, value)
+    value_u = value
+    scale = max(
+        abs(current_start_u),
+        abs(current_stop_u),
+        abs(neighbor_start_u),
+        abs(neighbor_stop_u),
+        abs(value_u),
+        1.0,
+    )
+    tol = _TIME_ATOL + _TIME_RTOL * scale
+    active_face_id = int(active_face_by_axis[axis])
+    direction_sign = _coordinate_velocity_sign(crossing_xyz, direction_xyz, axis)
+    implicit_active_side = _implicit_active_side_spherical(
+        value_u,
+        current_start_u,
+        current_stop_u,
+        direction_sign,
+        tol,
+    )
+    if active_face_id >= 0 or implicit_active_side >= 0:
+        active_side = resolved_active_side(
+            _FACE_ID_TO_SIDE,
+            active_face_id,
+            active_face_order,
+            current_face_order,
+            implicit_active_side,
+        )
+        return _contains_active_interval_spherical(
+            current_start_u,
+            current_stop_u,
+            neighbor_start_u,
+            neighbor_stop_u,
+            active_side,
+            value_u,
+            tol,
+        )
+    return _contains_open_interval_spherical(
+        neighbor_start_u,
+        neighbor_stop_u,
+        domain_start_u,
+        value_u,
+        direction_sign,
+        tol,
+    )
 
 
 @njit(cache=True)
@@ -951,141 +1081,40 @@ def find_subface(
     Returns:
         Face-patch slot id, `-1` for no owner, or `-2` for ambiguity.
     """
-    first_neighbor = -1
-    first_slot = -1
-    has_multiple_neighbors = False
-    for subface_id in range(4):
-        neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
-        if neighbor_id < 0:
-            continue
-        if first_neighbor < 0:
-            first_neighbor = int(neighbor_id)
-            first_slot = int(subface_id)
-            continue
-        if int(neighbor_id) != int(first_neighbor):
-            has_multiple_neighbors = True
-            break
-    if first_neighbor < 0:
-        return 0
-    if not has_multiple_neighbors:
-        return int(first_slot)
-
-    current_bounds = traversal.cell_bounds[int(cell_id)]
+    direct_slot, is_resolved = quick_subface_slot(traversal.cell_neighbor, cell_id, face_id)
+    if is_resolved:
+        return int(direct_slot)
     matched_subface = -1
     matched_neighbor = -1
     tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]
+    current_bounds = traversal.cell_bounds[int(cell_id)]
     for subface_id in range(4):
         neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
             continue
         neighbor_bounds = traversal.cell_bounds[int(neighbor_id)]
-        contains = True
         for tangential_axis in tangential_axes:
             axis = int(tangential_axis)
-            value = float(crossing_rpa[axis])
-            current_start_u, current_stop_u = _axis_interval_unwrapped(
+            if not _axis_contains_neighbor_spherical(
+                current_bounds,
+                neighbor_bounds,
+                traversal.domain_bounds,
                 axis,
-                float(current_bounds[axis, BOUNDS_START_SLOT]),
-                float(current_bounds[axis, BOUNDS_WIDTH_SLOT]),
-                value,
-            )
-            neighbor_start_u, neighbor_stop_u = _axis_interval_unwrapped(
-                axis,
-                float(neighbor_bounds[axis, BOUNDS_START_SLOT]),
-                float(neighbor_bounds[axis, BOUNDS_WIDTH_SLOT]),
-                value,
-            )
-            domain_start_u, _domain_stop_u = _axis_interval_unwrapped(
-                axis,
-                float(traversal.domain_bounds[axis, BOUNDS_START_SLOT]),
-                float(traversal.domain_bounds[axis, BOUNDS_WIDTH_SLOT]),
-                value,
-            )
-            value_u = _axis_value_unwrapped(axis, value, value)
-            scale = max(
-                abs(current_start_u),
-                abs(current_stop_u),
-                abs(neighbor_start_u),
-                abs(neighbor_stop_u),
-                abs(value_u),
-                1.0,
-            )
-            tol = _TIME_ATOL + _TIME_RTOL * scale
-            active_face_id = int(active_face_by_axis[axis])
-            direction_sign = _coordinate_velocity_sign(crossing_xyz, direction_xyz, axis)
-            implicit_active_side = -1
-            if abs(value_u - current_start_u) <= tol and direction_sign < 0:
-                implicit_active_side = 0
-            elif abs(value_u - current_stop_u) <= tol and direction_sign > 0:
-                implicit_active_side = 1
-            if active_face_id >= 0 or implicit_active_side >= 0:
-                # Another active face on this tangential axis means the event is
-                # sitting on a lower-dimensional edge/corner. In that case the
-                # destination neighbor must inherit the whole current tangential
-                # interval or match the active boundary exactly.
-                if active_face_id >= 0:
-                    active_side = int(_FACE_ID_TO_SIDE[int(active_face_id)])
-                    if int(active_face_order[int(active_face_id)]) < int(current_face_order):
-                        active_side = 1 - active_side
-                else:
-                    active_side = int(implicit_active_side)
-                contains_current_interval = (
-                    neighbor_start_u <= current_start_u + tol
-                    and current_stop_u <= neighbor_stop_u + tol
-                )
-                if not contains_current_interval:
-                    if active_side == 0:
-                        if abs(neighbor_start_u - current_start_u) > tol:
-                            contains = False
-                            break
-                    else:
-                        if abs(neighbor_stop_u - current_stop_u) > tol:
-                            contains = False
-                            break
-                if value_u < current_start_u - tol or value_u > current_stop_u + tol:
-                    contains = False
-                    break
+                active_face_by_axis,
+                active_face_order,
+                current_face_order,
+                crossing_xyz,
+                direction_xyz,
+                crossing_rpa,
+            ):
+                break
+        else:
+            if matched_neighbor < 0:
+                matched_subface = int(subface_id)
+                matched_neighbor = int(neighbor_id)
                 continue
-
-            # Otherwise this tangential axis is resolved purely by the open
-            # interval after the crossing, with the periodic/domain lower face
-            # staying closed only on the global domain boundary.
-            if direction_sign > 0:
-                if value_u < neighbor_start_u - tol or value_u > neighbor_stop_u + tol:
-                    contains = False
-                    break
-                if abs(value_u - neighbor_stop_u) <= tol:
-                    contains = False
-                    break
-                continue
-            if direction_sign < 0:
-                if value_u < neighbor_start_u - tol or value_u > neighbor_stop_u + tol:
-                    contains = False
-                    break
-                if abs(value_u - neighbor_start_u) <= tol:
-                    contains = False
-                    break
-                continue
-
-            if abs(neighbor_start_u - domain_start_u) <= tol:
-                if value_u < neighbor_start_u - tol or value_u > neighbor_stop_u + tol:
-                    contains = False
-                    break
-            else:
-                if value_u < neighbor_start_u - tol or value_u > neighbor_stop_u + tol:
-                    contains = False
-                    break
-                if abs(value_u - neighbor_start_u) <= tol:
-                    contains = False
-                    break
-        if not contains:
-            continue
-        if matched_neighbor < 0:
-            matched_subface = int(subface_id)
-            matched_neighbor = int(neighbor_id)
-            continue
-        if int(neighbor_id) != int(matched_neighbor):
-            return -2
+            if int(neighbor_id) != int(matched_neighbor):
+                return -2
     if matched_subface < 0:
         return -1
     return int(matched_subface)
