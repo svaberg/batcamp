@@ -15,13 +15,15 @@ from numba import prange
 
 from .builder import _build_octree_state
 from .builder import _warn_if_blocks_aux_mismatch
-from .constants import XYZ_VARS
-from .constants import SUPPORTED_TREE_COORDS
+from .shared import XYZ_VARS
+from .shared import SUPPORTED_TREE_COORDS
 from .persistence import OctreeState
-from .shared_types import GridShape
-from .shared_types import LevelCountTable
-from .shared_types import TreeCoord
-from .timing import timed_info_decorator
+from .shared import GridShape
+from .shared import LevelCountTable
+from .shared import LookupTree
+from .shared import TreeCoord
+from .shared import TraversalTree
+from .shared import timed_info_decorator
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +86,7 @@ def _contains_box(
 @njit(cache=True, parallel=True)
 def _find_cells(
     queries: np.ndarray,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_parent: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    axis2_period: float,
-    axis2_periodic: bool,
+    lookup_tree: LookupTree,
 ) -> np.ndarray:
     """Resolve a batch of same-coordinate queries to containing cell ids."""
     n_query = int(queries.shape[0])
@@ -109,35 +105,53 @@ def _find_cells(
                 and np.isfinite(query_point[TREE_COORD_AXIS2])
             ):
                 cell_id = -1
-            elif not _contains_box(query_point, domain_bounds, axis2_period, axis2_periodic, tol=0.0):
+            elif not _contains_box(
+                query_point,
+                lookup_tree.domain_bounds,
+                lookup_tree.axis2_period,
+                lookup_tree.axis2_periodic,
+                tol=0.0,
+            ):
                 cell_id = -1
             else:
                 current = int(hint_cell_id)
                 while current >= 0 and not _contains_box(
                     query_point,
-                    cell_bounds[current],
-                    axis2_period,
-                    axis2_periodic,
+                    lookup_tree.cell_bounds[current],
+                    lookup_tree.axis2_period,
+                    lookup_tree.axis2_periodic,
                     1.0e-10,
                 ):
-                    current = int(cell_parent[current])
+                    current = int(lookup_tree.cell_parent[current])
 
                 if current < 0:
-                    for root_pos in range(int(root_cell_ids.shape[0])):
-                        root_cell_id = int(root_cell_ids[root_pos])
-                        if _contains_box(query_point, cell_bounds[root_cell_id], axis2_period, axis2_periodic, 1.0e-10):
+                    for root_pos in range(int(lookup_tree.root_cell_ids.shape[0])):
+                        root_cell_id = int(lookup_tree.root_cell_ids[root_pos])
+                        if _contains_box(
+                            query_point,
+                            lookup_tree.cell_bounds[root_cell_id],
+                            lookup_tree.axis2_period,
+                            lookup_tree.axis2_periodic,
+                            1.0e-10,
+                        ):
                             current = root_cell_id
                             break
                 if current < 0:
                     cell_id = -1
                 else:
-                    while np.any(cell_child[current] >= 0):
+                    while np.any(lookup_tree.cell_child[current] >= 0):
                         next_cell_id = -1
                         for child_ord in range(8):
-                            child_id = int(cell_child[current, child_ord])
+                            child_id = int(lookup_tree.cell_child[current, child_ord])
                             if child_id < 0:
                                 continue
-                            if _contains_box(query_point, cell_bounds[child_id], axis2_period, axis2_periodic, 1.0e-10):
+                            if _contains_box(
+                                query_point,
+                                lookup_tree.cell_bounds[child_id],
+                                lookup_tree.axis2_period,
+                                lookup_tree.axis2_periodic,
+                                1.0e-10,
+                            ):
                                 next_cell_id = child_id
                                 break
                         if next_cell_id < 0:
@@ -746,6 +760,19 @@ class Octree:
         """Return packed `(3, 2)` start/width domain bounds in tree coordinates."""
         return self._domain_bounds
 
+    @cached_property
+    def lookup_tree(self) -> LookupTree:
+        """Return the shared lookup-tree bundle for point-ownership kernels."""
+        return LookupTree(
+            self._cell_child,
+            self._root_cell_ids,
+            self._cell_parent,
+            self._cell_bounds,
+            self._domain_bounds,
+            self._axis2_period,
+            self._axis2_periodic,
+        )
+
     @property
     def cell_levels(self) -> np.ndarray:
         """Return exact persisted leaf-slot levels, including unused slots as `-1`."""
@@ -780,6 +807,18 @@ class Octree:
     def cell_neighbor(self) -> np.ndarray:
         """Return rebuilt runtime face/subface neighbor references for all occupied cells."""
         return self._cell_neighbor
+
+    @cached_property
+    def traversal_tree(self) -> TraversalTree:
+        """Return the shared traversal-tree bundle for ray-tracing kernels."""
+        return TraversalTree(
+            self._root_cell_ids,
+            self._cell_child,
+            self._cell_bounds,
+            self._domain_bounds,
+            self._cell_neighbor,
+            self._cell_depth,
+        )
 
     @property
     def domain_bounds_packed(self) -> np.ndarray:

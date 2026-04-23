@@ -14,6 +14,7 @@ from . import interpolator_spherical
 from .octree import TREE_COORD_AXIS1
 from .octree import TREE_COORD_AXIS2
 from .octree import Octree
+from .shared import TrilinearField
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,11 @@ class OctreeInterpolator:
         logger.info("_flatten_point_values...")
         t_flat = time.perf_counter()
         self._point_values_2d, self._value_shape_tail = self._flatten_point_values(values)
+        self._field = TrilinearField(
+            self.tree.cell_bounds,
+            self.tree.corners,
+            self._point_values_2d,
+        )
         logger.info("_flatten_point_values complete in %.2fs", float(time.perf_counter() - t_flat))
         if self.tree.tree_coord not in {"xyz", "rpa"}:
             raise NotImplementedError(f"Unsupported tree_coord '{self.tree.tree_coord}' for interpolation.")
@@ -59,12 +65,17 @@ class OctreeInterpolator:
     @property
     def n_components(self) -> int:
         """Return the flat component count carried by each interpolation value."""
-        return int(self._point_values_2d.shape[1])
+        return int(self._field.point_values.shape[1])
+
+    @property
+    def field(self) -> TrilinearField:
+        """Return the shared trilinear field bundle for backend kernels."""
+        return self._field
 
     @property
     def point_values_2d(self) -> np.ndarray:
         """Return flat `(n_points, n_components)` point values for interpolation kernels."""
-        return self._point_values_2d
+        return self._field.point_values
 
     @property
     def value_shape(self) -> tuple[int, ...]:
@@ -166,10 +177,8 @@ class OctreeInterpolator:
         out2d = self._interpolator_module.interp_cells(
             query_points,
             cell_id_array,
-            self._normalize_fill_value(int(self._point_values_2d.shape[1])),
-            self.tree.cell_bounds,
-            self.tree.corners,
-            self._point_values_2d,
+            self._normalize_fill_value(self.n_components),
+            self.field,
         )
         return out2d.reshape(shape + self._value_shape_tail)
 
@@ -197,7 +206,7 @@ class OctreeInterpolator:
             if lower_array[TREE_COORD_AXIS2] < 0.0 or upper_array[TREE_COORD_AXIS2] > (2.0 * math.pi):
                 raise ValueError("For tree_coord='rpa', azimuth bounds must lie in [0, 2pi].")
 
-        out1d = self._interpolator_module.integrate_box(self.tree, self._point_values_2d, lower_array, upper_array)
+        out1d = self._interpolator_module.integrate_box(self.tree, self.field, lower_array, upper_array)
         if len(self._value_shape_tail) == 0:
             return out1d[0]
         return out1d.reshape(self._value_shape_tail)
@@ -214,12 +223,12 @@ class OctreeInterpolator:
         `dV = r^2 sin(theta) dr dtheta dphi`.
         """
         if cell_ids is None:
-            out2d = np.full((int(self.tree.cell_count), int(self._point_values_2d.shape[1])), np.nan, dtype=np.float64)
+            out2d = np.full((int(self.tree.cell_count), self.n_components), np.nan, dtype=np.float64)
             valid_leaf_ids = np.flatnonzero(self.tree.cell_levels >= 0).astype(np.int64)
             if valid_leaf_ids.size:
                 out2d[valid_leaf_ids] = self._interpolator_module.cell_integrals(
                     self.tree,
-                    self._point_values_2d,
+                    self.field,
                     valid_leaf_ids,
                 )
             return out2d.reshape((int(self.tree.cell_count),) + self._value_shape_tail)
@@ -227,7 +236,7 @@ class OctreeInterpolator:
         leaf_ids = self.tree.normalize_leaf_cell_ids(cell_ids)
         shape = leaf_ids.shape
         flat_leaf_ids = np.array(leaf_ids, dtype=np.int64, order="C").reshape(-1)
-        out2d = self._interpolator_module.cell_integrals(self.tree, self._point_values_2d, flat_leaf_ids)
+        out2d = self._interpolator_module.cell_integrals(self.tree, self.field, flat_leaf_ids)
         if leaf_ids.ndim == 0:
             return out2d.reshape((1,) + self._value_shape_tail)[0]
         return out2d.reshape(shape + self._value_shape_tail)
@@ -259,7 +268,7 @@ class OctreeInterpolator:
         query_points = np.array(query_points_flat, dtype=np.float64, order="C")
         n = query_points.shape[0]
         trailing = self._value_shape_tail
-        n_components = int(self._point_values_2d.shape[1])
+        n_components = self.n_components
         fill = self._normalize_fill_value(n_components)
 
         cell_ids = self.tree.lookup_points(query_points, coord=resolved_query_coord).reshape(-1)
@@ -268,9 +277,7 @@ class OctreeInterpolator:
             kernel_queries,
             cell_ids,
             fill,
-            self.tree.cell_bounds,
-            self.tree.corners,
-            self._point_values_2d,
+            self.field,
         )
 
         misses = int(np.count_nonzero(cell_ids < 0))
@@ -290,8 +297,8 @@ class OctreeInterpolator:
         return (
             "OctreeInterpolator("
             f"tree_coord={self.tree.tree_coord}, "
-            f"n_points={int(self._point_values_2d.shape[0])}, "
-            f"n_cells={int(self.tree.corners.shape[0])}, "
-            f"n_components={int(self._point_values_2d.shape[1])}"
+            f"n_points={int(self.field.point_values.shape[0])}, "
+            f"n_cells={int(self.field.corners.shape[0])}, "
+            f"n_components={self.n_components}"
             ")"
         )

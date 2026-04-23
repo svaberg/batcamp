@@ -133,16 +133,7 @@ def lookup_points(tree, queries: np.ndarray, coord: str) -> np.ndarray:
         q_local = np.column_stack(xyz_arrays_to_rpa(queries[:, 0], queries[:, 1], queries[:, 2]))
     else:
         raise ValueError("Spherical lookup supports only coord='xyz' or coord='rpa'.")
-    return _find_cells(
-        q_local,
-        tree.cell_child,
-        tree.root_cell_ids,
-        tree.cell_parent,
-        tree.cell_bounds,
-        tree.packed_domain_bounds,
-        2.0 * math.pi,
-        True,
-    )
+    return _find_cells(q_local, tree.lookup_tree)
 
 
 @njit(cache=True)

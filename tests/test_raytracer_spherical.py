@@ -12,6 +12,7 @@ from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
 from batcamp import render_midpoint_image
 from batcamp import raytracer_spherical
+from batcamp.shared import TraversalTree
 from fake_dataset import build_spherical_hex_mesh
 
 _PI = math.pi
@@ -187,11 +188,17 @@ def _event_subface_id_rpa(
     scratch_rpa: np.ndarray,
 ) -> int:
     """Test wrapper around the production subface selector."""
+    traversal = TraversalTree(
+        root_cell_ids=np.empty(0, dtype=np.int64),
+        cell_child=np.full((int(cell_bounds.shape[0]), 8), -1, dtype=np.int64),
+        cell_bounds=np.asarray(cell_bounds, dtype=np.float64),
+        domain_bounds=np.asarray(domain_bounds, dtype=np.float64),
+        cell_neighbor=np.asarray(cell_neighbor, dtype=np.int64),
+        cell_depth=np.zeros(int(cell_bounds.shape[0]), dtype=np.int64),
+    )
     return int(
         raytracer_spherical.find_subface(
-            cell_neighbor,
-            domain_bounds,
-            cell_bounds,
+            traversal,
             cell_id,
             face_id,
             active_face_by_axis,
@@ -218,10 +225,7 @@ def _find_cell_rpa_single(tree: Octree, query_xyz: np.ndarray) -> int:
     return int(
         raytracer_spherical.find_cell(
             query_rpa,
-            tree.cell_child,
-            tree._root_cell_ids,
-            tree.cell_bounds,
-            tree._domain_bounds,
+            tree.traversal_tree,
         )
     )
 
@@ -281,9 +285,7 @@ def walk_faces_rpa(
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
     path_count = raytracer_spherical.walk_faces(
-        tree.cell_neighbor,
-        tree._domain_bounds,
-        tree.cell_bounds,
+        tree.traversal_tree,
         start_cell_id,
         active_faces_array,
         int(active_faces_array.size),

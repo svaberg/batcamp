@@ -10,7 +10,7 @@ import numpy as np
 from batread import Dataset
 
 from .persistence import OctreeState
-from .shared_types import TreeCoord
+from .shared import TreeCoord
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
 """Tuple `(n_axis1, n_axis2, d_axis1, d_axis2, n_cells_at_level)`."""

@@ -775,12 +775,7 @@ def test_trace_skips_failed_rays_with_empty_segments(monkeypatch) -> None:
     tracer = OctreeRayTracer(tree)
 
     def fake_trace_rays(
-        root_cell_ids: np.ndarray,
-        cell_child: np.ndarray,
-        cell_bounds: np.ndarray,
-        domain_bounds: np.ndarray,
-        cell_neighbor: np.ndarray,
-        cell_depth: np.ndarray,
+        traversal,
         origins: np.ndarray,
         directions: np.ndarray,
         t_min: float,
@@ -790,7 +785,7 @@ def test_trace_skips_failed_rays_with_empty_segments(monkeypatch) -> None:
         cell_ids_out: np.ndarray,
         times_out: np.ndarray,
     ) -> None:
-        del root_cell_ids, cell_child, cell_bounds, domain_bounds, cell_neighbor, cell_depth
+        del traversal
         del origins, directions, t_min, t_max
         cell_counts[:] = 0
         time_counts[:] = 0

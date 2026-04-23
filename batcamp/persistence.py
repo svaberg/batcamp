@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .shared_types import GridShape
-from .shared_types import TreeCoord
+from .shared import GridShape
+from .shared import TreeCoord
 
 # Persisted `.npz` octree-state format version.
 OCTREE_FILE_VERSION = 6

@@ -4,7 +4,8 @@ import numpy as np
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import TrilinearField
+from batcamp.shared import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 
@@ -160,6 +161,20 @@ def _assert_plane_ramp_matches_exact_field(
         assert np.all(cell_ids >= 0)
         assert np.isfinite(values).all()
         assert np.allclose(values, expected, atol=1e-10, rtol=0.0)
+
+
+def test_cartesian_interpolator_exposes_trilinear_field_bundle() -> None:
+    """Cartesian interpolators should expose one coherent trilinear field bundle."""
+    ds = _build_uniform_cartesian_linear_dataset()
+    tree = Octree.from_ds(ds, tree_coord="xyz")
+    values = np.asarray(ds["Scalar"], dtype=float)
+    interp = OctreeInterpolator(tree, values)
+
+    assert isinstance(interp.field, TrilinearField)
+    assert interp.field.cell_bounds is tree.cell_bounds
+    assert interp.field.corners is tree.corners
+    assert interp.field.point_values is interp.point_values_2d
+    assert np.allclose(interp.field.point_values[:, 0], values, atol=0.0, rtol=0.0)
 
 
 def test_uniform_cartesian_plane_ramp_matches_exact_linear_field() -> None:

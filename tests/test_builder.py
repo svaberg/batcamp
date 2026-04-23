@@ -14,7 +14,7 @@ from batcamp.builder import _build_octree_state
 from batcamp.builder import _resolve_cell_levels
 import batcamp.builder_cartesian as cartesian_builder
 import batcamp.builder_spherical as spherical_builder
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from batcamp.octree import _rebuild_cells
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh

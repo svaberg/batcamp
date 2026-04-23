@@ -5,7 +5,7 @@ from batread import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from batcamp.octree_spherical import xyz_to_rpa_components
 
 

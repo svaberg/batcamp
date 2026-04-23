@@ -12,6 +12,7 @@ from .octree import TREE_COORD_AXIS1
 from .octree import TREE_COORD_AXIS2
 from .octree import BOUNDS_START_SLOT
 from .octree import BOUNDS_WIDTH_SLOT
+from .shared import LookupTree
 
 
 def attach_state(
@@ -80,14 +81,7 @@ def lookup_points(tree, queries: np.ndarray, coord: str) -> np.ndarray:
     """Resolve one batch of Cartesian queries to leaf cell ids."""
     if coord != "xyz":
         raise ValueError("Cartesian lookup supports only coord='xyz'.")
-    return find_cells(
-        queries,
-        tree.cell_child,
-        tree.root_cell_ids,
-        tree.cell_parent,
-        tree.cell_bounds,
-        tree.packed_domain_bounds,
-    )
+    return find_cells(queries, tree.lookup_tree)
 
 
 @njit(cache=True)
@@ -114,11 +108,7 @@ def _contains_box(
 @njit(cache=True, parallel=True)
 def find_cells(
     queries: np.ndarray,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_parent: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
+    lookup_tree: LookupTree,
 ) -> np.ndarray:
     """Resolve Cartesian queries to containing cell ids using one exact slab rule."""
     n_query = int(queries.shape[0])
@@ -137,29 +127,37 @@ def find_cells(
                 and np.isfinite(query_point[TREE_COORD_AXIS2])
             ):
                 cell_id = -1
-            elif not _contains_box(query_point, domain_bounds, domain_bounds):
+            elif not _contains_box(query_point, lookup_tree.domain_bounds, lookup_tree.domain_bounds):
                 cell_id = -1
             else:
                 current = int(hint_cell_id)
-                while current >= 0 and not _contains_box(query_point, cell_bounds[current], domain_bounds):
-                    current = int(cell_parent[current])
+                while current >= 0 and not _contains_box(
+                    query_point,
+                    lookup_tree.cell_bounds[current],
+                    lookup_tree.domain_bounds,
+                ):
+                    current = int(lookup_tree.cell_parent[current])
 
                 if current < 0:
-                    for root_pos in range(int(root_cell_ids.shape[0])):
-                        root_cell_id = int(root_cell_ids[root_pos])
-                        if _contains_box(query_point, cell_bounds[root_cell_id], domain_bounds):
+                    for root_pos in range(int(lookup_tree.root_cell_ids.shape[0])):
+                        root_cell_id = int(lookup_tree.root_cell_ids[root_pos])
+                        if _contains_box(query_point, lookup_tree.cell_bounds[root_cell_id], lookup_tree.domain_bounds):
                             current = root_cell_id
                             break
                 if current < 0:
                     cell_id = -1
                 else:
-                    while np.any(cell_child[current] >= 0):
+                    while np.any(lookup_tree.cell_child[current] >= 0):
                         next_cell_id = -1
                         for child_ord in range(8):
-                            child_id = int(cell_child[current, child_ord])
+                            child_id = int(lookup_tree.cell_child[current, child_ord])
                             if child_id < 0:
                                 continue
-                            if _contains_box(query_point, cell_bounds[child_id], domain_bounds):
+                            if _contains_box(
+                                query_point,
+                                lookup_tree.cell_bounds[child_id],
+                                lookup_tree.domain_bounds,
+                            ):
                                 next_cell_id = child_id
                                 break
                         if next_cell_id < 0:

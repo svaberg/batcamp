@@ -11,6 +11,7 @@ from batcamp.raytracer_cartesian import _fill_active_face_state
 from batcamp.raytracer_cartesian import find_subface
 from batcamp.raytracer_cartesian import walk_faces
 from batcamp.raytracer_cartesian import trace_ray
+from batcamp.shared import TraversalTree
 from batcamp.octree import _FACE_ID_TO_AXIS
 from batcamp.octree import _FACE_ID_TO_SIDE
 from batcamp.octree import _FACE_ID_TO_TANGENTIAL_AXES
@@ -83,6 +84,14 @@ def _subface_for_test(
     active_faces_arr = np.asarray(active_faces, dtype=np.int64)
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
+    traversal = TraversalTree(
+        root_cell_ids=np.empty(0, dtype=np.int64),
+        cell_child=np.full((int(cell_bounds.shape[0]), 8), -1, dtype=np.int64),
+        cell_bounds=np.asarray(cell_bounds, dtype=np.float64),
+        domain_bounds=np.asarray(domain_bounds, dtype=np.float64),
+        cell_neighbor=np.asarray(cell_neighbor, dtype=np.int64),
+        cell_depth=np.zeros(int(cell_bounds.shape[0]), dtype=np.int64),
+    )
     current_face_order = _fill_active_face_state(
         active_faces_arr,
         int(active_faces_arr.size),
@@ -91,9 +100,7 @@ def _subface_for_test(
         active_face_order,
     )
     subface_id = find_subface(
-        cell_neighbor,
-        domain_bounds,
-        cell_bounds,
+        traversal,
         int(cell_id),
         int(face_id),
         active_face_by_axis,
@@ -124,9 +131,7 @@ def _walk_faces_result(
     active_face_by_axis = np.empty(3, dtype=np.int64)
     active_face_order = np.empty(6, dtype=np.int64)
     path_count = walk_faces(
-        tree.cell_neighbor,
-        tree._domain_bounds,
-        tree.cell_bounds,
+        tree.traversal_tree,
         int(start_cell_id),
         active_faces_arr,
         int(active_faces_arr.size),

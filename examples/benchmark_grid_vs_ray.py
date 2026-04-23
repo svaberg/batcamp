@@ -20,7 +20,7 @@ from batread.dataset import Dataset
 
 from batcamp import OctreeInterpolator
 from batcamp import OctreeRayTracer
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from benchmark_helpers import _build_octree
 from benchmark_helpers import _configure_builder_logging
 from benchmark_helpers import _configure_progress_logging

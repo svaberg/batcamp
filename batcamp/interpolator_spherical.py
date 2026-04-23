@@ -9,6 +9,8 @@ from numba import njit
 from numba import prange
 import numpy as np
 
+from .shared import TraceScratch
+from .shared import TrilinearField
 from .trilinear_shared import _accumulate_trilinear
 from .trilinear_shared import _axis_fraction
 from .trilinear_shared import _periodic_axis_fraction
@@ -53,26 +55,24 @@ def _interp_cell(
     radius: float,
     polar: float,
     azimuth: float,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
+    field: TrilinearField,
 ) -> None:
     """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
     cell_id = int(cell_id)
     frac_r = _axis_fraction(
         radius,
-        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
     )
     frac_p = _axis_fraction(
         polar,
-        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
     )
     frac_a = _periodic_axis_fraction(
         azimuth,
-        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
         2.0 * math.pi,
     )
 
@@ -82,8 +82,8 @@ def _interp_cell(
         frac_r,
         frac_p,
         frac_a,
-        corners,
-        point_values,
+        field.corners,
+        field.point_values,
         _CORNER_ORDINAL_TO_AXIS_BITS,
     )
 
@@ -99,9 +99,7 @@ def _integrate_straight_segment(
     x_stop: float,
     y_stop: float,
     z_stop: float,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
+    field: TrilinearField,
 ) -> None:
     """Write one RPA-local straight-slab trilinear segment integral row."""
     cell_id = int(cell_id)
@@ -109,41 +107,40 @@ def _integrate_straight_segment(
     r_stop, polar_stop, azimuth_stop = xyz_to_rpa_components(x_stop, y_stop, z_stop)
     frac_r0 = _axis_fraction(
         r_start,
-        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
     )
     frac_p0 = _axis_fraction(
         polar_start,
-        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
     )
     frac_a0 = _periodic_axis_fraction(
         azimuth_start,
-        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
         2.0 * math.pi,
     )
     frac_r1 = _axis_fraction(
         r_stop,
-        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
     )
     frac_p1 = _axis_fraction(
         polar_stop,
-        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
     )
     frac_a1 = _periodic_axis_fraction(
         azimuth_stop,
-        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
-        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
+        field.cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
         2.0 * math.pi,
     )
     d_frac_r = frac_r1 - frac_r0
     d_frac_p = frac_p1 - frac_p0
     d_frac_a = frac_a1 - frac_a0
 
-    cell_corner_ids = corners[cell_id]
     out_row[:] = 0.0
     for corner_ord in range(8):
         bit_r = _CORNER_ORDINAL_TO_AXIS_BITS[corner_ord, TREE_COORD_AXIS0]
@@ -163,8 +160,8 @@ def _integrate_straight_segment(
         w3 = d_r * d_p * d_a
         weight = segment_span * (w0 + 0.5 * w1 + (w2 / 3.0) + 0.25 * w3)
 
-        corner_point_id = int(cell_corner_ids[corner_ord])
-        out_row[:] += weight * point_values[corner_point_id]
+        corner_point_id = int(field.corners[cell_id, corner_ord])
+        out_row[:] += weight * field.point_values[corner_point_id]
 
 
 @njit(cache=True, parallel=True)
@@ -172,14 +169,12 @@ def interp_cells(
     queries_rpa: np.ndarray,
     cell_ids: np.ndarray,
     fill_values: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
+    field: TrilinearField,
 ) -> np.ndarray:
     """Evaluate spherical-tree interpolation for spherical queries with known leaf cell ids using flat point values."""
     n_query = queries_rpa.shape[0]
-    ncomp = point_values.shape[1]
-    out = np.empty((n_query, ncomp), dtype=point_values.dtype)
+    ncomp = field.point_values.shape[1]
+    out = np.empty((n_query, ncomp), dtype=field.point_values.dtype)
     for i in prange(n_query):
         out[i, :] = fill_values
         cell_id = int(cell_ids[i])
@@ -191,17 +186,15 @@ def interp_cells(
             queries_rpa[i, 0],
             queries_rpa[i, 1],
             queries_rpa[i, 2] % (2.0 * math.pi),
-            cell_bounds,
-            corners,
-            point_values,
+            field,
         )
     return out
 
 
-def cell_integrals(tree, point_values: np.ndarray, leaf_ids: np.ndarray) -> np.ndarray:
+def cell_integrals(tree, field: TrilinearField, leaf_ids: np.ndarray) -> np.ndarray:
     """Return exact physical-volume integrals of the spherical trilinear interpolant."""
-    corner_values = np.asarray(point_values[tree.corners[leaf_ids]], dtype=np.float64)
-    leaf_bounds = np.asarray(tree.cell_bounds[leaf_ids], dtype=np.float64)
+    corner_values = np.asarray(field.point_values[field.corners[leaf_ids]], dtype=np.float64)
+    leaf_bounds = np.asarray(field.cell_bounds[leaf_ids], dtype=np.float64)
     cell_lower = leaf_bounds[:, :, BOUNDS_START_SLOT]
     cell_upper = cell_lower + leaf_bounds[:, :, BOUNDS_WIDTH_SLOT]
     return _integrate_boxes(leaf_bounds, corner_values, cell_lower, cell_upper)
@@ -272,16 +265,16 @@ def _integrate_boxes(
     return np.sum(corner_values * corner_weights[:, :, None], axis=1)
 
 
-def integrate_box(tree, point_values: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
+def integrate_box(tree, field: TrilinearField, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
     """Return the exact physical-volume integral of the spherical trilinear interpolant over one native box."""
     domain_lower, domain_upper = tree.domain_bounds(coord="rpa")
     clipped_lower = np.maximum(np.asarray(lower, dtype=np.float64), domain_lower)
     clipped_upper = np.minimum(np.asarray(upper, dtype=np.float64), domain_upper)
-    n_components = int(point_values.shape[1])
+    n_components = int(field.point_values.shape[1])
     if np.any(clipped_upper <= clipped_lower):
         return np.zeros(n_components, dtype=np.float64)
 
-    leaf_bounds = np.asarray(tree.cell_bounds[: int(tree.cell_count)], dtype=np.float64)
+    leaf_bounds = np.asarray(field.cell_bounds[: int(tree.cell_count)], dtype=np.float64)
     cell_lower = leaf_bounds[:, :, BOUNDS_START_SLOT]
     cell_upper = cell_lower + leaf_bounds[:, :, BOUNDS_WIDTH_SLOT]
     overlap = np.all(
@@ -295,7 +288,7 @@ def integrate_box(tree, point_values: np.ndarray, lower: np.ndarray, upper: np.n
     clipped_sub_lower = np.maximum(cell_lower[leaf_ids], clipped_lower[None, :])
     clipped_sub_upper = np.minimum(cell_upper[leaf_ids], clipped_upper[None, :])
     leaf_bounds = leaf_bounds[leaf_ids]
-    corner_values = np.asarray(point_values[tree.corners[leaf_ids]], dtype=np.float64)
+    corner_values = np.asarray(field.point_values[field.corners[leaf_ids]], dtype=np.float64)
     return np.sum(
         _integrate_boxes(leaf_bounds, corner_values, clipped_sub_lower, clipped_sub_upper),
         axis=0,
@@ -306,32 +299,28 @@ def integrate_box(tree, point_values: np.ndarray, lower: np.ndarray, upper: np.n
 def accumulate_trilinear_cells(
     origins_xyz: np.ndarray,
     directions_xyz: np.ndarray,
-    cell_counts: np.ndarray,
-    cell_ids_scratch: np.ndarray,
-    times_scratch: np.ndarray,
-    cell_bounds: np.ndarray,
-    corners: np.ndarray,
-    point_values: np.ndarray,
+    trace: TraceScratch,
+    field: TrilinearField,
 ) -> np.ndarray:
     """Accumulate RPA-local straight-slab trilinear segment integrals."""
     n_rays = int(origins_xyz.shape[0])
-    n_components = int(point_values.shape[1])
-    out = np.zeros((n_rays, n_components), dtype=point_values.dtype)
+    n_components = int(field.point_values.shape[1])
+    out = np.zeros((n_rays, n_components), dtype=field.point_values.dtype)
     for ray_id in prange(n_rays):
-        integral = np.empty(n_components, dtype=point_values.dtype)
+        integral = np.empty(n_components, dtype=field.point_values.dtype)
         origin_x = float(origins_xyz[ray_id, 0])
         origin_y = float(origins_xyz[ray_id, 1])
         origin_z = float(origins_xyz[ray_id, 2])
         direction_x = float(directions_xyz[ray_id, 0])
         direction_y = float(directions_xyz[ray_id, 1])
         direction_z = float(directions_xyz[ray_id, 2])
-        n_cell = int(cell_counts[ray_id])
+        n_cell = int(trace.cell_counts[ray_id])
         for cell_pos in range(n_cell):
-            cell_id = int(cell_ids_scratch[ray_id, cell_pos])
+            cell_id = int(trace.cell_ids[ray_id, cell_pos])
             if cell_id < 0:
                 continue
-            t_start = float(times_scratch[ray_id, cell_pos])
-            t_stop = float(times_scratch[ray_id, cell_pos + 1])
+            t_start = float(trace.times[ray_id, cell_pos])
+            t_stop = float(trace.times[ray_id, cell_pos + 1])
             if t_stop <= t_start:
                 continue
             _integrate_straight_segment(
@@ -344,9 +333,7 @@ def accumulate_trilinear_cells(
                 origin_x + t_stop * direction_x,
                 origin_y + t_stop * direction_y,
                 origin_z + t_stop * direction_z,
-                cell_bounds,
-                corners,
-                point_values,
+                field,
             )
             out[ray_id, :] += integral
     return out

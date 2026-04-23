@@ -11,7 +11,7 @@ from scipy.spatial import Delaunay
 from sample_data_helper import data_file
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 
 pytestmark = [
     pytest.mark.design_lockin,

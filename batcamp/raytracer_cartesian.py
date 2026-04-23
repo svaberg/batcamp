@@ -29,6 +29,7 @@ from .octree import BOUNDS_WIDTH_SLOT
 from .octree import _FACE_ID_TO_AXIS
 from .octree import _FACE_ID_TO_SIDE
 from .octree import _FACE_ID_TO_TANGENTIAL_AXES
+from .shared import TraversalTree
 
 # Start with a moderate Cartesian scratch row because straight box crossings
 # are cheap and often visit more cells than the spherical default path.
@@ -80,11 +81,7 @@ def trace_ray(
         cell_ids = np.empty(crossing_capacity, dtype=np.int64)
         times = np.empty(crossing_capacity + 1, dtype=np.float64)
         n_cell, n_time = _trace_ray(
-            tree.root_cell_ids,
-            tree.cell_child,
-            tree.cell_bounds,
-            tree.packed_domain_bounds,
-            tree.cell_neighbor,
+            tree.traversal_tree,
             int(start_cell_id),
             origin,
             direction,
@@ -103,11 +100,7 @@ def trace_ray(
 
 @njit(cache=True)
 def _trace_ray(
-    root_cell_ids: np.ndarray,
-    cell_child: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_neighbor: np.ndarray,
+    traversal: TraversalTree,
     start_cell_id: int,
     origin: np.ndarray,
     direction: np.ndarray,
@@ -119,11 +112,7 @@ def _trace_ray(
     """Trace one Cartesian ray into fixed scratch buffers.
 
     Args:
-        root_cell_ids (const): Root cell ids.
-        cell_child (const): Packed child table.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Cartesian domain bounds.
-        cell_neighbor (const): Packed face/subface neighbor table.
+        traversal (const): Shared traversal-tree state.
         start_cell_id (const): Fallback start cell if entry lookup lands outside.
         origin (const): Ray origin with shape `(3,)`.
         direction (const): Ray direction with shape `(3,)`.
@@ -136,7 +125,11 @@ def _trace_ray(
         `(n_cell, n_time)`, `(-1, -1)` for scratch overflow, or `(-2, -2)` for invalid crossings.
     """
     max_cells = int(cell_ids_out.shape[0])
-    has_interval, domain_enter, domain_exit = find_domain_interval(origin, direction, domain_bounds)
+    has_interval, domain_enter, domain_exit = find_domain_interval(
+        origin,
+        direction,
+        traversal.domain_bounds,
+    )
     if not has_interval:
         return 0, 0
     start_t = max(float(t_min), float(domain_enter))
@@ -158,8 +151,8 @@ def _trace_ray(
             direction_value = float(direction[axis])
             if direction_value == 0.0:
                 continue
-            lo_value = float(domain_bounds[axis, BOUNDS_START_SLOT])
-            hi_value = lo_value + float(domain_bounds[axis, BOUNDS_WIDTH_SLOT])
+            lo_value = float(traversal.domain_bounds[axis, BOUNDS_START_SLOT])
+            hi_value = lo_value + float(traversal.domain_bounds[axis, BOUNDS_WIDTH_SLOT])
             if direction_value > 0.0:
                 t0 = (lo_value - float(origin[axis])) / direction_value
                 face_value = lo_value
@@ -169,7 +162,7 @@ def _trace_ray(
             if float(t0) == float(domain_enter):
                 start[axis] = face_value
                 current[axis] = face_value
-    current_cell = find_cell(start, cell_child, root_cell_ids, cell_bounds, domain_bounds)
+    current_cell = find_cell(start, traversal)
     if current_cell < 0:
         current_cell = int(start_cell_id)
     if current_cell < 0:
@@ -180,7 +173,7 @@ def _trace_ray(
     t_current = float(start_t)
     while current_cell >= 0 and t_current < stop_t:
         t_exit, n_active_face = find_exit(
-            cell_bounds,
+            traversal.cell_bounds,
             current_cell,
             current,
             direction,
@@ -204,7 +197,7 @@ def _trace_ray(
         n_cell += 1
         n_time += 1
         _write_crossing(
-            cell_bounds,
+            traversal.cell_bounds,
             current_cell,
             active_faces,
             n_active_face,
@@ -214,9 +207,7 @@ def _trace_ray(
             crossing,
         )
         path_count = walk_faces(
-            cell_neighbor,
-            domain_bounds,
-            cell_bounds,
+            traversal,
             current_cell,
             active_faces,
             n_active_face,
@@ -293,31 +284,25 @@ def find_domain_interval(
 @njit(cache=True)
 def find_cell(
     query: np.ndarray,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
+    traversal: TraversalTree,
 ) -> int:
     """Resolve one Cartesian query to its exact half-open owner.
 
     Args:
         query (const): Cartesian query point with shape `(3,)`.
-        cell_child (const): Packed child table.
-        root_cell_ids (const): Root cell ids.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Cartesian domain bounds.
+        traversal (const): Shared traversal-tree state.
 
     Returns:
         Owning leaf cell id, or `-1` if the query lies outside the domain.
     """
     if not (np.isfinite(query[0]) and np.isfinite(query[1]) and np.isfinite(query[2])):
         return -1
-    if not _contains_box(query, domain_bounds, domain_bounds):
+    if not _contains_box(query, traversal.domain_bounds, traversal.domain_bounds):
         return -1
     current = -1
-    for root_pos in range(int(root_cell_ids.shape[0])):
-        root_cell_id = int(root_cell_ids[root_pos])
-        if _contains_box(query, cell_bounds[root_cell_id], domain_bounds):
+    for root_pos in range(int(traversal.root_cell_ids.shape[0])):
+        root_cell_id = int(traversal.root_cell_ids[root_pos])
+        if _contains_box(query, traversal.cell_bounds[root_cell_id], traversal.domain_bounds):
             current = root_cell_id
             break
     if current < 0:
@@ -325,10 +310,10 @@ def find_cell(
     while True:
         next_cell_id = -1
         for child_ord in range(8):
-            child_id = int(cell_child[current, child_ord])
+            child_id = int(traversal.cell_child[current, child_ord])
             if child_id < 0:
                 continue
-            if _contains_box(query, cell_bounds[child_id], domain_bounds):
+            if _contains_box(query, traversal.cell_bounds[child_id], traversal.domain_bounds):
                 next_cell_id = child_id
                 break
         if next_cell_id < 0:
@@ -462,9 +447,7 @@ def is_on_face(
 
 @njit(cache=True)
 def find_subface(
-    cell_neighbor: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_bounds: np.ndarray,
+    traversal: TraversalTree,
     cell_id: int,
     face_id: int,
     active_face_by_axis: np.ndarray,
@@ -476,9 +459,7 @@ def find_subface(
     """Return the destination-side owning face patch for one face crossing.
 
     Args:
-        cell_neighbor (const): Packed face/subface neighbor table.
-        domain_bounds (const): Cartesian domain bounds.
-        cell_bounds (const): Packed leaf bounds.
+        traversal (const): Shared traversal-tree state.
         cell_id (const): Current leaf id.
         face_id (const): Active crossed face on the current leaf.
         active_face_by_axis (const): Axis-to-active-face map for this crossing.
@@ -491,12 +472,11 @@ def find_subface(
         Face-patch slot id, `-1` for no owner, or `-2` for ambiguity.
     """
     tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]
-    row = cell_neighbor[int(cell_id), int(face_id)]
     first_neighbor = -1
     first_slot = -1
     has_multiple_neighbors = False
     for subface_id in range(4):
-        neighbor_id = int(row[subface_id])
+        neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
             continue
         if first_neighbor < 0:
@@ -512,13 +492,13 @@ def find_subface(
         return int(first_slot)
     matched_subface = -1
     matched_neighbor = -1
-    current_bounds = cell_bounds[int(cell_id)]
+    current_bounds = traversal.cell_bounds[int(cell_id)]
     for subface_id in range(4):
-        neighbor_id = int(cell_neighbor[int(cell_id), int(face_id), subface_id])
+        neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
             continue
         contains = True
-        neighbor_bounds = cell_bounds[neighbor_id]
+        neighbor_bounds = traversal.cell_bounds[neighbor_id]
         for tangential_pos in range(2):
             axis = int(tangential_axes[tangential_pos])
             value = float(crossing[axis])
@@ -565,7 +545,7 @@ def find_subface(
                     contains = False
                     break
             else:
-                if start == float(domain_bounds[axis, BOUNDS_START_SLOT]):
+                if start == float(traversal.domain_bounds[axis, BOUNDS_START_SLOT]):
                     if value < start or value > stop:
                         contains = False
                         break
@@ -624,9 +604,7 @@ def _write_crossing(
 
 @njit(cache=True)
 def walk_faces(
-    cell_neighbor: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_bounds: np.ndarray,
+    traversal: TraversalTree,
     start_cell_id: int,
     active_faces: np.ndarray,
     n_active_face: int,
@@ -639,9 +617,7 @@ def walk_faces(
     """Walk one exact Cartesian crossing through the face/subface neighbor graph.
 
     Args:
-        cell_neighbor (const): Packed face/subface neighbor table.
-        domain_bounds (const): Cartesian domain bounds.
-        cell_bounds (const): Packed leaf bounds.
+        traversal (const): Shared traversal-tree state.
         start_cell_id (const): Leaf that owns the pre-crossing segment.
         active_faces (const): Active crossed faces for this crossing.
         n_active_face (const): Number of live active faces.
@@ -660,7 +636,7 @@ def walk_faces(
         face_id = int(active_faces[face_pos])
         if current_cell < 0:
             break
-        if not is_on_face(cell_bounds, current_cell, face_id, crossing):
+        if not is_on_face(traversal.cell_bounds, current_cell, face_id, crossing):
             continue
         current_face_order = _fill_active_face_state(
             active_faces,
@@ -670,9 +646,7 @@ def walk_faces(
             active_face_order,
         )
         subface_id = find_subface(
-            cell_neighbor,
-            domain_bounds,
-            cell_bounds,
+            traversal,
             current_cell,
             face_id,
             active_face_by_axis,
@@ -683,7 +657,7 @@ def walk_faces(
         )
         if subface_id < 0:
             return -1
-        current_cell = int(cell_neighbor[current_cell, face_id, subface_id])
+        current_cell = int(traversal.cell_neighbor[current_cell, face_id, subface_id])
         path[path_count] = current_cell
         path_count += 1
     return int(path_count)
@@ -691,12 +665,7 @@ def walk_faces(
 
 @njit(cache=True, parallel=True)
 def trace_rays(
-    root_cell_ids: np.ndarray,
-    cell_child: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_neighbor: np.ndarray,
-    cell_depth: np.ndarray,
+    traversal: TraversalTree,
     origins: np.ndarray,
     directions: np.ndarray,
     t_min: float,
@@ -709,12 +678,7 @@ def trace_rays(
     """Trace flat rays into fixed per-ray scratch buffers.
 
     Args:
-        root_cell_ids (const): Root cell ids.
-        cell_child (const): Packed child table.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Cartesian domain bounds.
-        cell_neighbor (const): Packed face/subface neighbor table.
-        cell_depth (const): Packed cell depths, unused for Cartesian traversal.
+        traversal (const): Shared traversal-tree state.
         origins (const): Flat origin array with shape `(n_rays, 3)`.
         directions (const): Flat direction array with shape `(n_rays, 3)`.
         t_min (const): Lower parameter clip.
@@ -727,11 +691,7 @@ def trace_rays(
     n_rays = int(origins.shape[0])
     for ray_id in prange(n_rays):
         n_cell, n_time = _trace_ray(
-            root_cell_ids,
-            cell_child,
-            cell_bounds,
-            domain_bounds,
-            cell_neighbor,
+            traversal,
             -1,
             origins[ray_id],
             directions[ray_id],

@@ -4,7 +4,7 @@ import numpy as np
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
 

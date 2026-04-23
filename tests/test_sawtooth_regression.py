@@ -8,7 +8,7 @@ from batread import Dataset
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from tests.octree_test_support import find_shared_face_pair
 from sample_data_helper import local_data_file
 

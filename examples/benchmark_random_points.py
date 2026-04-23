@@ -20,7 +20,7 @@ from scipy.interpolate import NearestNDInterpolator
 from scipy.spatial import Delaunay
 
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from benchmark_helpers import _configure_progress_logging
 from benchmark_helpers import _configure_builder_logging
 from benchmark_helpers import _build_octree

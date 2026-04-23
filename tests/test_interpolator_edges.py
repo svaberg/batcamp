@@ -8,7 +8,7 @@ import pytest
 from batcamp import Octree
 from batcamp import OctreeInterpolator
 from batcamp.builder import _build_octree_state
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import XYZ_VARS
 from batcamp.octree import _find_cells
 from fake_dataset import FakeDataset as _FakeDataset
 from fake_dataset import build_cartesian_hex_mesh as _build_cartesian_hex_mesh
@@ -161,9 +161,6 @@ def test_cartesian_batch_lookup_resolves_adjacent_cells() -> None:
         },
     )
     tree = Octree.from_ds(ds, tree_coord="xyz")
-    cell_child = tree._cell_child
-    cell_parent = tree._cell_parent
-    tree_cell_bounds = tree.cell_bounds
 
     q0 = np.array([0.5, -0.5, -0.5], dtype=float)
     q1 = np.array([1.5, -0.5, -0.5], dtype=float)
@@ -175,13 +172,7 @@ def test_cartesian_batch_lookup_resolves_adjacent_cells() -> None:
 
     cell_ids = _find_cells(
         np.vstack((q0, q1)),
-        cell_child,
-        tree._root_cell_ids,
-        cell_parent,
-        tree_cell_bounds,
-        tree._domain_bounds,
-        tree._axis2_period,
-        tree._axis2_periodic,
+        tree.lookup_tree,
     )
     assert int(cell_ids[0]) == cell_id0
     assert int(cell_ids[1]) == cell_id1
@@ -191,9 +182,6 @@ def test_spherical_batch_lookup_resolves_adjacent_cells() -> None:
     """Spherical batch lookup should resolve adjacent queries correctly."""
     ds = _build_fake_dataset(nr=2, npolar=4, nazimuth=8)
     tree = Octree.from_ds(ds, tree_coord="rpa")
-    cell_child = tree._cell_child
-    cell_parent = tree._cell_parent
-    tree_cell_bounds = tree.cell_bounds
 
     lo0, hi0 = cell_bounds(tree, 0, coord="rpa")
     lo1, hi1 = cell_bounds(tree, 1, coord="rpa")
@@ -215,13 +203,7 @@ def test_spherical_batch_lookup_resolves_adjacent_cells() -> None:
 
     cell_ids = _find_cells(
         np.vstack((q0, q1)),
-        cell_child,
-        tree._root_cell_ids,
-        cell_parent,
-        tree_cell_bounds,
-        tree._domain_bounds,
-        tree._axis2_period,
-        tree._axis2_periodic,
+        tree.lookup_tree,
     )
     assert int(cell_ids[0]) == cell_id0
     assert int(cell_ids[1]) == cell_id1

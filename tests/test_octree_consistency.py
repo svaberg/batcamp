@@ -4,7 +4,9 @@ import numpy as np
 
 from batcamp import Octree
 from batcamp import OctreeInterpolator
-from batcamp.constants import XYZ_VARS
+from batcamp.shared import LookupTree
+from batcamp.shared import TraversalTree
+from batcamp.shared import XYZ_VARS
 from tests.octree_test_support import cell_bounds
 
 
@@ -42,6 +44,26 @@ def test_lookup_xyz_rpa_consistency(difflevels_rpa_case: tuple[object, Octree]) 
         cell_id_rpa = int(tree.lookup_points(_xyz_to_rpa_numpy(q), coord="rpa")[0])
         assert cell_id_rpa >= 0
         assert cell_id_xyz == cell_id_rpa
+
+
+def test_octree_exposes_lookup_and_traversal_bundles(difflevels_rpa_case: tuple[object, Octree]) -> None:
+    """Octree kernel bundles should expose the exact shared runtime arrays."""
+    _ds, tree = difflevels_rpa_case
+
+    assert isinstance(tree.lookup_tree, LookupTree)
+    assert tree.lookup_tree.cell_child is tree.cell_child
+    assert tree.lookup_tree.root_cell_ids is tree.root_cell_ids
+    assert tree.lookup_tree.cell_parent is tree.cell_parent
+    assert tree.lookup_tree.cell_bounds is tree.cell_bounds
+    assert tree.lookup_tree.domain_bounds is tree.packed_domain_bounds
+
+    assert isinstance(tree.traversal_tree, TraversalTree)
+    assert tree.traversal_tree.root_cell_ids is tree.root_cell_ids
+    assert tree.traversal_tree.cell_child is tree.cell_child
+    assert tree.traversal_tree.cell_bounds is tree.cell_bounds
+    assert tree.traversal_tree.domain_bounds is tree.packed_domain_bounds
+    assert tree.traversal_tree.cell_neighbor is tree.cell_neighbor
+    assert tree.traversal_tree.cell_depth is tree.cell_depth
 
 
 def test_loaded_tree_interpolator_match(difflevels_rpa_case: tuple[object, Octree], tmp_path) -> None:

@@ -27,6 +27,7 @@ from . import interpolator as interpolator_module
 from . import raytracer_cartesian
 from . import raytracer_spherical
 from .octree import Octree
+from .shared import TraceScratch
 
 logger = logging.getLogger(__name__)
 
@@ -392,12 +393,7 @@ class OctreeRayTracer:
             cell_buffer = np.empty((chunk_n_rays, crossing_capacity), dtype=np.int64)
             time_buffer = np.empty((chunk_n_rays, crossing_capacity + 1), dtype=np.float64)
             self._raytracer_module.trace_rays(
-                self.tree.root_cell_ids,
-                self.tree.cell_child,
-                self.tree.cell_bounds,
-                self.tree.packed_domain_bounds,
-                self.tree.cell_neighbor,
-                self.tree.cell_depth,
+                self.tree.traversal_tree,
                 origins,
                 directions,
                 float(t_min),
@@ -595,15 +591,12 @@ class OctreeRayTracer:
             )
             ray_status_all[chunk_lo:chunk_hi] = ray_status
             cell_counts_out[chunk_lo:chunk_hi] = cell_counts
+            trace = TraceScratch(cell_counts, cell_buffer, time_buffer)
             accum[chunk_lo:chunk_hi] = accumulator(
                 chunk_origins,
                 chunk_directions,
-                cell_counts,
-                cell_buffer,
-                time_buffer,
-                self.tree.cell_bounds,
-                self.tree.corners,
-                interpolator.point_values_2d,
+                trace,
+                interpolator.field,
             )
         _log_ray_status(label, self.tree.tree_coord, n_rays, ray_status_all)
         return _reshape_image(accum, ray_shape, interpolator.value_shape), cell_counts_out.reshape(tuple(ray_shape))

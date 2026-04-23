@@ -30,6 +30,7 @@ from .octree import _FACE_ID_TO_AXIS
 from .octree import _FACE_ID_TO_SIDE
 from .octree import _FACE_ID_TO_TANGENTIAL_AXES
 from .octree_spherical import xyz_to_rpa_components
+from .shared import TraversalTree
 
 # Start with one small per-ray scratch row; the public tracer grows this
 # lazily on overflow so short/common traces do not pay for a large default.
@@ -539,18 +540,14 @@ def _axis_transfer_time(
 
 @njit(cache=True)
 def _axis_transfer_destination_cell(
-    cell_depth: np.ndarray,
-    cell_child: np.ndarray,
-    cell_bounds: np.ndarray,
+    traversal: TraversalTree,
     crossing_xyz: np.ndarray,
     direction_xyz: np.ndarray,
 ) -> int:
     """Return the analytic post-pole destination leaf at one axis-crossing time.
 
     Args:
-        cell_depth (const): Packed cell depths.
-        cell_child (const): Packed child table.
-        cell_bounds (const): Packed leaf bounds.
+        traversal (const): Shared traversal-tree state.
         crossing_xyz (const): Cartesian pole-axis crossing point.
         direction_xyz (const): Ray direction with shape `(3,)`.
 
@@ -585,17 +582,17 @@ def _axis_transfer_destination_cell(
     radial_outward = radial_tendency > 0.0 or _times_close(radial_tendency, 0.0)
     matched_cell = -1
     matched_p_width = math.inf
-    for cell_id in range(int(cell_depth.shape[0])):
-        if int(cell_depth[cell_id]) < 0:
+    for cell_id in range(int(traversal.cell_depth.shape[0])):
+        if int(traversal.cell_depth[cell_id]) < 0:
             continue
         is_leaf = True
         for child_ord in range(8):
-            if int(cell_child[cell_id, child_ord]) >= 0:
+            if int(traversal.cell_child[cell_id, child_ord]) >= 0:
                 is_leaf = False
                 break
         if not is_leaf:
             continue
-        bounds = cell_bounds[int(cell_id)]
+        bounds = traversal.cell_bounds[int(cell_id)]
         r_start = float(bounds[0, BOUNDS_START_SLOT])
         r_stop = r_start + float(bounds[0, BOUNDS_WIDTH_SLOT])
         if radial_outward:
@@ -718,19 +715,13 @@ def find_domain_interval(
 @njit(cache=True)
 def find_cell(
     query_rpa: np.ndarray,
-    cell_child: np.ndarray,
-    root_cell_ids: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
+    traversal: TraversalTree,
 ) -> int:
     """Resolve one RPA query to its exact half-open RPA owner.
 
     Args:
         query_rpa (const): RPA query point with shape `(3,)`.
-        cell_child (const): Packed child table.
-        root_cell_ids (const): Root cell ids.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Spherical domain bounds.
+        traversal (const): Shared traversal-tree state.
 
     Returns:
         Owning leaf cell id, or one negative spherical start-status code.
@@ -741,13 +732,18 @@ def find_cell(
         and math.isfinite(float(query_rpa[2]))
     ):
         return TRACE_START_QUERY_NOT_FINITE
-    domain_code = _contains_box(query_rpa, domain_bounds, domain_bounds, DOMAIN_CONTAINS_ATOL)
+    domain_code = _contains_box(
+        query_rpa,
+        traversal.domain_bounds,
+        traversal.domain_bounds,
+        DOMAIN_CONTAINS_ATOL,
+    )
     if domain_code < 0:
         return int(domain_code)
     current = -1
-    for root_pos in range(int(root_cell_ids.shape[0])):
-        root_cell_id = int(root_cell_ids[root_pos])
-        if _contains_box(query_rpa, cell_bounds[root_cell_id], domain_bounds) > 0:
+    for root_pos in range(int(traversal.root_cell_ids.shape[0])):
+        root_cell_id = int(traversal.root_cell_ids[root_pos])
+        if _contains_box(query_rpa, traversal.cell_bounds[root_cell_id], traversal.domain_bounds) > 0:
             current = root_cell_id
             break
     if current < 0:
@@ -755,10 +751,10 @@ def find_cell(
     while True:
         next_cell_id = -1
         for child_ord in range(8):
-            child_id = int(cell_child[current, child_ord])
+            child_id = int(traversal.cell_child[current, child_ord])
             if child_id < 0:
                 continue
-            if _contains_box(query_rpa, cell_bounds[child_id], domain_bounds) > 0:
+            if _contains_box(query_rpa, traversal.cell_bounds[child_id], traversal.domain_bounds) > 0:
                 next_cell_id = child_id
                 break
         if next_cell_id < 0:
@@ -929,9 +925,7 @@ def is_on_face(
 
 @njit(cache=True)
 def find_subface(
-    cell_neighbor: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_bounds: np.ndarray,
+    traversal: TraversalTree,
     cell_id: int,
     face_id: int,
     active_face_by_axis: np.ndarray,
@@ -944,9 +938,7 @@ def find_subface(
     """Return the destination-side owning face patch for one spherical face crossing.
 
     Args:
-        cell_neighbor (const): Packed face/subface neighbor table.
-        domain_bounds (const): Spherical domain bounds.
-        cell_bounds (const): Packed leaf bounds.
+        traversal (const): Shared traversal-tree state.
         cell_id (const): Current leaf id.
         face_id (const): Active crossed face on the current leaf.
         active_face_by_axis (const): Axis-to-active-face map for this crossing.
@@ -959,12 +951,11 @@ def find_subface(
     Returns:
         Face-patch slot id, `-1` for no owner, or `-2` for ambiguity.
     """
-    row = cell_neighbor[int(cell_id), int(face_id)]
     first_neighbor = -1
     first_slot = -1
     has_multiple_neighbors = False
     for subface_id in range(4):
-        neighbor_id = int(row[subface_id])
+        neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
             continue
         if first_neighbor < 0:
@@ -979,15 +970,15 @@ def find_subface(
     if not has_multiple_neighbors:
         return int(first_slot)
 
-    current_bounds = cell_bounds[int(cell_id)]
+    current_bounds = traversal.cell_bounds[int(cell_id)]
     matched_subface = -1
     matched_neighbor = -1
     tangential_axes = _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]
     for subface_id in range(4):
-        neighbor_id = int(cell_neighbor[int(cell_id), int(face_id), subface_id])
+        neighbor_id = int(traversal.cell_neighbor[int(cell_id), int(face_id), subface_id])
         if neighbor_id < 0:
             continue
-        neighbor_bounds = cell_bounds[int(neighbor_id)]
+        neighbor_bounds = traversal.cell_bounds[int(neighbor_id)]
         contains = True
         for tangential_axis in tangential_axes:
             axis = int(tangential_axis)
@@ -1006,8 +997,8 @@ def find_subface(
             )
             domain_start_u, _domain_stop_u = _axis_interval_unwrapped(
                 axis,
-                float(domain_bounds[axis, BOUNDS_START_SLOT]),
-                float(domain_bounds[axis, BOUNDS_WIDTH_SLOT]),
+                float(traversal.domain_bounds[axis, BOUNDS_START_SLOT]),
+                float(traversal.domain_bounds[axis, BOUNDS_WIDTH_SLOT]),
                 value,
             )
             value_u = _axis_value_unwrapped(axis, value, value)
@@ -1139,9 +1130,7 @@ def _write_crossing(
 
 @njit(cache=True)
 def walk_faces(
-    cell_neighbor: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_bounds: np.ndarray,
+    traversal: TraversalTree,
     start_cell_id: int,
     active_faces: np.ndarray,
     n_active_face: int,
@@ -1157,9 +1146,7 @@ def walk_faces(
     """Walk one time-defined spherical crossing through the face/subface neighbor graph.
 
     Args:
-        cell_neighbor (const): Packed face/subface neighbor table.
-        domain_bounds (const): Spherical domain bounds.
-        cell_bounds (const): Packed leaf bounds.
+        traversal (const): Shared traversal-tree state.
         start_cell_id (const): Leaf that owns the pre-crossing segment.
         active_faces (const): Active crossed faces for this crossing.
         n_active_face (const): Number of live active faces.
@@ -1177,7 +1164,7 @@ def walk_faces(
     """
     _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
     _write_crossing(
-        cell_bounds,
+        traversal.cell_bounds,
         start_cell_id,
         active_faces,
         n_active_face,
@@ -1194,7 +1181,7 @@ def walk_faces(
             break
         # The current continuation cell may no longer carry later active faces
         # in a multiface event, so skip any face the current carrier does not own.
-        if not is_on_face(cell_bounds, current_cell, face_id, crossing_rpa):
+        if not is_on_face(traversal.cell_bounds, current_cell, face_id, crossing_rpa):
             continue
         current_face_order = _fill_active_face_state(
             active_faces,
@@ -1204,9 +1191,7 @@ def walk_faces(
             active_face_order,
         )
         subface_id = find_subface(
-            cell_neighbor,
-            domain_bounds,
-            cell_bounds,
+            traversal,
             current_cell,
             face_id,
             active_face_by_axis,
@@ -1218,7 +1203,7 @@ def walk_faces(
         )
         if subface_id < 0:
             return -1
-        current_cell = int(cell_neighbor[current_cell, face_id, subface_id])
+        current_cell = int(traversal.cell_neighbor[current_cell, face_id, subface_id])
         path[path_count] = current_cell
         path_count += 1
     return int(path_count)
@@ -1278,11 +1263,7 @@ def _start_active_faces(
 
 @njit(cache=True)
 def _start_cell_owner(
-    root_cell_ids: np.ndarray,
-    cell_child: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_neighbor: np.ndarray,
+    traversal: TraversalTree,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_event: float,
@@ -1297,11 +1278,7 @@ def _start_cell_owner(
     """Return the leaf that owns the immediate open interval after one start point.
 
     Args:
-        root_cell_ids (const): Root cell ids.
-        cell_child (const): Packed child table.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Spherical domain bounds.
-        cell_neighbor (const): Packed face/subface neighbor table.
+        traversal (const): Shared traversal-tree state.
         origin_xyz (const): Ray origin with shape `(3,)`.
         direction_xyz (const): Ray direction with shape `(3,)`.
         t_event (const): Start event time.
@@ -1321,8 +1298,8 @@ def _start_cell_owner(
     # Domain-entry roots can land a few ulps outside the closed radial/polar bounds.
     # Snap those nonperiodic axes back onto the exact domain face before the half-open lookup.
     for axis in range(2):
-        domain_start = float(domain_bounds[axis, BOUNDS_START_SLOT])
-        domain_stop = domain_start + float(domain_bounds[axis, BOUNDS_WIDTH_SLOT])
+        domain_start = float(traversal.domain_bounds[axis, BOUNDS_START_SLOT])
+        domain_stop = domain_start + float(traversal.domain_bounds[axis, BOUNDS_WIDTH_SLOT])
         value = float(start_rpa[axis])
         scale = max(abs(value), abs(domain_start), abs(domain_stop), 1.0)
         tol = max(8.0 * np.finfo(np.float64).eps * scale, DOMAIN_CONTAINS_ATOL)
@@ -1330,12 +1307,12 @@ def _start_cell_owner(
             start_rpa[axis] = domain_start
         elif abs(value - domain_stop) <= tol:
             start_rpa[axis] = domain_stop
-    current_cell = find_cell(start_rpa, cell_child, root_cell_ids, cell_bounds, domain_bounds)
+    current_cell = find_cell(start_rpa, traversal)
     if current_cell < 0:
         return int(current_cell)
     _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_event), crossing_xyz)
     n_active_face = _start_active_faces(
-        cell_bounds,
+        traversal.cell_bounds,
         current_cell,
         origin_xyz,
         direction_xyz,
@@ -1349,9 +1326,7 @@ def _start_cell_owner(
         # lookup already identified the owner of the immediate post-start interval.
         return int(current_cell)
     path_count = walk_faces(
-        cell_neighbor,
-        domain_bounds,
-        cell_bounds,
+        traversal,
         current_cell,
         active_faces,
         n_active_face,
@@ -1371,12 +1346,7 @@ def _start_cell_owner(
 
 @njit(cache=True)
 def _trace_ray(
-    root_cell_ids: np.ndarray,
-    cell_child: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_neighbor: np.ndarray,
-    cell_depth: np.ndarray,
+    traversal: TraversalTree,
     origin_xyz: np.ndarray,
     direction_xyz: np.ndarray,
     t_min: float,
@@ -1387,12 +1357,7 @@ def _trace_ray(
     """Trace one spherical ray into fixed scratch buffers.
 
     Args:
-        root_cell_ids (const): Root cell ids.
-        cell_child (const): Packed child table.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Spherical domain bounds.
-        cell_neighbor (const): Packed face/subface neighbor table.
-        cell_depth (const): Packed cell depths.
+        traversal (const): Shared traversal-tree state.
         origin_xyz (const): Ray origin with shape `(3,)`.
         direction_xyz (const): Ray direction with shape `(3,)`.
         t_min (const): Lower parameter clip.
@@ -1404,7 +1369,11 @@ def _trace_ray(
         `(n_cell, n_time)`, matching spherical trace status codes on failure.
     """
     max_cells = int(cell_ids_out.shape[0])
-    has_interval, domain_enter, domain_exit = find_domain_interval(origin_xyz, direction_xyz, domain_bounds)
+    has_interval, domain_enter, domain_exit = find_domain_interval(
+        origin_xyz,
+        direction_xyz,
+        traversal.domain_bounds,
+    )
     if not has_interval:
         return 0, 0
     start_t = max(float(t_min), float(domain_enter))
@@ -1423,11 +1392,7 @@ def _trace_ray(
     candidate_xyz = np.empty(3, dtype=np.float64)
 
     current_cell = _start_cell_owner(
-        root_cell_ids,
-        cell_child,
-        cell_bounds,
-        domain_bounds,
-        cell_neighbor,
+        traversal,
         origin_xyz,
         direction_xyz,
         float(start_t),
@@ -1448,7 +1413,7 @@ def _trace_ray(
     t_current = float(start_t)
     while current_cell >= 0 and t_current < stop_t and not _times_close(float(t_current), float(stop_t)):
         t_exit, n_active_face, axis_transfer = find_exit(
-            cell_bounds,
+            traversal.cell_bounds,
             current_cell,
             origin_xyz,
             direction_xyz,
@@ -1471,9 +1436,7 @@ def _trace_ray(
         if axis_transfer:
             _fill_xyz_at_time(origin_xyz, direction_xyz, float(t_exit), crossing_xyz)
             next_cell = _axis_transfer_destination_cell(
-                cell_depth,
-                cell_child,
-                cell_bounds,
+                traversal,
                 crossing_xyz,
                 direction_xyz,
             )
@@ -1499,9 +1462,7 @@ def _trace_ray(
         n_cell += 1
         n_time += 1
         path_count = walk_faces(
-            cell_neighbor,
-            domain_bounds,
-            cell_bounds,
+            traversal,
             current_cell,
             active_faces,
             n_active_face,
@@ -1536,12 +1497,7 @@ def _trace_ray(
 
 @njit(cache=True, parallel=True)
 def trace_rays(
-    root_cell_ids: np.ndarray,
-    cell_child: np.ndarray,
-    cell_bounds: np.ndarray,
-    domain_bounds: np.ndarray,
-    cell_neighbor: np.ndarray,
-    cell_depth: np.ndarray,
+    traversal: TraversalTree,
     origins: np.ndarray,
     directions: np.ndarray,
     t_min: float,
@@ -1554,12 +1510,7 @@ def trace_rays(
     """Trace flat spherical rays into fixed per-ray scratch buffers.
 
     Args:
-        root_cell_ids (const): Root cell ids.
-        cell_child (const): Packed child table.
-        cell_bounds (const): Packed leaf bounds.
-        domain_bounds (const): Spherical domain bounds.
-        cell_neighbor (const): Packed face/subface neighbor table.
-        cell_depth (const): Packed cell depths.
+        traversal (const): Shared traversal-tree state.
         origins (const): Flat origin array with shape `(n_rays, 3)`.
         directions (const): Flat direction array with shape `(n_rays, 3)`.
         t_min (const): Lower parameter clip.
@@ -1572,12 +1523,7 @@ def trace_rays(
     n_rays = int(origins.shape[0])
     for ray_id in prange(n_rays):
         n_cell, n_time = _trace_ray(
-            root_cell_ids,
-            cell_child,
-            cell_bounds,
-            domain_bounds,
-            cell_neighbor,
-            cell_depth,
+            traversal,
             origins[ray_id],
             directions[ray_id],
             t_min,
