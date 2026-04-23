@@ -442,7 +442,12 @@ def is_on_face(
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_ID_TO_AXIS[int(face_id)])
     side = int(_FACE_ID_TO_SIDE[int(face_id)])
-    face_value = float(bounds[axis, BOUNDS_START_SLOT]) if side == 0 else float(bounds[axis, BOUNDS_START_SLOT] + bounds[axis, BOUNDS_WIDTH_SLOT])
+    if side == 0:
+        face_value = float(bounds[axis, BOUNDS_START_SLOT])
+    else:
+        face_value = float(
+            bounds[axis, BOUNDS_START_SLOT] + bounds[axis, BOUNDS_WIDTH_SLOT]
+        )
     if float(crossing[axis]) != face_value:
         return False
     for tangential_axis in _FACE_ID_TO_TANGENTIAL_AXES[int(face_id)]:

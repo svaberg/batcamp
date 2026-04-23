@@ -97,7 +97,10 @@ def attach_state(
     cell_bounds[:, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT] = octree_cell_azimuth_width
     domain_bounds = np.empty((3, 2), dtype=np.float64)
     domain_bounds[:, BOUNDS_START_SLOT] = np.array([r_min, 0.0, 0.0], dtype=np.float64)
-    domain_bounds[:, BOUNDS_WIDTH_SLOT] = np.array([float(r_max - r_min), float(math.pi), float(2.0 * math.pi)], dtype=np.float64)
+    domain_bounds[:, BOUNDS_WIDTH_SLOT] = np.array(
+        [float(r_max - r_min), float(math.pi), float(2.0 * math.pi)],
+        dtype=np.float64,
+    )
     return cell_bounds, domain_bounds, float(2.0 * math.pi), True
 
 

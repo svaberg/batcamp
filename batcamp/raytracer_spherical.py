@@ -894,7 +894,12 @@ def is_on_face(
     bounds = cell_bounds[int(cell_id)]
     axis = int(_FACE_ID_TO_AXIS[int(face_id)])
     width = float(bounds[axis, BOUNDS_WIDTH_SLOT])
-    start_u, stop_u = _axis_interval_unwrapped(axis, float(bounds[axis, BOUNDS_START_SLOT]), width, float(crossing_xyz[axis]))
+    start_u, stop_u = _axis_interval_unwrapped(
+        axis,
+        float(bounds[axis, BOUNDS_START_SLOT]),
+        width,
+        float(crossing_xyz[axis]),
+    )
     value_u = _axis_value_unwrapped(axis, float(crossing_xyz[axis]), float(crossing_xyz[axis]))
     face_value = start_u if int(_FACE_ID_TO_SIDE[int(face_id)]) == 0 else stop_u
     scale = max(abs(face_value), abs(value_u), 1.0)

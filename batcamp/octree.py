@@ -448,7 +448,11 @@ def _build_cell_neighbor_graph(
         if root_id < 0:
             continue
         root_ijk = cell_ijk[root_id]
-        root_lookup[int(root_ijk[TREE_COORD_AXIS0]), int(root_ijk[TREE_COORD_AXIS1]), int(root_ijk[TREE_COORD_AXIS2])] = root_id
+        root_lookup[
+            int(root_ijk[TREE_COORD_AXIS0]),
+            int(root_ijk[TREE_COORD_AXIS1]),
+            int(root_ijk[TREE_COORD_AXIS2]),
+        ] = root_id
 
     for pos in range(int(depth_offset[0]), int(depth_offset[1])):
         cell_id = int(cells_by_depth[pos])
@@ -514,10 +518,6 @@ def _build_cell_neighbor_graph(
                     )
 
     return next_cell
-
-
-from . import octree_cartesian
-from . import octree_spherical
 
 
 class Octree:
@@ -623,7 +623,11 @@ class Octree:
         )
         logger.info("_build_cell_neighbor_graph complete in %.2fs", float(time.perf_counter() - t0))
         self._leaf_slot_count = int(leaf_levels.shape[0])
-        self._octree_module = octree_cartesian if self._tree_coord == "xyz" else octree_spherical
+        if self._tree_coord == "xyz":
+            from . import octree_cartesian as octree_backend
+        else:
+            from . import octree_spherical as octree_backend
+        self._octree_module = octree_backend
         logger.info("%s: coord=%s", self._octree_module.attach_state.__name__, self._tree_coord)
         logger.debug("%s...", self._octree_module.attach_state.__name__)
         t0 = time.perf_counter()
@@ -919,5 +923,8 @@ class Octree:
         if resolved_coord != self.tree_coord:
             raise ValueError(f"domain_bounds only supports coord={self.tree_coord!r} for this tree.")
         lo = np.array(self._domain_bounds[:, BOUNDS_START_SLOT], dtype=float)
-        hi = np.array(self._domain_bounds[:, BOUNDS_START_SLOT] + self._domain_bounds[:, BOUNDS_WIDTH_SLOT], dtype=float)
+        hi = np.array(
+            self._domain_bounds[:, BOUNDS_START_SLOT] + self._domain_bounds[:, BOUNDS_WIDTH_SLOT],
+            dtype=float,
+        )
         return lo, hi

@@ -51,9 +51,21 @@ def _interp_cell(
 ) -> None:
     """Write one Cartesian trilinear interpolation result row for one leaf cell using flat point values."""
     cell_id = int(cell_id)
-    frac_x = _axis_fraction(x, cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
-    frac_y = _axis_fraction(y, cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
-    frac_z = _axis_fraction(z, cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT])
+    frac_x = _axis_fraction(
+        x,
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+    )
+    frac_y = _axis_fraction(
+        y,
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+    )
+    frac_z = _axis_fraction(
+        z,
+        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
+    )
 
     _accumulate_trilinear(
         out_row,
@@ -84,12 +96,36 @@ def _integrate_segment(
 ) -> None:
     """Write one exact Cartesian trilinear segment integral row for one leaf cell."""
     cell_id = int(cell_id)
-    frac_x0 = _axis_fraction(x_start, cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
-    frac_y0 = _axis_fraction(y_start, cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
-    frac_z0 = _axis_fraction(z_start, cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT])
-    frac_x1 = _axis_fraction(x_stop, cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
-    frac_y1 = _axis_fraction(y_stop, cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
-    frac_z1 = _axis_fraction(z_stop, cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT])
+    frac_x0 = _axis_fraction(
+        x_start,
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+    )
+    frac_y0 = _axis_fraction(
+        y_start,
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+    )
+    frac_z0 = _axis_fraction(
+        z_start,
+        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
+    )
+    frac_x1 = _axis_fraction(
+        x_stop,
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+    )
+    frac_y1 = _axis_fraction(
+        y_stop,
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+    )
+    frac_z1 = _axis_fraction(
+        z_stop,
+        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
+    )
     d_frac_x = frac_x1 - frac_x0
     d_frac_y = frac_y1 - frac_y0
     d_frac_z = frac_z1 - frac_z0

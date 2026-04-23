@@ -11,12 +11,12 @@ from typing import Literal
 import numpy as np
 from . import interpolator_cartesian
 from . import interpolator_spherical
-from .octree import TREE_COORD_AXIS0
 from .octree import TREE_COORD_AXIS1
 from .octree import TREE_COORD_AXIS2
 from .octree import Octree
 
 logger = logging.getLogger(__name__)
+
 
 class OctreeInterpolator:
     """LinearNDInterpolator-like callable built on octree leaf lookup.

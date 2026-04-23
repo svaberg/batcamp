@@ -9,6 +9,7 @@ from typing import TypeAlias
 import numpy as np
 from batread import Dataset
 
+from .persistence import OctreeState
 from .shared_types import TreeCoord
 
 LevelShapeStatsRow: TypeAlias = tuple[int, int, float, float, int]
@@ -121,11 +122,6 @@ def _resolve_cell_levels(
     return levels, max_level
 
 
-from . import builder_cartesian
-from . import builder_spherical
-from .persistence import OctreeState
-
-
 def _warn_if_blocks_aux_mismatch(ds: Dataset, n_cells: int) -> None:
     """Warn when BLOCKS metadata is malformed or disagrees with the dataset cell count."""
     raw = ds.aux.get("BLOCKS")
@@ -190,7 +186,9 @@ def _build_octree_state(
     logger.info("resolve tree coord: coord=%s", tree_coord)
 
     if tree_coord == "rpa":
-        levels, max_level, leaf_shape = builder_spherical.infer_levels(
+        from . import builder_spherical as builder_backend
+
+        levels, max_level, leaf_shape = builder_backend.infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
@@ -199,7 +197,9 @@ def _build_octree_state(
             level_atol=level_atol,
         )
     elif tree_coord == "xyz":
-        levels, max_level, leaf_shape = builder_cartesian.infer_levels(
+        from . import builder_cartesian as builder_backend
+
+        levels, max_level, leaf_shape = builder_backend.infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
@@ -249,9 +249,7 @@ def _build_octree_state(
     )
 
     axis_tol_kwargs = {"axis_tol": axis_tol} if tree_coord == "rpa" else {}
-    populate_tree_state = (
-        builder_spherical.populate_tree_state if tree_coord == "rpa" else builder_cartesian.populate_tree_state
-    )
+    populate_tree_state = builder_backend.populate_tree_state
     built_state = populate_tree_state(
         leaf_shape=leaf_shape,
         max_level=tree_depth,

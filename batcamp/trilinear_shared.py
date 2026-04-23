@@ -12,6 +12,7 @@ from .octree import TREE_COORD_AXIS2
 
 _TINY = np.finfo(np.float64).tiny
 
+
 @njit(cache=True)
 def _clamp_unit_interval(value: float) -> float:
     """Clamp one interpolation fraction onto the unit interval."""

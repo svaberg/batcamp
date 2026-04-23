@@ -59,8 +59,16 @@ def _interp_cell(
 ) -> None:
     """Write one interpolated value row for one spherical query in one leaf cell using flat point values."""
     cell_id = int(cell_id)
-    frac_r = _axis_fraction(radius, cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
-    frac_p = _axis_fraction(polar, cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
+    frac_r = _axis_fraction(
+        radius,
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+    )
+    frac_p = _axis_fraction(
+        polar,
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+    )
     frac_a = _periodic_axis_fraction(
         azimuth,
         cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
@@ -99,16 +107,32 @@ def _integrate_straight_segment(
     cell_id = int(cell_id)
     r_start, polar_start, azimuth_start = xyz_to_rpa_components(x_start, y_start, z_start)
     r_stop, polar_stop, azimuth_stop = xyz_to_rpa_components(x_stop, y_stop, z_stop)
-    frac_r0 = _axis_fraction(r_start, cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
-    frac_p0 = _axis_fraction(polar_start, cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
+    frac_r0 = _axis_fraction(
+        r_start,
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+    )
+    frac_p0 = _axis_fraction(
+        polar_start,
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+    )
     frac_a0 = _periodic_axis_fraction(
         azimuth_start,
         cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
         cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT],
         2.0 * math.pi,
     )
-    frac_r1 = _axis_fraction(r_stop, cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT])
-    frac_p1 = _axis_fraction(polar_stop, cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT], cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT])
+    frac_r1 = _axis_fraction(
+        r_stop,
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS0, BOUNDS_WIDTH_SLOT],
+    )
+    frac_p1 = _axis_fraction(
+        polar_stop,
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_START_SLOT],
+        cell_bounds[cell_id, TREE_COORD_AXIS1, BOUNDS_WIDTH_SLOT],
+    )
     frac_a1 = _periodic_axis_fraction(
         azimuth_stop,
         cell_bounds[cell_id, TREE_COORD_AXIS2, BOUNDS_START_SLOT],
