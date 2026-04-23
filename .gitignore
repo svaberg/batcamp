@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.codacy/
 .pytest_cache/
 .DS_Store
 
@@ -15,3 +16,7 @@ DEBT.md
 TODO.md
 good-practices.md
 private_use_inventory.md
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
