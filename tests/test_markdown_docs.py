@@ -72,6 +72,7 @@ def test_markdown_python_blocks_execute(
         state["block_index"] = block_index
         before_ids = {name: id(namespace[name]) for name in ("rho_and_ti", "image") if name in namespace}
         runnable = _runnable_python_block(doc_name, block)
+        # pylint: disable=exec-used
         exec(compile(runnable, f"{doc_name}:block:{block_index}", "exec"), namespace)
         if "rho_and_ti" in namespace:
             if before_ids.get("rho_and_ti") != id(namespace["rho_and_ti"]):

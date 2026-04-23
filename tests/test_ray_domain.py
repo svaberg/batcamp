@@ -426,7 +426,7 @@ def test_raysegments_1d_indexing_unpacks_one_packed_slice() -> None:
     np.testing.assert_array_equal(last_times, expected_last_times)
 
     with pytest.raises(IndexError):
-        segments[segments.n_rays]
+        _ = segments[segments.n_rays]
 
 
 def test_raysegments_grid_indexing_matches_batched_ray_layout() -> None:
@@ -459,7 +459,7 @@ def test_raysegments_grid_indexing_matches_batched_ray_layout() -> None:
     np.testing.assert_array_equal(row_subset.origins, origins[0])
 
     with pytest.raises(IndexError):
-        segments[2, 0]
+        _ = segments[2, 0]
 
 
 def test_raysegments_slice_indexing_returns_repacked_subset() -> None:

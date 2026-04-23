@@ -215,17 +215,18 @@ def _append_report_runtime_section(
             ]
         )
         for row in rows:
+            fastest_label = _fastest_label(
+                octree_query_s=float(row["octree_query_s"]),
+                linear_query_s=float(row["linear_query_s"]),
+                nearest_query_s=float(row["nearest_query_s"]),
+            )
             lines.append(
                 "| "
                 f"{int(row['query_count'])} | "
                 f"{float(row['octree_query_s']):.6f} | "
                 f"{float(row['linear_query_s']):.6f} | "
                 f"{float(row['nearest_query_s']):.6f} | "
-                f"{_fastest_label(
-                    octree_query_s=float(row['octree_query_s']),
-                    linear_query_s=float(row['linear_query_s']),
-                    nearest_query_s=float(row['nearest_query_s']),
-                )} | "
+                f"{fastest_label} | "
                 f"{int(row['linear_finite'])}/{int(row['query_count'])} |"
             )
         return
@@ -239,15 +240,16 @@ def _append_report_runtime_section(
         ]
     )
     for row in rows:
+        fastest_label = _fastest_label(
+            octree_query_s=float(row["octree_query_s"]),
+            nearest_query_s=float(row["nearest_query_s"]),
+        )
         lines.append(
             "| "
             f"{int(row['query_count'])} | "
             f"{float(row['octree_query_s']):.6f} | "
             f"{float(row['nearest_query_s']):.6f} | "
-            f"{_fastest_label(
-                octree_query_s=float(row['octree_query_s']),
-                nearest_query_s=float(row['nearest_query_s']),
-            )} |"
+            f"{fastest_label} |"
         )
 
 
@@ -640,18 +642,19 @@ def _run_case(
     progress.start(f"[{case.label}] build scipy NearestND")
     nearest_interp, nearest_build_s = _time_call(NearestNDInterpolator, xyz, values)
     progress.complete(f"[{case.label}] build scipy NearestND", nearest_build_s)
+    build_summary = _build_summary(
+        octree_tree_s=float(octree_tree_s),
+        octree_interp_s=float(octree_interp_s),
+        nearest_build_s=float(nearest_build_s),
+        linear_build_total=(
+            None
+            if linear_delaunay_s is None or linear_interp_s is None
+            else float(linear_delaunay_s + linear_interp_s)
+        ),
+    )
     progress.note(
         f"[{case.label}] build summary: "
-        f"{_build_summary(
-            octree_tree_s=float(octree_tree_s),
-            octree_interp_s=float(octree_interp_s),
-            nearest_build_s=float(nearest_build_s),
-            linear_build_total=(
-                None
-                if linear_delaunay_s is None or linear_interp_s is None
-                else float(linear_delaunay_s + linear_interp_s)
-            ),
-        )}"
+        f"{build_summary}"
     )
 
     rng = np.random.default_rng(_RNG_SEED + case_index)

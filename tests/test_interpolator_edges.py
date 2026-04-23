@@ -93,7 +93,8 @@ def test_constructor_rejects_query_coord_kw() -> None:
     ds = _build_fake_dataset()
     tree = Octree.from_ds(ds, tree_coord="rpa")
     with pytest.raises(TypeError, match="unexpected keyword argument 'query_coord'"):
-        OctreeInterpolator(tree, np.asarray(ds["Scalar"]), query_coord="bad")
+        # pylint: disable=unexpected-keyword-arg
+        OctreeInterpolator(tree, np.asarray(ds["Scalar"]), **{"query_coord": "bad"})
 
 
 def test_constructor_rejects_non_array_values() -> None:

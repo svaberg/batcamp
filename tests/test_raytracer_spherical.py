@@ -599,8 +599,8 @@ def _render_standalone_midpoint_image(
     d = np.asarray(directions, dtype=float)
     assert o.shape == d.shape
     ray_shape = tuple(o.shape[:-1]) if o.ndim > 1 else (1,)
-    o_flat = o.reshape(-1, 3)
-    d_flat = d.reshape(-1, 3)
+    o_flat = o.reshape((-1, 3))
+    d_flat = d.reshape((-1, 3))
     accum = np.zeros((o_flat.shape[0],), dtype=float)
     for ray_id in range(o_flat.shape[0]):
         cell_lo = int(segments.ray_offsets[ray_id])
@@ -609,7 +609,6 @@ def _render_standalone_midpoint_image(
             continue
         time_lo = int(segments.time_offsets[ray_id])
         time_hi = int(segments.time_offsets[ray_id + 1])
-        ray_cell_ids = np.asarray(segments.cell_ids[cell_lo:cell_hi], dtype=np.int64)
         ray_times = np.asarray(segments.times[time_lo:time_hi], dtype=float)
         segment_lengths = np.diff(ray_times)
         mid_t = 0.5 * (ray_times[:-1] + ray_times[1:])
@@ -958,7 +957,9 @@ def test_trace_rpa_test_rays_preserve_batch_shape_and_match_single_ray_paths() -
     segments = trace_rpa_test_rays(tree, origins, directions)
 
     assert segments.ray_shape == (2, 2)
-    for ray_id, (origin, direction) in enumerate(zip(origins.reshape(-1, 3), directions.reshape(-1, 3), strict=True)):
+    for ray_id, (origin, direction) in enumerate(
+        zip(origins.reshape((-1, 3)), directions.reshape((-1, 3)), strict=True)
+    ):
         expected_cell_ids, expected_times = trace_rpa_test_path(tree, origin, direction)
         ray_cell_ids, ray_times = _ray_slice(segments, ray_id)
         np.testing.assert_array_equal(ray_cell_ids, expected_cell_ids)
@@ -967,7 +968,7 @@ def test_trace_rpa_test_rays_preserve_batch_shape_and_match_single_ray_paths() -
 
 def test_trace_rpa_test_rays_preserve_batch_shape_and_match_single_seam_paths() -> None:
     tree = _build_uniform_rpa_tree()
-    seam_origins = np.array([_rpa_to_xyz(origin_rpa) for origin_rpa in _SEAM_ORIGINS], dtype=float).reshape(4, 5, 3)
+    seam_origins = np.array([_rpa_to_xyz(origin_rpa) for origin_rpa in _SEAM_ORIGINS], dtype=float).reshape((4, 5, 3))
     seam_directions = np.array(
         [
             [_normalize_direction(_SEAM_DIRECTIONS[(row + col) % len(_SEAM_DIRECTIONS)]) for col in range(5)]
@@ -979,7 +980,9 @@ def test_trace_rpa_test_rays_preserve_batch_shape_and_match_single_seam_paths() 
     segments = trace_rpa_test_rays(tree, seam_origins, seam_directions)
 
     assert segments.ray_shape == (4, 5)
-    for ray_id, (origin, direction) in enumerate(zip(seam_origins.reshape(-1, 3), seam_directions.reshape(-1, 3), strict=True)):
+    for ray_id, (origin, direction) in enumerate(
+        zip(seam_origins.reshape((-1, 3)), seam_directions.reshape((-1, 3)), strict=True)
+    ):
         expected_cell_ids, expected_times = trace_rpa_test_path(tree, origin, direction)
         ray_cell_ids, ray_times = _ray_slice(segments, ray_id)
         np.testing.assert_array_equal(ray_cell_ids, expected_cell_ids)
@@ -1183,8 +1186,8 @@ def test_rpa_trilinear_image_integrates_radial_field_on_radial_ray() -> None:
     segment_span = 1.5
     polar = 0.95
     azimuth = 0.55
-    origins = _rpa_to_xyz((radius_start, polar, azimuth)).reshape(1, 1, 3)
-    directions = _rpa_to_xyz((1.0, polar, azimuth)).reshape(1, 1, 3)
+    origins = _rpa_to_xyz((radius_start, polar, azimuth)).reshape((1, 1, 3))
+    directions = _rpa_to_xyz((1.0, polar, azimuth)).reshape((1, 1, 3))
 
     image, counts = tracer.trilinear_image(
         interpolator,

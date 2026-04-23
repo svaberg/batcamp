@@ -339,7 +339,6 @@ def test_star_movie_diagnostic_angles_render_successfully(
 
 
 def test_star_movie_local_example_first_frame_has_no_start_owner_drops() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
     module = _load_example_module("benchmark_star_movie.py", "benchmark_star_movie_local_example_regression_for_test")
     case = module.DatasetCase("local_example", "3d__var_1_n00000000.plt")
     data_path = local_data_file(case.file_name)
@@ -498,7 +497,7 @@ def test_grid_vs_ray_style_horizontal_colorbar_top_enables_top_ticks_and_minors(
     module = _load_benchmark_grid_vs_ray_module()
     fig = module.plt.figure()
     try:
-        ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+        fig.add_axes([0.1, 0.1, 0.8, 0.8])
         cax = fig.add_axes([0.1, 0.92, 0.8, 0.04])
         mappable = module.plt.cm.ScalarMappable(norm=module.Normalize(vmin=1.0, vmax=10.0), cmap="viridis")
         mappable.set_array([])
@@ -519,7 +518,7 @@ def test_grid_vs_ray_style_horizontal_colorbar_top_uses_sparse_symlog_ticks() ->
     module = _load_benchmark_grid_vs_ray_module()
     fig = module.plt.figure()
     try:
-        ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+        fig.add_axes([0.1, 0.1, 0.8, 0.8])
         cax = fig.add_axes([0.1, 0.92, 0.8, 0.04])
         mappable = module.plt.cm.ScalarMappable(
             norm=module.SymLogNorm(linthresh=1.0e-3, vmin=-1.0, vmax=10.0),

@@ -11,9 +11,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3
         with:
           environment-file: environment.yml
           cache-environment: true
@@ -31,10 +31,10 @@ jobs:
   default:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Restore pooch cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.XDG_CACHE_HOME }}/pooch
           key: pooch-${{ runner.os }}-${{ hashFiles('examples/benchmark_helpers.py', 'tests/sample_data_helper.py') }}
@@ -42,12 +42,12 @@ jobs:
             pooch-${{ runner.os }}-
 
       - name: Restore benchmark grid cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: artifacts/test_example_imports/benchmark_grid_vs_ray_*_grid_cache_*.npz
           key: grid-vs-ray-npz-${{ runner.os }}-${{ hashFiles('examples/benchmark_grid_vs_ray.py', 'examples/benchmark_helpers.py', 'tests/test_example_imports.py') }}
 
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3
         with:
           environment-file: environment.yml
           cache-environment: true
@@ -71,7 +71,7 @@ jobs:
 
       - name: Upload grid-vs-ray benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-grid-vs-ray-artifacts
           path: |
@@ -83,7 +83,7 @@ jobs:
 
       - name: Upload xy-plane benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-xy-plane-artifacts
           path: |
@@ -94,7 +94,7 @@ jobs:
 
       - name: Upload random-points benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-random-points-artifacts
           path: |
@@ -105,7 +105,7 @@ jobs:
 
       - name: Upload star-movie benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-star-movie-artifacts
           path: |
@@ -118,7 +118,7 @@ jobs:
 
       - name: Codacy Coverage Reporter
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+        uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1.3.0
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           coverage-reports: pytest-cobertura.xml
@@ -126,9 +126,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3
         with:
           environment-file: environment.yml
           cache-environment: true
@@ -150,17 +150,17 @@ jobs:
   perf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Restore pooch cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.XDG_CACHE_HOME }}/pooch
           key: pooch-${{ runner.os }}-${{ hashFiles('examples/benchmark_helpers.py', 'tests/sample_data_helper.py') }}
           restore-keys: |
             pooch-${{ runner.os }}-
 
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3
         with:
           environment-file: environment.yml
           cache-environment: true
@@ -178,17 +178,17 @@ jobs:
   pooch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Restore pooch cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.XDG_CACHE_HOME }}/pooch
           key: pooch-${{ runner.os }}-${{ hashFiles('examples/benchmark_helpers.py', 'tests/sample_data_helper.py') }}
           restore-keys: |
             pooch-${{ runner.os }}-
 
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3
         with:
           environment-file: environment.yml
           cache-environment: true

@@ -97,7 +97,7 @@ def _grid_cache_file(
             ",".join(f"{float(value):.17g}" for value in bounds),
         )
     )
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     return (
         out_root
         / f"benchmark_grid_vs_ray_{case_label}_grid_cache_{phase}_{int(n_plane)}x{int(n_plane)}_{digest}.npz"
