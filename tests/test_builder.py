@@ -720,7 +720,11 @@ def test_compute_azimuth_spans_reject_bad_corner_rank() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Expected 2D corner array"):
-        spherical_builder.compute_azimuth_spans_and_levels(np.asarray(ds.points, dtype=float), corners=corners)
+        spherical_builder._observed_spherical_bounds(
+            np.asarray(ds.points, dtype=float),
+            corners,
+            axis_tol=DEFAULT_AXIS_TOL,
+        )
 
 
 def test_compute_azimuth_spans_reject_too_few_corners() -> None:
@@ -733,25 +737,23 @@ def test_compute_azimuth_spans_reject_too_few_corners() -> None:
         variables={XYZ_VARS[0]: points[:, 0], XYZ_VARS[1]: points[:, 1], XYZ_VARS[2]: points[:, 2]},
     )
     with pytest.raises(ValueError, match="Need at least 3 corners per cell"):
-        spherical_builder.compute_azimuth_spans_and_levels(np.asarray(ds.points, dtype=float), corners=corners)
+        spherical_builder._observed_spherical_bounds(
+            np.asarray(ds.points, dtype=float),
+            corners,
+            axis_tol=DEFAULT_AXIS_TOL,
+        )
 
 
-def test_infer_levels_marks_non_dyadic_span_invalid() -> None:
-    """Non-dyadic azimuth spans should map to level -1."""
-    levels, _expected, _coarse = spherical_builder.infer_level_expectation(np.array([1.0, 0.5, 0.3]))
-    assert np.array_equal(levels, np.array([0, 1, -1], dtype=np.int64))
+def test_infer_levels_rejects_non_dyadic_span() -> None:
+    """Non-dyadic azimuth spans should fail level inference."""
+    with pytest.raises(ValueError, match="Could not infer one dyadic spherical refinement level per cell"):
+        spherical_builder.infer_level_expectation(np.array([1.0, 0.5, 0.3]))
 
 
 def test_build_tree_rejects_all_invalid_levels() -> None:
     """Tree construction should fail when all provided levels are invalid."""
     ds = _build_regular_dataset()
-    azimuth_span, _azimuth_center, _cell_levels, _expected, _coarse = (
-        spherical_builder.compute_azimuth_spans_and_levels(
-            np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
-        )
-    )
-    all_invalid = np.full(azimuth_span.shape, -1, dtype=np.int64)
+    all_invalid = np.full(int(np.asarray(ds.corners, dtype=np.int64).shape[0]), -1, dtype=np.int64)
     with pytest.raises(ValueError, match="No valid \\(>=0\\) levels available to infer octree"):
         _tree_from_state_build(
             np.asarray(ds.points, dtype=float),
@@ -904,14 +906,16 @@ def test_build_materializes_exact_tree_state_on_ready_tree() -> None:
 def test_spherical_lookup_rejects_non_exact_geometry() -> None:
     """Irregular spherical geometry should fail in the builder."""
     regular = _build_regular_dataset()
-    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = (
-        spherical_builder.compute_azimuth_spans_and_levels(
-            np.asarray(regular.points, dtype=float),
-            corners=np.asarray(regular.corners, dtype=np.int64),
-        )
+    cell_levels, _max_level, _leaf_shape, _inferred_state = spherical_builder.infer_levels(
+        np.asarray(regular.points, dtype=float),
+        np.asarray(regular.corners, dtype=np.int64),
     )
     irregular = _build_irregular_spherical_dataset()
-    with pytest.raises(ValueError, match="Spherical cell .* inferred octree grid|no unique octree address"):
+    with pytest.raises(
+        ValueError,
+        match="Could not infer one dyadic spherical refinement level per cell from azimuth span|"
+        "Spherical cell .* inferred octree grid|no unique octree address",
+    ):
         _tree_from_state_build(
             np.asarray(irregular.points, dtype=float),
             np.asarray(irregular.corners, dtype=np.int64),
@@ -1059,16 +1063,24 @@ def test_spherical_level_shapes_require_valid_levels() -> None:
     """Spherical angular-shape inference should fail when all levels are invalid."""
     ds = _build_regular_dataset()
     corners = np.asarray(ds.corners, dtype=np.int64)
-    azimuth_span, _azimuth_center, _levels, _expected, _coarse = spherical_builder.compute_azimuth_spans_and_levels(
+    (
+        _cell_log_r_min,
+        _cell_log_r_max,
+        cell_polar_min,
+        cell_polar_max,
+        _azimuth_start,
+        azimuth_width,
+    ) = spherical_builder._observed_spherical_bounds(
         np.asarray(ds.points, dtype=float),
-        corners=corners,
+        corners,
+        axis_tol=DEFAULT_AXIS_TOL,
     )
     with pytest.raises(ValueError, match="No valid \\(>=0\\) cell levels available for tree inference"):
         spherical_builder.infer_level_angular_shapes(
-            np.asarray(ds.points, dtype=float),
-            corners,
-            azimuth_span,
-            np.full(azimuth_span.shape, -1, dtype=np.int64),
+            azimuth_width,
+            cell_polar_min,
+            cell_polar_max,
+            np.full(azimuth_width.shape, -1, dtype=np.int64),
         )
 
 
@@ -1097,9 +1109,7 @@ def test_spherical_tree_state_requires_cell_levels() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
-            axis_tol=DEFAULT_AXIS_TOL,
+            inferred_state={},
         )
 
 
@@ -1117,9 +1127,7 @@ def test_spherical_tree_state_requires_at_least_one_valid_level() -> None:
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
-            axis_tol=DEFAULT_AXIS_TOL,
+            inferred_state={},
         )
 
 
@@ -1132,14 +1140,25 @@ def test_spherical_tree_state_rejects_depth_above_tree_depth() -> None:
         max_level=0,
         cell_levels=np.ones(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
+    inferred_state = {
+        "observed_bounds": spherical_builder._observed_spherical_bounds(
+            np.asarray(ds.points, dtype=float),
+            np.asarray(ds.corners, dtype=np.int64),
+            axis_tol=DEFAULT_AXIS_TOL,
+        ),
+        "radial_state": spherical_builder.infer_log_radial_state(
+            np.asarray(ds.points, dtype=float),
+            np.asarray(ds.corners, dtype=np.int64),
+            tree.cell_levels,
+            n_axis0_f=int(tree.leaf_shape[0]),
+        ),
+    }
     with pytest.raises(ValueError, match="depth exceeds tree_depth=0"):
         spherical_builder.populate_tree_state(
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
-            axis_tol=DEFAULT_AXIS_TOL,
+            inferred_state=inferred_state,
         )
 
 
@@ -1152,25 +1171,34 @@ def test_spherical_tree_state_rejects_width_mismatch() -> None:
         max_level=1,
         cell_levels=np.zeros(int(np.asarray(ds.corners).shape[0]), dtype=np.int64),
     )
+    inferred_state = {
+        "observed_bounds": spherical_builder._observed_spherical_bounds(
+            np.asarray(ds.points, dtype=float),
+            np.asarray(ds.corners, dtype=np.int64),
+            axis_tol=DEFAULT_AXIS_TOL,
+        ),
+        "radial_state": spherical_builder.infer_log_radial_state(
+            np.asarray(ds.points, dtype=float),
+            np.asarray(ds.corners, dtype=np.int64),
+            tree.cell_levels,
+            n_axis0_f=int(tree.leaf_shape[0]),
+        ),
+    }
     with pytest.raises(ValueError, match="width does not match inferred level 0"):
         spherical_builder.populate_tree_state(
             leaf_shape=tree.leaf_shape,
             max_level=tree.max_level,
             cell_levels=tree.cell_levels,
-            points=np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
-            axis_tol=DEFAULT_AXIS_TOL,
+            inferred_state=inferred_state,
         )
 
 
 def test_build_returns_bound_tree() -> None:
     """Builder should return a tree with lookup geometry ready for use."""
     ds = _build_regular_dataset()
-    _azimuth_span, _azimuth_center, cell_levels, _expected, _coarse = (
-        spherical_builder.compute_azimuth_spans_and_levels(
-            np.asarray(ds.points, dtype=float),
-            corners=np.asarray(ds.corners, dtype=np.int64),
-        )
+    cell_levels, _max_level, _leaf_shape, _inferred_state = spherical_builder.infer_levels(
+        np.asarray(ds.points, dtype=float),
+        np.asarray(ds.corners, dtype=np.int64),
     )
     tree = _tree_from_state_build(
         np.asarray(ds.points, dtype=float),
