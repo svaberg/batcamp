@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TypeAlias
 
 import numpy as np
@@ -187,8 +188,9 @@ def _build_octree_state(
 
     if tree_coord == "rpa":
         from . import builder_spherical as builder_backend
-
-        levels, max_level, leaf_shape = builder_backend.infer_levels(
+        logger.info("infer_levels: coord=%s...", tree_coord)
+        t0 = time.perf_counter()
+        levels, max_level, leaf_shape, inferred_state = builder_backend.infer_levels(
             points,
             corners_arr,
             cell_levels=cell_levels,
@@ -198,7 +200,8 @@ def _build_octree_state(
         )
     elif tree_coord == "xyz":
         from . import builder_cartesian as builder_backend
-
+        logger.info("infer_levels: coord=%s...", tree_coord)
+        t0 = time.perf_counter()
         levels, max_level, leaf_shape = builder_backend.infer_levels(
             points,
             corners_arr,
@@ -206,10 +209,12 @@ def _build_octree_state(
             level_rtol=level_rtol,
             level_atol=level_atol,
         )
+        inferred_state = None
     else:
         raise ValueError(
             f"Unsupported tree_coord '{tree_coord}'; expected 'rpa' or 'xyz'."
         )
+    logger.info("infer_levels complete in %.2fs", float(time.perf_counter() - t0))
     logger.info("infer levels: coord=%s max_level=%d", tree_coord, max_level)
     logger.info("infer leaf shape: coord=%s leaf_shape=%s", tree_coord, leaf_shape)
 
@@ -248,16 +253,24 @@ def _build_octree_state(
         level_offset,
     )
 
-    axis_tol_kwargs = {"axis_tol": axis_tol} if tree_coord == "rpa" else {}
-    populate_tree_state = builder_backend.populate_tree_state
-    built_state = populate_tree_state(
-        leaf_shape=leaf_shape,
-        max_level=tree_depth,
-        cell_levels=levels_abs,
-        points=points,
-        corners=corners_arr,
-        **axis_tol_kwargs,
-    )
+    logger.info("populate_tree_state: coord=%s...", tree_coord)
+    t0 = time.perf_counter()
+    if tree_coord == "rpa":
+        built_state = builder_backend.populate_tree_state(
+            leaf_shape=leaf_shape,
+            max_level=tree_depth,
+            cell_levels=levels_abs,
+            inferred_state=inferred_state,
+        )
+    else:
+        built_state = builder_backend.populate_tree_state(
+            leaf_shape=leaf_shape,
+            max_level=tree_depth,
+            cell_levels=levels_abs,
+            points=points,
+            corners=corners_arr,
+        )
+    logger.info("populate_tree_state complete in %.2fs", float(time.perf_counter() - t0))
     logger.info("populate tree state: coord=%s", tree_coord)
     cell_levels = np.asarray(built_state["cell_levels"], dtype=np.int64)
     cell_ijk = np.asarray(built_state["cell_ijk"], dtype=np.int64)
