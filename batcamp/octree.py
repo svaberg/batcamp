@@ -534,6 +534,88 @@ def _build_cell_neighbor_graph(
     return next_cell
 
 
+def _contains_boxes_vectorized(
+    query_points: np.ndarray,
+    bounds: np.ndarray,
+    *,
+    axis2_period: float,
+    axis2_periodic: bool,
+    tol: float,
+) -> np.ndarray:
+    """Return whether each query lies inside its corresponding packed box."""
+    inside = np.ones(query_points.shape[0], dtype=bool)
+    for axis in range(TREE_COORD_AXIS2):
+        value = query_points[:, axis]
+        start = bounds[:, axis, BOUNDS_START_SLOT]
+        width = bounds[:, axis, BOUNDS_WIDTH_SLOT]
+        inside &= (value >= (start - tol)) & (value <= (start + width + tol))
+    value = query_points[:, TREE_COORD_AXIS2]
+    start = bounds[:, TREE_COORD_AXIS2, BOUNDS_START_SLOT]
+    width = bounds[:, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT]
+    if axis2_periodic:
+        full_wrap = width >= (float(axis2_period) - tol)
+        inside &= full_wrap | ((((value - start) % float(axis2_period)) <= (width + tol)))
+    else:
+        inside &= (value >= (start - tol)) & (value <= (start + width + tol))
+    return inside
+
+
+def _validate_parent_child_center_containment(
+    *,
+    cell_bounds: np.ndarray,
+    cell_parent: np.ndarray,
+    axis2_period: float,
+    axis2_periodic: bool,
+) -> None:
+    """Require reconstructed child centers to lie inside reconstructed parent bounds."""
+    child_ids = np.flatnonzero(np.asarray(cell_parent, dtype=np.int64) >= 0).astype(np.int64)
+    if child_ids.size == 0:
+        return
+    parent_ids = np.asarray(cell_parent[child_ids], dtype=np.int64)
+    child_bounds = np.asarray(cell_bounds[child_ids], dtype=np.float64)
+    parent_bounds = np.asarray(cell_bounds[parent_ids], dtype=np.float64)
+    child_centers = np.empty((child_ids.size, 3), dtype=np.float64)
+    child_centers[:, :TREE_COORD_AXIS2] = (
+        child_bounds[:, :TREE_COORD_AXIS2, BOUNDS_START_SLOT]
+        + 0.5 * child_bounds[:, :TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT]
+    )
+    child_centers[:, TREE_COORD_AXIS2] = (
+        child_bounds[:, TREE_COORD_AXIS2, BOUNDS_START_SLOT]
+        + 0.5 * child_bounds[:, TREE_COORD_AXIS2, BOUNDS_WIDTH_SLOT]
+    )
+    if axis2_periodic:
+        child_centers[:, TREE_COORD_AXIS2] = np.mod(child_centers[:, TREE_COORD_AXIS2], float(axis2_period))
+    inside = _contains_boxes_vectorized(
+        child_centers,
+        parent_bounds,
+        axis2_period=axis2_period,
+        axis2_periodic=axis2_periodic,
+        tol=1.0e-10,
+    )
+    if np.all(inside):
+        return
+    bad_pos = np.flatnonzero(~inside)
+    first_pos = int(bad_pos[0])
+    first_child = int(child_ids[first_pos])
+    first_parent = int(parent_ids[first_pos])
+    for pos in bad_pos[:3]:
+        child_id = int(child_ids[int(pos)])
+        parent_id = int(parent_ids[int(pos)])
+        logger.debug(
+            "Parent/child center containment child %d parent %d: center=%s child_bounds=%s parent_bounds=%s",
+            child_id,
+            parent_id,
+            np.array2string(child_centers[int(pos)], precision=17),
+            np.array2string(child_bounds[int(pos)], precision=17),
+            np.array2string(parent_bounds[int(pos)], precision=17),
+        )
+    raise ValueError(
+        "Parent/child center containment failed for "
+        f"{int(bad_pos.size)} reconstructed cells; "
+        f"first_child={first_child} first_parent={first_parent}."
+    )
+
+
 class Octree:
     """Adaptive octree summary plus bound lookup entrypoints.
 
@@ -660,6 +742,12 @@ class Octree:
         self._domain_bounds = domain_bounds
         self._axis2_period = float(axis2_period)
         self._axis2_periodic = bool(axis2_periodic)
+        _validate_parent_child_center_containment(
+            cell_bounds=self._cell_bounds,
+            cell_parent=self._cell_parent,
+            axis2_period=self._axis2_period,
+            axis2_periodic=self._axis2_periodic,
+        )
 
     @property
     def root_shape(self) -> GridShape:
