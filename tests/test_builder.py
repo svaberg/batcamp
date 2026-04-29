@@ -1250,7 +1250,10 @@ def test_build_rejects_forced_xyz_on_spherical_geometry() -> None:
 def test_build_rejects_forced_rpa_on_cartesian_geometry() -> None:
     """Forcing spherical build on Cartesian geometry should fail with the spherical builder message."""
     ds = _build_regular_xyz_dataset()
-    with pytest.raises(ValueError, match="Could not build a spherical octree"):
+    with pytest.raises(
+        ValueError,
+        match="Could not build a spherical octree|Could not infer one dyadic spherical refinement level per cell from azimuth span",
+    ):
         _tree_from_state_build(
             np.asarray(ds.points, dtype=float),
             np.asarray(ds.corners, dtype=np.int64),

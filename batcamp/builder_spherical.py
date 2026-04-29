@@ -7,9 +7,6 @@ import logging
 import time
 
 import numpy as np
-from scipy.optimize import Bounds
-from scipy.optimize import LinearConstraint
-from scipy.optimize import milp
 
 from .builder import DEFAULT_AXIS_TOL
 from .builder import DEFAULT_LEVEL_ATOL
@@ -308,6 +305,8 @@ def recover_log_radial_lattice(
     n_axis0_f: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Recover one integer fine-grid coordinate for each observed radial boundary."""
+    logger.info("recover_log_radial_lattice: geometry...")
+    t0 = time.perf_counter()
     valid = np.asarray(cell_levels, dtype=np.int64) >= 0
     if not np.any(valid):
         raise ValueError("No valid (>=0) cell levels available to recover the radial lattice.")
@@ -318,6 +317,10 @@ def recover_log_radial_lattice(
     corners_arr = np.asarray(corners, dtype=np.int64)
     cell_log_r_min = np.min(point_log_r[corners_arr], axis=1)
     cell_log_r_max = np.max(point_log_r[corners_arr], axis=1)
+    logger.info("recover_log_radial_lattice: geometry complete in %.2fs", float(time.perf_counter() - t0))
+
+    logger.info("recover_log_radial_lattice: cluster radial edges...")
+    t0 = time.perf_counter()
     log_r_min = float(np.min(cell_log_r_min[valid]))
     log_r_max = float(np.max(cell_log_r_max[valid]))
     radial_tol = 1e-7 * max(float(log_r_max - log_r_min), 1.0)
@@ -327,32 +330,108 @@ def recover_log_radial_lattice(
     )
     if radial_edges.size < 2:
         raise ValueError("Could not infer at least one radial shell from log-r boundaries.")
+    logger.info("recover_log_radial_lattice: cluster radial edges complete in %.2fs", float(time.perf_counter() - t0))
 
+    logger.info("recover_log_radial_lattice: assign edge ids...")
+    t0 = time.perf_counter()
     valid_ids = np.flatnonzero(valid).astype(np.int64)
     r0_edge_id = nearest_cluster_indices(radial_edges, cell_log_r_min[valid_ids])
     r1_edge_id = nearest_cluster_indices(radial_edges, cell_log_r_max[valid_ids])
     max_level = int(np.max(cell_levels[valid]))
     width_units = np.left_shift(np.ones(valid_ids.size, dtype=np.int64), max_level - cell_levels[valid_ids])
+    logger.info("recover_log_radial_lattice: assign edge ids complete in %.2fs", float(time.perf_counter() - t0))
 
-    n_gaps = int(radial_edges.size - 1)
-    constraints = np.zeros((valid_ids.size + 1, n_gaps), dtype=float)
-    for row, (start_edge, stop_edge) in enumerate(zip(r0_edge_id, r1_edge_id, strict=True)):
-        if stop_edge <= start_edge:
-            bad = int(valid_ids[row])
-            raise ValueError(f"Spherical cell {bad} has non-positive radial span.")
-        constraints[row, start_edge:stop_edge] = 1.0
-    constraints[-1, :] = 1.0
-    rhs = np.concatenate((width_units.astype(float), np.array([float(n_axis0_f)])))
-    result = milp(
-        c=np.zeros(n_gaps, dtype=float),
-        integrality=np.ones(n_gaps, dtype=np.int8),
-        bounds=Bounds(np.zeros(n_gaps, dtype=float), np.full(n_gaps, float(n_axis0_f))),
-        constraints=LinearConstraint(constraints, rhs, rhs),
+    logger.info("recover_log_radial_lattice: dedupe interval constraints...")
+    t0 = time.perf_counter()
+    bad_span = r1_edge_id <= r0_edge_id
+    if np.any(bad_span):
+        bad = int(valid_ids[np.flatnonzero(bad_span)[0]])
+        raise ValueError(f"Spherical cell {bad} has non-positive radial span.")
+    n_edges = int(radial_edges.size)
+    pair_key = r0_edge_id.astype(np.int64) * np.int64(n_edges) + r1_edge_id.astype(np.int64)
+    order = np.argsort(pair_key, kind="mergesort")
+    sorted_key = pair_key[order]
+    sorted_width = width_units[order]
+    group_start = np.empty(sorted_key.size, dtype=bool)
+    group_start[0] = True
+    group_start[1:] = sorted_key[1:] != sorted_key[:-1]
+    group_ids = np.flatnonzero(group_start)
+    group_min = np.minimum.reduceat(sorted_width, group_ids)
+    group_max = np.maximum.reduceat(sorted_width, group_ids)
+    inconsistent = group_min != group_max
+    if np.any(inconsistent):
+        bad_group = int(np.flatnonzero(inconsistent)[0])
+        key = int(sorted_key[group_ids[bad_group]])
+        start_edge = key // n_edges
+        stop_edge = key % n_edges
+        raise ValueError(
+            "Spherical radial intervals imply conflicting widths for the same recovered edge span. "
+            f"edge_span=[{start_edge}, {stop_edge}] "
+            f"min_width={int(group_min[bad_group])} max_width={int(group_max[bad_group])}."
+        )
+    unique_key = sorted_key[group_ids]
+    unique_width = group_min.astype(np.int64, copy=False)
+    start_edge = (unique_key // n_edges).astype(np.int64, copy=False)
+    stop_edge = (unique_key % n_edges).astype(np.int64, copy=False)
+    logger.info(
+        "recover_log_radial_lattice: dedupe interval constraints complete in %.2fs",
+        float(time.perf_counter() - t0),
     )
-    if not result.success or result.x is None:
-        raise ValueError("Could not recover a self-consistent log-radial lattice from spherical cell boundaries.")
-    gap_units = np.rint(result.x).astype(np.int64)
-    edge_units = np.concatenate((np.array([0], dtype=np.int64), np.cumsum(gap_units, dtype=np.int64)))
+
+    logger.info("recover_log_radial_lattice: solve integer difference constraints...")
+    t0 = time.perf_counter()
+    values = np.full(n_edges, int(n_axis0_f), dtype=np.int64)
+    values[0] = 0
+    values[-1] = int(n_axis0_f)
+    fixed = np.zeros(n_edges, dtype=bool)
+    fixed[0] = True
+    fixed[-1] = True
+
+    edge_u = np.concatenate((
+        stop_edge,
+        start_edge,
+        np.arange(1, n_edges, dtype=np.int64),
+    ))
+    edge_v = np.concatenate((
+        start_edge,
+        stop_edge,
+        np.arange(0, n_edges - 1, dtype=np.int64),
+    ))
+    edge_c = np.concatenate((
+        -unique_width,
+        unique_width,
+        np.zeros(n_edges - 1, dtype=np.int64),
+    ))
+
+    n_nodes = n_edges
+    for _ in range(max(n_nodes - 1, 0)):
+        changed = False
+        for u, v, c in zip(edge_u, edge_v, edge_c, strict=True):
+            candidate = int(values[int(u)] + c)
+            vi = int(v)
+            if fixed[vi]:
+                if candidate < int(values[vi]):
+                    raise ValueError(
+                        "Could not recover a self-consistent log-radial lattice from spherical cell boundaries."
+                    )
+                continue
+            if candidate < int(values[vi]):
+                values[vi] = candidate
+                changed = True
+        if not changed:
+            break
+    for u, v, c in zip(edge_u, edge_v, edge_c, strict=True):
+        candidate = int(values[int(u)] + c)
+        if candidate < int(values[int(v)]):
+            raise ValueError(
+                "Could not recover a self-consistent log-radial lattice from spherical cell boundaries."
+            )
+    logger.info(
+        "recover_log_radial_lattice: solve integer difference constraints complete in %.2fs",
+        float(time.perf_counter() - t0),
+    )
+
+    edge_units = values
     if int(edge_units[-1]) != int(n_axis0_f):
         raise ValueError(
             "Recovered log-radial lattice does not end on the inferred finest radial count: "
