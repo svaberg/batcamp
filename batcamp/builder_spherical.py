@@ -20,8 +20,8 @@ from .builder import _resolve_cell_levels
 
 logger = logging.getLogger(__name__)
 
-SNAP_TOPOLOGY_WARNING_FRACTION = 1e-2
-"""Warn only when a snap residual reaches this fraction of a topology-changing margin."""
+SNAP_TOPOLOGY_WARNING_FRACTION = 1.0
+"""Warn only when a snap residual reaches or exceeds a topology-changing margin."""
 
 
 def cluster_close_values(values: np.ndarray, *, atol: float) -> tuple[np.ndarray, np.ndarray]:
@@ -59,6 +59,48 @@ def nearest_cluster_indices(centers: np.ndarray, values: np.ndarray) -> np.ndarr
         np.abs(centers[prev_idx] - values) <= np.abs(centers[next_idx] - values)
     )
     return np.where(use_prev, prev_idx, next_idx).astype(np.int64)
+
+
+def _refit_radial_edge_centers(
+    radial_edges: np.ndarray,
+    *,
+    valid_ids: np.ndarray,
+    r0_edge_id: np.ndarray,
+    r1_edge_id: np.ndarray,
+    cell_log_r_min: np.ndarray,
+    cell_log_r_max: np.ndarray,
+) -> np.ndarray:
+    """Refit each recovered radial edge inside the feasible interval of its assigned observations."""
+    if radial_edges.size <= 2:
+        return np.asarray(radial_edges, dtype=float)
+
+    edge_obs_id = np.concatenate((r0_edge_id, r1_edge_id)).astype(np.int64, copy=False)
+    edge_obs_val = np.concatenate((cell_log_r_min[valid_ids], cell_log_r_max[valid_ids])).astype(float, copy=False)
+    order = np.argsort(edge_obs_id, kind="mergesort")
+    sorted_id = edge_obs_id[order]
+    sorted_val = edge_obs_val[order]
+    group_start = np.empty(sorted_id.size, dtype=bool)
+    group_start[0] = True
+    group_start[1:] = sorted_id[1:] != sorted_id[:-1]
+    group_ids = np.flatnonzero(group_start)
+    group_stop = np.concatenate((group_ids[1:], np.array([sorted_id.size], dtype=np.int64)))
+
+    refit = np.asarray(radial_edges, dtype=float).copy()
+    for start, stop in zip(group_ids, group_stop, strict=True):
+        edge_id = int(sorted_id[int(start)])
+        if edge_id <= 0 or edge_id >= radial_edges.size - 1:
+            continue
+        vals = sorted_val[int(start):int(stop)]
+        left = float(radial_edges[edge_id - 1])
+        right = float(radial_edges[edge_id + 1])
+        lo = float(np.max((2.0 * vals) - right))
+        hi = float(np.min((2.0 * vals) - left))
+        if lo <= hi:
+            refit[edge_id] = float(np.clip(radial_edges[edge_id], lo, hi))
+            continue
+        fallback = float(np.clip(np.median(vals), left, right))
+        refit[edge_id] = fallback
+    return refit
 
 
 def minimal_azimuth_intervals(
@@ -431,6 +473,18 @@ def recover_log_radial_lattice(
         float(time.perf_counter() - t0),
     )
 
+    logger.info("recover_log_radial_lattice: refit radial edges...")
+    t0 = time.perf_counter()
+    radial_edges = _refit_radial_edge_centers(
+        radial_edges,
+        valid_ids=valid_ids,
+        r0_edge_id=r0_edge_id,
+        r1_edge_id=r1_edge_id,
+        cell_log_r_min=cell_log_r_min,
+        cell_log_r_max=cell_log_r_max,
+    )
+    logger.info("recover_log_radial_lattice: refit radial edges complete in %.2fs", float(time.perf_counter() - t0))
+
     edge_units = values
     if int(edge_units[-1]) != int(n_axis0_f):
         raise ValueError(
@@ -674,6 +728,30 @@ def _cluster_switch_margin(centers: np.ndarray, edge_ids: np.ndarray) -> np.ndar
     return out
 
 
+def _directional_cluster_switch_margin(
+    centers: np.ndarray,
+    edge_ids: np.ndarray,
+    observed: np.ndarray,
+) -> np.ndarray:
+    """Return the half-gap to the switch midpoint on the side of each observed value."""
+    centers_arr = np.asarray(centers, dtype=float)
+    ids = np.asarray(edge_ids, dtype=np.int64)
+    obs = np.asarray(observed, dtype=float)
+    out = np.full(ids.shape, np.inf, dtype=float)
+    if centers_arr.size < 2:
+        return out
+    left_margin = np.full(centers_arr.shape, np.inf, dtype=float)
+    right_margin = np.full(centers_arr.shape, np.inf, dtype=float)
+    gaps = centers_arr[1:] - centers_arr[:-1]
+    left_margin[1:] = 0.5 * gaps
+    right_margin[:-1] = 0.5 * gaps
+    center = centers_arr[ids]
+    use_left = obs <= center
+    out[use_left] = left_margin[ids[use_left]]
+    out[~use_left] = right_margin[ids[~use_left]]
+    return out
+
+
 def _recover_radial_addresses(
     *,
     leaf_shape: tuple[int, int, int],
@@ -723,7 +801,11 @@ def _recover_radial_addresses(
             observed=cell_log_r_min[valid_ids],
             snapped=radial_edges[r0_edge_id],
             tol=radial_edge_tol[r0_edge_id],
-            topology_margin=_cluster_switch_margin(radial_edges, r0_edge_id),
+            topology_margin=_directional_cluster_switch_margin(
+                radial_edges,
+                r0_edge_id,
+                cell_log_r_min[valid_ids],
+            ),
             detail_builder=lambda idx, cell_id: (
                 f"observed_log_r_min={float(cell_log_r_min[cell_id]):.17g} "
                 f"snapped_log_r_min={float(radial_edges[r0_edge_id[idx]]):.17g} "
@@ -748,7 +830,11 @@ def _recover_radial_addresses(
             observed=cell_log_r_max[valid_ids],
             snapped=radial_edges[r1_edge_id],
             tol=radial_edge_tol[r1_edge_id],
-            topology_margin=_cluster_switch_margin(radial_edges, r1_edge_id),
+            topology_margin=_directional_cluster_switch_margin(
+                radial_edges,
+                r1_edge_id,
+                cell_log_r_max[valid_ids],
+            ),
             detail_builder=lambda idx, cell_id: (
                 f"observed_log_r_max={float(cell_log_r_max[cell_id]):.17g} "
                 f"snapped_log_r_max={float(radial_edges[r1_edge_id[idx]]):.17g} "
